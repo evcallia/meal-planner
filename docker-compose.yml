@@ -1,8 +1,8 @@
 services:
   db:
-    image: postgres:15-alpine
-    # ports:
-    #   - "5432:5432"
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-mealplanner}
       POSTGRES_USER: ${POSTGRES_USER:-mealplanner}
@@ -39,6 +39,7 @@ services:
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8000}
       SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      DEBUG_TIMING: ${DEBUG_TIMING:-false}
     depends_on:
       db:
         condition: service_healthy

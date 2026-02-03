@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { DayData } from '../types';
 import { DayCard } from './DayCard';
-import { getDays, updateNotes, toggleItemized } from '../api/client';
+import { getDays, getEvents, updateNotes, toggleItemized } from '../api/client';
 import { saveLocalNote, queueChange } from '../db';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { scrollToElementWithOffset } from '../utils/scroll';
+import { isPerfEnabled, logDuration, logRenderDuration, perfNow } from '../utils/perf';
 
 function formatDate(date: Date): string {
   return date.toISOString().split('T')[0];
@@ -17,11 +19,16 @@ function addDays(date: Date, days: number): Date {
 
 interface CalendarViewProps {
   onTodayRefReady: (ref: HTMLDivElement | null) => void;
+  showItemizedColumn?: boolean;
 }
 
-export function CalendarView({ onTodayRefReady }: CalendarViewProps) {
+// Track which date ranges have finished loading events
+type EventsLoadState = 'loading' | 'loaded' | 'error';
+
+export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: CalendarViewProps) {
   const [days, setDays] = useState<DayData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingEvents, setLoadingEvents] = useState(false);
   const [loadingMore, setLoadingMore] = useState<'prev' | 'next' | null>(null);
   const endDateRef = useRef<Date>(addDays(new Date(), 6));
   const startDateRef = useRef<Date>(new Date());
@@ -29,6 +36,8 @@ export function CalendarView({ onTodayRefReady }: CalendarViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const isOnline = useOnlineStatus();
   const initialLoadDone = useRef(false);
+  const [eventsLoadState, setEventsLoadState] = useState<Record<string, EventsLoadState>>({});
+  const pendingRenderLogsRef = useRef<Array<{ label: string; start: number; payload?: Record<string, unknown> }>>([]);
 
   const today = formatDate(new Date());
 
@@ -39,6 +48,49 @@ export function CalendarView({ onTodayRefReady }: CalendarViewProps) {
     }
   }, [loading, days, onTodayRefReady]);
 
+  // Load events for a date range (non-blocking)
+  const loadEventsForRange = useCallback(async (start: Date, end: Date) => {
+    const rangeKey = `${formatDate(start)}_${formatDate(end)}`;
+    const startStr = formatDate(start);
+    const endStr = formatDate(end);
+
+    setEventsLoadState(prev => {
+      if (prev[rangeKey]) return prev; // Already loading or loaded
+      return { ...prev, [rangeKey]: 'loading' };
+    });
+
+    // Check if already loaded
+    setEventsLoadState(prev => {
+      if (prev[rangeKey] === 'loaded') return prev;
+      return { ...prev, [rangeKey]: 'loading' };
+    });
+
+    setLoadingEvents(true);
+
+    try {
+      const requestStart = perfNow();
+      const eventsMap = await getEvents(startStr, endStr);
+      logDuration('calendar.events.request', requestStart, { start: startStr, end: endStr });
+      const renderStart = perfNow();
+      setDays(prev => prev.map(day => {
+        // Only update days within the loaded range
+        if (day.date >= startStr && day.date <= endStr) {
+          const dayEvents = eventsMap[day.date] || [];
+          return { ...day, events: dayEvents };
+        }
+        // Keep existing events for days outside the range
+        return day;
+      }));
+      enqueueRenderLog('calendar.events.render', renderStart, { rangeKey });
+      setEventsLoadState(prev => ({ ...prev, [rangeKey]: 'loaded' }));
+    } catch (error) {
+      console.error('Failed to load events:', error);
+      setEventsLoadState(prev => ({ ...prev, [rangeKey]: 'error' }));
+    } finally {
+      setLoadingEvents(false);
+    }
+  }, []);
+
   // Initial load - use ref to prevent double load in StrictMode
   useEffect(() => {
     if (initialLoadDone.current) return;
@@ -47,23 +99,107 @@ export function CalendarView({ onTodayRefReady }: CalendarViewProps) {
     const init = async () => {
       setLoading(true);
       try {
+        // Load days without events first (fast)
+        const requestStart = perfNow();
         const data = await getDays(formatDate(startDateRef.current), formatDate(endDateRef.current));
+        logDuration('calendar.days.request', requestStart, {
+          start: formatDate(startDateRef.current),
+          end: formatDate(endDateRef.current),
+        });
+        const renderStart = perfNow();
         setDays(data);
+        enqueueRenderLog('calendar.days.render', renderStart, { count: data.length });
+        setLoading(false);
+
+        // Then load events separately (slow, but non-blocking)
+        loadEventsForRange(startDateRef.current, endDateRef.current);
       } catch (error) {
         console.error('Failed to load days:', error);
-      } finally {
         setLoading(false);
       }
     };
     init();
-  }, []);
+  }, [loadEventsForRange]);
 
   // Scroll to today after initial load
   useEffect(() => {
     if (!loading && todayRef.current) {
-      todayRef.current.scrollIntoView({ behavior: 'auto', block: 'start' });
+      scrollToElementWithOffset(todayRef.current, 'auto');
     }
   }, [loading]);
+
+  const enqueueRenderLog = (label: string, start: number, payload?: Record<string, unknown>) => {
+    if (!isPerfEnabled()) return;
+    pendingRenderLogsRef.current.push({ label, start, payload });
+  };
+
+  useEffect(() => {
+    if (!isPerfEnabled() || pendingRenderLogsRef.current.length === 0) return;
+    const pending = pendingRenderLogsRef.current.splice(0);
+    pending.forEach(entry => {
+      logRenderDuration(entry.label, entry.start, {
+        ...entry.payload,
+        daysCount: days.length,
+      });
+    });
+  }, [days]);
+
+  // Listen for external note updates (e.g., scheduled meal ideas)
+  useEffect(() => {
+    const handleExternalUpdate = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { date?: string; notes?: string } | undefined;
+      if (!detail?.date || detail.notes === undefined) return;
+      setDays(prev => prev.map(day => {
+        if (day.date !== detail.date) return day;
+        return {
+          ...day,
+          meal_note: day.meal_note
+            ? { ...day.meal_note, notes: detail.notes }
+            : { id: '', date: detail.date, notes: detail.notes, items: [], updated_at: new Date().toISOString() },
+        };
+      }));
+    };
+
+    window.addEventListener('meal-planner-notes-updated', handleExternalUpdate as EventListener);
+    return () => {
+      window.removeEventListener('meal-planner-notes-updated', handleExternalUpdate as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleRealtime = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { type?: string; payload?: any } | undefined;
+      if (!detail?.type) return;
+      if (detail.type === 'notes.updated') {
+        const payload = detail.payload as { date?: string; meal_note?: DayData['meal_note'] };
+        if (!payload?.date || payload.meal_note === undefined) return;
+        setDays(prev => prev.map(day => {
+          if (day.date !== payload.date) return day;
+          return { ...day, meal_note: payload.meal_note };
+        }));
+      }
+      if (detail.type === 'item.updated') {
+        const payload = detail.payload as { date?: string; line_index?: number; itemized?: boolean };
+        if (!payload?.date || payload.line_index === undefined || payload.itemized === undefined) return;
+        setDays(prev => prev.map(day => {
+          if (day.date !== payload.date || !day.meal_note) return day;
+          const items = [...day.meal_note.items];
+          const existing = items.findIndex(item => item.line_index === payload.line_index);
+          if (existing >= 0) {
+            items[existing] = { ...items[existing], itemized: payload.itemized };
+          } else {
+            items.push({ line_index: payload.line_index, itemized: payload.itemized });
+          }
+          return { ...day, meal_note: { ...day.meal_note, items } };
+        }));
+      }
+    };
+
+    window.addEventListener('meal-planner-realtime', handleRealtime as EventListener);
+    return () => {
+      window.removeEventListener('meal-planner-realtime', handleRealtime as EventListener);
+    };
+  }, []);
 
   const loadPreviousWeek = async () => {
     if (loadingMore) return;
@@ -71,9 +207,18 @@ export function CalendarView({ onTodayRefReady }: CalendarViewProps) {
     const newStart = addDays(startDateRef.current, -7);
     const newEnd = addDays(startDateRef.current, -1);
     try {
+      const requestStart = perfNow();
       const data = await getDays(formatDate(newStart), formatDate(newEnd));
+      logDuration('calendar.days.request', requestStart, {
+        start: formatDate(newStart),
+        end: formatDate(newEnd),
+      });
+      const renderStart = perfNow();
       setDays(prev => [...data, ...prev]);
+      enqueueRenderLog('calendar.days.render', renderStart, { count: data.length, direction: 'prev' });
       startDateRef.current = newStart;
+      // Load events for the new range
+      loadEventsForRange(newStart, newEnd);
     } catch (error) {
       console.error('Failed to load previous week:', error);
     } finally {
@@ -87,15 +232,24 @@ export function CalendarView({ onTodayRefReady }: CalendarViewProps) {
     const newStart = addDays(endDateRef.current, 1);
     const newEnd = addDays(endDateRef.current, 7);
     try {
+      const requestStart = perfNow();
       const data = await getDays(formatDate(newStart), formatDate(newEnd));
+      logDuration('calendar.days.request', requestStart, {
+        start: formatDate(newStart),
+        end: formatDate(newEnd),
+      });
+      const renderStart = perfNow();
       setDays(prev => [...prev, ...data]);
+      enqueueRenderLog('calendar.days.render', renderStart, { count: data.length, direction: 'next' });
       endDateRef.current = newEnd;
+      // Load events for the new range
+      loadEventsForRange(newStart, newEnd);
     } catch (error) {
       console.error('Failed to load next week:', error);
     } finally {
       setLoadingMore(null);
     }
-  }, [loadingMore]);
+  }, [loadingMore, loadEventsForRange]);
 
   // Infinite scroll - load more when bottom is visible
   useEffect(() => {
@@ -175,7 +329,7 @@ export function CalendarView({ onTodayRefReady }: CalendarViewProps) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-64" data-testid="calendar-loading" aria-label="Loading calendar">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
       </div>
     );
@@ -210,6 +364,8 @@ export function CalendarView({ onTodayRefReady }: CalendarViewProps) {
             isToday={day.date === today}
             onNotesChange={(notes) => handleNotesChange(day.date, notes)}
             onToggleItemized={(lineIndex, itemized) => handleToggleItemized(day.date, lineIndex, itemized)}
+            eventsLoading={loadingEvents && day.events.length === 0}
+            showItemizedColumn={showItemizedColumn}
           />
         </div>
       ))}

@@ -26,6 +26,9 @@ class MealPlannerDB extends Dexie {
       mealNotes: 'date',
       pendingChanges: '++id, date, type'
     });
+    // Ensure table properties are initialized for both runtime and tests.
+    this.mealNotes = this.table('mealNotes');
+    this.pendingChanges = this.table('pendingChanges');
   }
 }
 
