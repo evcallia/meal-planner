@@ -2,6 +2,8 @@ import caldav
 from datetime import datetime, date, timedelta
 from icalendar import Calendar
 import time
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from app.config import get_settings
@@ -12,9 +14,22 @@ settings = get_settings()
 # Apple CalDAV URL
 APPLE_CALDAV_URL = "https://caldav.icloud.com"
 
-# Simple in-memory cache with TTL
-_cache: dict[str, tuple[float, list[CalendarEvent]]] = {}
+
+def _log(msg: str) -> None:
+    """Print debug timing log if enabled."""
+    if settings.debug_timing:
+        print(msg)
+
+# Thread pool for running sync CalDAV operations
+_executor = ThreadPoolExecutor(max_workers=2)
+
+# Cache for events (broader date range)
+_events_cache: dict[str, tuple[float, list[CalendarEvent]]] = {}
 CACHE_TTL = 300  # 5 minutes
+
+# Cache for CalDAV client/calendar (longer TTL)
+_calendar_cache: tuple[float, Optional[caldav.Calendar]] = (0, None)
+CALENDAR_CACHE_TTL = 600  # 10 minutes
 
 
 def _parse_ical_date(dt) -> datetime:
@@ -39,77 +54,97 @@ def _is_all_day(component) -> bool:
     return False
 
 
-def _get_caldav_client() -> Optional[caldav.DAVClient]:
-    """Create authenticated CalDAV client for Apple Calendar."""
+def _get_calendar_sync() -> Optional[caldav.Calendar]:
+    """Get cached calendar or create new connection (synchronous)."""
+    global _calendar_cache
+    now = time.time()
+
+    cached_time, cached_calendar = _calendar_cache
+    if cached_calendar and (now - cached_time) < CALENDAR_CACHE_TTL:
+        _log("[CalDAV] Using cached calendar")
+        return cached_calendar
+
     if not settings.apple_calendar_email or not settings.apple_calendar_app_password:
         return None
 
-    return caldav.DAVClient(
-        url=APPLE_CALDAV_URL,
-        username=settings.apple_calendar_email,
-        password=settings.apple_calendar_app_password,
-    )
+    try:
+        _log(f"[CalDAV] Connecting to {APPLE_CALDAV_URL}...")
+        t1 = time.time()
 
+        client = caldav.DAVClient(
+            url=APPLE_CALDAV_URL,
+            username=settings.apple_calendar_email,
+            password=settings.apple_calendar_app_password,
+        )
 
-def _find_calendar(principal: caldav.Principal) -> Optional[caldav.Calendar]:
-    """Find the target calendar by name, or return the first one."""
-    calendars = principal.calendars()
+        t2 = time.time()
+        _log(f"[CalDAV] Client created in {t2-t1:.2f}s, fetching principal...")
 
-    if not calendars:
+        principal = client.principal()
+
+        t3 = time.time()
+        _log(f"[CalDAV] Principal fetched in {t3-t2:.2f}s, fetching calendars...")
+
+        calendars = principal.calendars()
+
+        t4 = time.time()
+        _log(f"[CalDAV] Calendars fetched in {t4-t3:.2f}s (total: {t4-t1:.2f}s)")
+
+        if not calendars:
+            return None
+
+        calendar = None
+        if settings.apple_calendar_name:
+            for cal in calendars:
+                if cal.name == settings.apple_calendar_name:
+                    calendar = cal
+                    break
+            if not calendar:
+                _log(f"Calendar '{settings.apple_calendar_name}' not found. Available: {[c.name for c in calendars]}")
+                return None
+        else:
+            calendar = calendars[0]
+
+        _calendar_cache = (now, calendar)
+        return calendar
+
+    except Exception as e:
+        _log(f"Error connecting to CalDAV: {e}")
         return None
 
-    # If a specific calendar name is configured, find it
-    if settings.apple_calendar_name:
-        for cal in calendars:
-            if cal.name == settings.apple_calendar_name:
-                return cal
-        print(f"Calendar '{settings.apple_calendar_name}' not found. Available: {[c.name for c in calendars]}")
-        return None
 
-    # Otherwise return the first calendar
-    return calendars[0]
+# Alias for backward compatibility with tests
+_get_calendar = _get_calendar_sync
 
 
-async def fetch_ical_events(start_date: date, end_date: date) -> list[CalendarEvent]:
-    """Fetch events from Apple Calendar via CalDAV for a date range."""
-    cache_key = f"{start_date}_{end_date}"
-    now = time.time()
-
-    # Check cache
-    if cache_key in _cache:
-        cached_time, cached_events = _cache[cache_key]
-        if now - cached_time < CACHE_TTL:
-            return cached_events
-
-    client = _get_caldav_client()
-    if not client:
+def _fetch_events_sync(start_date: date, end_date: date) -> list[CalendarEvent]:
+    """Fetch events synchronously (runs in thread pool)."""
+    t_start = time.time()
+    calendar = _get_calendar_sync()
+    if not calendar:
         return []
 
     try:
-        principal = client.principal()
-        calendar = _find_calendar(principal)
-
-        if not calendar:
-            print("No calendar found")
-            return []
-
-        # Fetch events in date range
-        # CalDAV uses datetime for search, so convert dates
         start_dt = datetime.combine(start_date, datetime.min.time())
         end_dt = datetime.combine(end_date, datetime.max.time())
+
+        _log(f"[CalDAV] Searching events {start_date} to {end_date}...")
+        t1 = time.time()
 
         caldav_events = calendar.search(
             start=start_dt,
             end=end_dt,
             event=True,
-            expand=True,  # Expand recurring events
+            expand=True,
         )
+
+        t2 = time.time()
+        _log(f"[CalDAV] Search completed in {t2-t1:.2f}s, found {len(caldav_events)} events")
 
         events: list[CalendarEvent] = []
 
         for caldav_event in caldav_events:
             try:
-                # Parse the iCalendar data
                 cal = Calendar.from_ical(caldav_event.data)
 
                 for component in cal.walk():
@@ -127,7 +162,6 @@ async def fetch_ical_events(start_date: date, end_date: date) -> list[CalendarEv
                     event_end = _parse_ical_date(dtend) if dtend else None
                     event_date = event_start.date()
 
-                    # Filter to date range (in case CalDAV returns extras)
                     if event_date < start_date or event_date > end_date:
                         continue
 
@@ -140,20 +174,40 @@ async def fetch_ical_events(start_date: date, end_date: date) -> list[CalendarEv
                         )
                     )
             except Exception as e:
-                print(f"Error parsing event: {e}")
+                _log(f"Error parsing event: {e}")
                 continue
 
-        # Sort by start time
         events.sort(key=lambda e: e.start_time)
 
-        # Cache the results
-        _cache[cache_key] = (now, events)
+        t_end = time.time()
+        _log(f"[CalDAV] Total fetch time: {t_end-t_start:.2f}s")
 
         return events
 
     except Exception as e:
-        print(f"Error fetching from Apple Calendar: {e}")
+        _log(f"Error fetching from Apple Calendar: {e}")
         return []
+
+
+async def fetch_ical_events(start_date: date, end_date: date) -> list[CalendarEvent]:
+    """Fetch events from Apple Calendar via CalDAV for a date range."""
+    cache_key = f"{start_date}_{end_date}"
+    now = time.time()
+
+    # Check cache first
+    if cache_key in _events_cache:
+        cached_time, cached_events = _events_cache[cache_key]
+        if now - cached_time < CACHE_TTL:
+            return cached_events
+
+    # Run synchronous CalDAV operations in thread pool to not block
+    loop = asyncio.get_event_loop()
+    events = await loop.run_in_executor(_executor, _fetch_events_sync, start_date, end_date)
+
+    # Cache the results
+    _events_cache[cache_key] = (now, events)
+
+    return events
 
 
 def get_events_for_date(events: list[CalendarEvent], target_date: date) -> list[CalendarEvent]:

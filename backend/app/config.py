@@ -1,5 +1,15 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from urllib.parse import urlparse
+
+
+def _is_localhost_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    host = parsed.hostname or ""
+    return host in {"localhost", "127.0.0.1", "::1"}
 
 
 class Settings(BaseSettings):
@@ -25,10 +35,22 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production"
     frontend_url: str = "http://localhost:8000"
     secure_cookies: bool = False  # Set to True for HTTPS in production
+    debug_timing: bool = False  # Enable timing logs for performance debugging
 
     @property
     def database_url(self) -> str:
         return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+
+    def validate_security(self) -> None:
+        """Fail fast when running in a non-local environment with insecure defaults."""
+        is_local = _is_localhost_url(self.frontend_url)
+        uses_oidc = bool(self.oidc_issuer)
+        if is_local and not uses_oidc:
+            return
+        if self.secret_key == "change-me-in-production":
+            raise ValueError("SECRET_KEY must be set to a secure value for non-local deployments.")
+        if not self.secure_cookies:
+            raise ValueError("SECURE_COOKIES must be true for non-local deployments.")
 
     class Config:
         env_file = ".env"

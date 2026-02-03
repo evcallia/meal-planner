@@ -1,12 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { DayData } from '../types';
 import { MealItem } from './MealItem';
+import { decodeHtmlEntities } from '../utils/html';
+import { RichTextEditor } from './RichTextEditor';
 
 interface DayCardProps {
   day: DayData;
   isToday: boolean;
   onNotesChange: (notes: string) => void;
   onToggleItemized: (lineIndex: number, itemized: boolean) => void;
+  eventsLoading?: boolean;
+  showItemizedColumn?: boolean;
 }
 
 function formatTime(isoString: string): string {
@@ -26,11 +30,28 @@ function formatDate(dateString: string): { dayName: string; dateDisplay: string 
   };
 }
 
-export function DayCard({ day, isToday, onNotesChange, onToggleItemized }: DayCardProps) {
-  const [notes, setNotes] = useState(day.meal_note?.notes || '');
+// Split HTML content into lines, preserving HTML tags within each line
+function splitHtmlLines(html: string): string[] {
+  // Replace <br>, <br/>, <br /> with newlines, then split
+  // Also handle <div> blocks which browsers sometimes use for new lines
+  const normalized = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/div><div>/gi, '\n')
+    .replace(/<div>/gi, '\n')
+    .replace(/<\/div>/gi, '');
+
+  return normalized.split('\n').filter(line => {
+    // Check if line has actual content (not just empty tags)
+    const textContent = line.replace(/<[^>]*>/g, '').trim();
+    return textContent.length > 0;
+  });
+}
+
+export function DayCard({ day, isToday, onNotesChange, onToggleItemized, eventsLoading, showItemizedColumn = true }: DayCardProps) {
+  const normalizeNotes = (value?: string | null) => decodeHtmlEntities(value ?? '');
+  const [notes, setNotes] = useState(() => normalizeNotes(day.meal_note?.notes));
   const [isEditing, setIsEditing] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   const { dayName, dateDisplay } = formatDate(day.date);
@@ -41,23 +62,15 @@ export function DayCard({ day, isToday, onNotesChange, onToggleItemized }: DayCa
     itemsMap.set(item.line_index, item.itemized);
   });
 
-  // Parse lines for display
-  const lines = notes.split('\n').filter(l => l.trim());
+  // Parse lines for display (now handles HTML)
+  const lines = splitHtmlLines(notes);
 
   // Sync notes when day data changes (e.g., from server)
   useEffect(() => {
     if (!isEditing) {
-      setNotes(day.meal_note?.notes || '');
+      setNotes(normalizeNotes(day.meal_note?.notes));
     }
   }, [day.meal_note?.notes, isEditing]);
-
-  // Auto-resize textarea
-  useEffect(() => {
-    if (textareaRef.current && isEditing) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
-    }
-  }, [notes, isEditing]);
 
   const handleNotesChange = (value: string) => {
     setNotes(value);
@@ -107,8 +120,18 @@ export function DayCard({ day, isToday, onNotesChange, onToggleItemized }: DayCa
         </div>
       </div>
 
+      {/* Events Loading Skeleton */}
+      {eventsLoading && (
+        <div className="px-4 py-2 bg-gray-50 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700">
+          <div className="flex items-center gap-2 text-sm py-1 animate-pulse">
+            <div className="w-4 h-4 bg-gray-200 dark:bg-gray-600 rounded" />
+            <div className="h-4 bg-gray-200 dark:bg-gray-600 rounded w-32" />
+          </div>
+        </div>
+      )}
+
       {/* Events */}
-      {day.events.length > 0 && (
+      {!eventsLoading && day.events.length > 0 && (
         <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-800/30">
           {day.events.map((event, i) => (
             <div key={i} className="flex items-center gap-2 text-sm py-1">
@@ -128,18 +151,15 @@ export function DayCard({ day, isToday, onNotesChange, onToggleItemized }: DayCa
       <div className="p-4">
         {isEditing ? (
           <div>
-            <textarea
-              ref={textareaRef}
+            <RichTextEditor
               value={notes}
-              onChange={(e) => handleNotesChange(e.target.value)}
+              onChange={handleNotesChange}
               onBlur={handleBlur}
               placeholder="Add meals for this day..."
-              className="w-full resize-none border-0 focus:ring-0 p-0 text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none bg-transparent"
-              autoFocus
-              rows={3}
+              autoFocus={true}
             />
             {saveStatus !== 'idle' && (
-              <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+              <div className="text-xs text-gray-400 dark:text-gray-500 mt-2">
                 {saveStatus === 'saving' ? 'Saving...' : 'Saved'}
               </div>
             )}
@@ -151,7 +171,7 @@ export function DayCard({ day, isToday, onNotesChange, onToggleItemized }: DayCa
                 {lines.map((line, i) => (
                   <MealItem
                     key={i}
-                    text={line}
+                    html={line}
                     itemized={itemsMap.get(i) || false}
                     onToggle={() => {
                       const current = itemsMap.get(i) || false;
@@ -159,6 +179,7 @@ export function DayCard({ day, isToday, onNotesChange, onToggleItemized }: DayCa
                     }}
                     onTextClick={enterEditMode}
                     showHeader={i === 0}
+                    showItemizedColumn={showItemizedColumn}
                   />
                 ))}
               </div>

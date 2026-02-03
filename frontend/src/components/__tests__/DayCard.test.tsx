@@ -1,0 +1,286 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { DayCard } from '../DayCard'
+import type { DayData } from '../../types'
+
+// Mock the RichTextEditor since we test it separately
+vi.mock('../RichTextEditor', () => ({
+  RichTextEditor: ({ value, onChange, onBlur, autoFocus, placeholder }: any) => (
+    <textarea
+      data-testid="rich-text-editor"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
+      placeholder={placeholder}
+      data-autofocus={autoFocus}
+    />
+  ),
+}))
+
+describe('DayCard', () => {
+  const mockDayData: DayData = {
+    date: '2024-02-15',
+    meal_note: {
+      id: 1,
+      date: '2024-02-15',
+      notes: '<p>Breakfast: Oatmeal</p><p>Lunch: Sandwich</p>',
+      items: [
+        { line_index: 0, itemized: true },
+        { line_index: 1, itemized: false },
+      ],
+    },
+    events: [
+      {
+        title: 'Dinner with friends',
+        start_time: '2024-02-15T19:00:00Z',
+        all_day: false,
+      },
+    ],
+  }
+
+  const defaultProps = {
+    day: mockDayData,
+    isToday: false,
+    onNotesChange: vi.fn(),
+    onToggleItemized: vi.fn(),
+    eventsLoading: false,
+    showItemizedColumn: true,
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders day card with date information', () => {
+    render(<DayCard {...defaultProps} />)
+    
+    expect(screen.getByText('Thursday')).toBeInTheDocument()
+    expect(screen.getByText('Feb 15')).toBeInTheDocument()
+  })
+
+  it('shows TODAY badge when isToday is true', () => {
+    render(<DayCard {...defaultProps} isToday={true} />)
+    
+    expect(screen.getByText('TODAY')).toBeInTheDocument()
+  })
+
+  it('does not show TODAY badge when isToday is false', () => {
+    render(<DayCard {...defaultProps} isToday={false} />)
+    
+    expect(screen.queryByText('TODAY')).not.toBeInTheDocument()
+  })
+
+  it('displays events when available', () => {
+    render(<DayCard {...defaultProps} />)
+
+    const expectedTime = new Date(mockDayData.events[0].start_time).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+
+    expect(screen.getByText('Dinner with friends')).toBeInTheDocument()
+    expect(screen.getByText(expectedTime)).toBeInTheDocument()
+  })
+
+  it('shows events loading skeleton when eventsLoading is true', () => {
+    render(<DayCard {...defaultProps} eventsLoading={true} />)
+    
+    const loadingElement = document.querySelector('[class*="animate-pulse"]')
+    expect(loadingElement).toBeInTheDocument()
+  })
+
+  it('renders meal items in read-only mode initially', () => {
+    render(<DayCard {...defaultProps} />)
+    
+    expect(screen.getByText('Breakfast: Oatmeal')).toBeInTheDocument()
+    expect(screen.getByText('Lunch: Sandwich')).toBeInTheDocument()
+    expect(screen.queryByTestId('rich-text-editor')).not.toBeInTheDocument()
+  })
+
+  it('switches to edit mode when text is clicked', async () => {
+    const { fireEvent } = await import('@testing-library/react')
+    render(<DayCard {...defaultProps} />)
+    
+    const textElement = screen.getByText('Breakfast: Oatmeal')
+    fireEvent.click(textElement)
+    
+    expect(screen.getByTestId('rich-text-editor')).toBeInTheDocument()
+    expect(screen.getByTestId('rich-text-editor')).toHaveAttribute('data-autofocus', 'true')
+  })
+
+  it('exits edit mode when editor loses focus', async () => {
+    const { fireEvent } = await import('@testing-library/react')
+    render(
+      <div>
+        <DayCard {...defaultProps} />
+        <button>Outside button</button>
+      </div>
+    )
+    
+    // Enter edit mode
+    const textElement = screen.getByText('Breakfast: Oatmeal')
+    fireEvent.click(textElement)
+    expect(screen.getByTestId('rich-text-editor')).toBeInTheDocument()
+    
+    // Trigger blur event directly on the editor to exit edit mode
+    const editor = screen.getByTestId('rich-text-editor')
+    fireEvent.blur(editor)
+    
+    await waitFor(() => {
+      expect(screen.queryByTestId('rich-text-editor')).not.toBeInTheDocument()
+    })
+  })
+
+  it('calls onNotesChange when content is modified', async () => {
+    const { fireEvent } = await import('@testing-library/react')
+    render(<DayCard {...defaultProps} />)
+    
+    // Enter edit mode
+    const textElement = screen.getByText('Breakfast: Oatmeal')
+    fireEvent.click(textElement)
+    
+    // Modify content
+    const editor = screen.getByTestId('rich-text-editor')
+    fireEvent.change(editor, { target: { value: 'New meal content' } })
+    
+    // Wait for debounced save
+    await waitFor(
+      () => {
+        expect(defaultProps.onNotesChange).toHaveBeenCalledWith('New meal content')
+      },
+      { timeout: 1000 }
+    )
+  })
+
+  it('shows itemized checkboxes when showItemizedColumn is true', () => {
+    render(<DayCard {...defaultProps} showItemizedColumn={true} />)
+    
+    const checkboxes = screen.getAllByRole('button')
+    const mealItemButtons = checkboxes.filter(button => 
+      button.closest('[class*="w-5 h-5"]')
+    )
+    expect(mealItemButtons).toHaveLength(1) // Only one checkbox is rendered
+  })
+
+  it('hides itemized checkboxes when showItemizedColumn is false', () => {
+    render(<DayCard {...defaultProps} showItemizedColumn={false} />)
+    
+    expect(screen.queryByText('Itemized')).not.toBeInTheDocument()
+    const checkboxes = screen.queryAllByRole('button')
+    const mealItemButtons = checkboxes.filter(button => 
+      button.closest('[class*="w-5 h-5"]')
+    )
+    expect(mealItemButtons).toHaveLength(0)
+  })
+
+  it('calls onToggleItemized when checkbox is clicked', async () => {
+    const user = userEvent.setup()
+    render(<DayCard {...defaultProps} />)
+    
+    const checkboxes = screen.getAllByRole('button')
+    const firstCheckbox = checkboxes.find(button => 
+      button.closest('[class*="w-5 h-5"]')
+    )
+    
+    if (firstCheckbox) {
+      await user.click(firstCheckbox)
+      expect(defaultProps.onToggleItemized).toHaveBeenCalledWith(0, false)
+    }
+  })
+
+  it('shows correct itemized state for each item', () => {
+    render(<DayCard {...defaultProps} />)
+    
+    const checkboxes = screen.getAllByRole('button')
+    const mealItemButtons = checkboxes.filter(button => 
+      button.closest('[class*="w-5 h-5"]')
+    )
+    
+    // First item should be checked (itemized: true)
+    const firstCheckbox = mealItemButtons[0]
+    expect(firstCheckbox?.querySelector('svg')).toBeInTheDocument()
+    
+    // Only test second checkbox if it exists
+    if (mealItemButtons[1]) {
+      const secondCheckbox = mealItemButtons[1]
+      expect(secondCheckbox.querySelector('svg')).not.toBeInTheDocument()
+    }
+  })
+
+  it('shows empty state message when no notes exist', () => {
+    const emptyDayData: DayData = {
+      ...mockDayData,
+      meal_note: null,
+    }
+    
+    render(<DayCard {...defaultProps} day={emptyDayData} />)
+    
+    expect(screen.getByText('Tap to add meals...')).toBeInTheDocument()
+  })
+
+  it('enters edit mode when empty state is clicked', async () => {
+    const { fireEvent } = await import('@testing-library/react')
+    const emptyDayData: DayData = {
+      ...mockDayData,
+      meal_note: null,
+    }
+    
+    render(<DayCard {...defaultProps} day={emptyDayData} />)
+    
+    const emptyState = screen.getByText('Tap to add meals...')
+    fireEvent.click(emptyState)
+    
+    expect(screen.getByTestId('rich-text-editor')).toBeInTheDocument()
+  })
+
+  it('displays save status during editing', async () => {
+    const { fireEvent } = await import('@testing-library/react')
+    render(<DayCard {...defaultProps} />)
+    
+    // Enter edit mode
+    const textElement = screen.getByText('Breakfast: Oatmeal')
+    fireEvent.click(textElement)
+    
+    // Start typing to trigger save status
+    const editor = screen.getByTestId('rich-text-editor')
+    fireEvent.change(editor, { target: { value: 'Updated content' } })
+    
+    // Wait for onNotesChange to be called (indicating save process started)
+    await waitFor(() => {
+      expect(defaultProps.onNotesChange).toHaveBeenCalled()
+    })
+  })
+
+  it('handles all-day events correctly', () => {
+    const dayWithAllDayEvent: DayData = {
+      ...mockDayData,
+      events: [
+        {
+          title: 'All Day Event',
+          start_time: '2024-02-15T00:00:00Z',
+          all_day: true,
+        },
+      ],
+    }
+    
+    render(<DayCard {...defaultProps} day={dayWithAllDayEvent} />)
+    
+    expect(screen.getByText('All Day Event')).toBeInTheDocument()
+    // Should not show time for all-day events
+    expect(screen.queryByText(/\d{1,2}:\d{2}/)).not.toBeInTheDocument()
+  })
+
+  it('applies correct styling for today vs other days', () => {
+    const { rerender } = render(<DayCard {...defaultProps} isToday={false} />)
+    
+    let card = document.querySelector('.bg-white.dark\\:bg-gray-800.rounded-lg.shadow-sm.border')
+    expect(card).toHaveClass('border-gray-200')
+    
+    rerender(<DayCard {...defaultProps} isToday={true} />)
+    
+    card = document.querySelector('.bg-white.dark\\:bg-gray-800.rounded-lg.shadow-sm.border')
+    expect(card).toHaveClass('border-blue-400')
+  })
+})

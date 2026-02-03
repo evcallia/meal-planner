@@ -31,3 +31,16 @@ export interface UserInfo {
 }
 
 export type ConnectionStatus = 'online' | 'offline' | 'syncing';
+
+export interface PantryItem {
+  id: string;
+  name: string;
+  quantity: number;
+  updated_at: string;
+}
+
+export interface MealIdea {
+  id: string;
+  title: string;
+  updated_at: string;
+}

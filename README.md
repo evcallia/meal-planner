@@ -11,6 +11,7 @@ A mobile-focused Progressive Web App for meal planning that integrates with Appl
 - PWA support - install on your phone's home screen
 - Offline support - works without internet, syncs when back online
 - SSO authentication via OIDC (Authentik)
+- Optional frontend performance logging (console-gated)
 
 ## Tech Stack
 
@@ -85,12 +86,183 @@ npm run dev
 
 The frontend will be available at http://localhost:5173 (proxies API requests to backend)
 
+### Frontend Performance Logging
+
+Frontend request/render timing logs are disabled by default. Enable them from the browser console:
+
+```js
+mealPlannerPerf.enable()
+// mealPlannerPerf.disable()
+// mealPlannerPerf.isEnabled()
+```
+
+When enabled, the console will log:
+- API request duration and JSON parse time.
+- Calendar days/events render timing (measured to next paint).
+
 ### Development Auth Flow
 
 When developing locally with the frontend on port 5173:
 - Set `OIDC_REDIRECT_URI=http://localhost:8000/api/auth/callback` in `.env`
 - Set `FRONTEND_URL=http://localhost:5173` in `.env`
 - Configure Authentik to allow redirect to `http://localhost:8000/api/auth/callback`
+
+## Testing
+
+This project includes comprehensive test suites for both frontend and backend components to prevent regressions and ensure code quality.
+
+### Quick Test Run
+
+To run all tests with a single command:
+
+```bash
+./run-tests.sh
+```
+
+**Available options:**
+```bash
+./run-tests.sh --help              # Show all options
+./run-tests.sh --skip-deps         # Skip dependency installation
+./run-tests.sh --frontend-only     # Run only frontend tests
+./run-tests.sh --backend-only      # Run only backend tests  
+./run-tests.sh --integration       # Include integration tests
+```
+
+### Frontend Tests
+
+The frontend uses **Vitest** with **React Testing Library** for comprehensive component and utility testing.
+
+```bash
+cd frontend
+
+# Run tests in watch mode (development)
+npm test
+
+# Run all tests once
+npm run test:run
+
+# Run tests with coverage report
+npm run test:coverage
+
+# Run tests with UI interface
+npm run test:ui
+```
+
+**Test Coverage:**
+- ✅ **Components**: Settings modal, meal items, rich text editor, day cards
+- ✅ **Hooks**: Settings management, dark mode, online status detection
+- ✅ **Utilities**: Auto-linking URLs, HTML processing
+- ✅ **User Interactions**: Click handlers, form inputs, keyboard navigation
+- ✅ **Edge Cases**: Error handling, malformed data, XSS prevention
+
+**Coverage Reports:**
+- Terminal: Displayed after `npm run test:coverage`
+- HTML: `frontend/coverage/index.html`
+
+### Backend Tests
+
+The backend uses **pytest** with **FastAPI TestClient** for API and service testing.
+
+```bash
+cd backend
+
+# Install test dependencies
+pip install -r requirements.txt
+
+# Run all tests
+python -m pytest
+
+# Run with verbose output
+python -m pytest -v
+
+# Run with coverage
+python -m pytest --cov=app --cov-report=html --cov-report=term-missing
+
+# Run specific test categories
+python -m pytest -m unit          # Unit tests only
+python -m pytest -m integration   # Integration tests only
+python -m pytest -k "test_auth"   # Tests matching pattern
+```
+
+**Test Coverage:**
+- ✅ **API Endpoints**: Days, meal notes, authentication, calendar events
+- ✅ **Database Models**: MealNote, MealItem relationships and constraints
+- ✅ **Authentication**: OIDC flow, session management, protected routes
+- ✅ **External Services**: Calendar integration, iCal parsing
+- ✅ **Data Validation**: Pydantic schemas, request/response validation
+- ✅ **Error Handling**: Invalid data, network failures, edge cases
+
+**Coverage Reports:**
+- Terminal: Displayed after pytest with `--cov-report=term-missing`
+- HTML: `backend/htmlcov/index.html`
+
+### Test Categories
+
+**1. Unit Tests**
+- Individual functions and components
+- Mock external dependencies
+- Fast execution (< 1s per test)
+
+**2. Integration Tests**
+- API endpoints with database
+- Component interactions
+- Authentication flows
+
+**3. Edge Case Tests**
+- Malformed data handling
+- Network failures
+- Large data sets
+- XSS and security scenarios
+
+### Continuous Integration
+
+Tests are designed for CI environments:
+
+```yaml
+# Example GitHub Actions workflow
+name: Tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - run: ./run-tests.sh --skip-deps
+```
+
+### Test Development Guidelines
+
+**Frontend:**
+```tsx
+// Use React Testing Library patterns
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+
+it('handles user interaction', async () => {
+  const user = userEvent.setup()
+  render(<MyComponent />)
+  
+  await user.click(screen.getByRole('button'))
+  expect(screen.getByText('Expected result')).toBeInTheDocument()
+})
+```
+
+**Backend:**
+```python
+# Use pytest fixtures and FastAPI TestClient
+def test_api_endpoint(client: TestClient, mock_user):
+    with patch("app.auth.get_current_user", return_value=mock_user):
+        response = client.get("/api/endpoint")
+        assert response.status_code == 200
+```
+
+**Coverage Requirements:**
+- **Statements**: >90%
+- **Branches**: >85% 
+- **Functions**: >90%
+- **Critical paths**: 100%
+
+For detailed testing documentation, see [TESTING.md](frontend/TESTING.md).
 
 ## Configuration
 

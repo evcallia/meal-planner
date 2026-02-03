@@ -1,16 +1,28 @@
-import { DayData, MealNote, MealItem, UserInfo } from '../types';
+import { DayData, MealNote, MealItem, UserInfo, CalendarEvent, PantryItem, MealIdea } from '../types';
+import { logDuration, logPerf, perfNow } from '../utils/perf';
 
 const API_BASE = '/api';
 
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-    credentials: 'include',
-  });
+  const method = options?.method ?? 'GET';
+  const requestStart = perfNow();
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+      credentials: 'include',
+    });
+  } catch (error) {
+    logDuration('api.request_error', requestStart, { path, method });
+    throw error;
+  }
+
+  logDuration('api.request', requestStart, { path, method, status: response.status });
 
   if (!response.ok) {
     if (response.status === 401) {
@@ -19,11 +31,19 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(`API error: ${response.status}`);
   }
 
-  return response.json();
+  const parseStart = perfNow();
+  const data = await response.json();
+  logPerf('api.response', { path, method, status: response.status });
+  logDuration('api.parse', parseStart, { path, method });
+  return data;
 }
 
 export async function getDays(startDate: string, endDate: string): Promise<DayData[]> {
   return fetchAPI<DayData[]>(`/days?start_date=${startDate}&end_date=${endDate}`);
+}
+
+export async function getEvents(startDate: string, endDate: string): Promise<Record<string, CalendarEvent[]>> {
+  return fetchAPI<Record<string, CalendarEvent[]>>(`/days/events?start_date=${startDate}&end_date=${endDate}`);
 }
 
 export async function updateNotes(date: string, notes: string): Promise<MealNote> {
@@ -61,4 +81,52 @@ export async function logout(): Promise<void> {
 
 export function getLoginUrl(): string {
   return `${API_BASE}/auth/login`;
+}
+
+export async function getPantryItems(): Promise<PantryItem[]> {
+  return fetchAPI<PantryItem[]>('/pantry');
+}
+
+export async function createPantryItem(payload: { name: string; quantity: number }): Promise<PantryItem> {
+  return fetchAPI<PantryItem>('/pantry', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePantryItem(itemId: string, payload: { name?: string; quantity?: number }): Promise<PantryItem> {
+  return fetchAPI<PantryItem>(`/pantry/${itemId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deletePantryItem(itemId: string): Promise<void> {
+  await fetchAPI(`/pantry/${itemId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function getMealIdeas(): Promise<MealIdea[]> {
+  return fetchAPI<MealIdea[]>('/meal-ideas');
+}
+
+export async function createMealIdea(payload: { title: string }): Promise<MealIdea> {
+  return fetchAPI<MealIdea>('/meal-ideas', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateMealIdea(ideaId: string, payload: { title?: string }): Promise<MealIdea> {
+  return fetchAPI<MealIdea>(`/meal-ideas/${ideaId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteMealIdea(ideaId: string): Promise<void> {
+  await fetchAPI(`/meal-ideas/${ideaId}`, {
+    method: 'DELETE',
+  });
 }
