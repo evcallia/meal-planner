@@ -73,9 +73,15 @@ describe('DayCard', () => {
 
   it('displays events when available', () => {
     render(<DayCard {...defaultProps} />)
-    
+
+    const expectedTime = new Date(mockDayData.events[0].start_time).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+
     expect(screen.getByText('Dinner with friends')).toBeInTheDocument()
-    expect(screen.getByText('11:00 AM')).toBeInTheDocument()
+    expect(screen.getByText(expectedTime)).toBeInTheDocument()
   })
 
   it('shows events loading skeleton when eventsLoading is true', () => {

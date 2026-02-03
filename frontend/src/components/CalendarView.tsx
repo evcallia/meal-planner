@@ -36,7 +36,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
   const bottomRef = useRef<HTMLDivElement>(null);
   const isOnline = useOnlineStatus();
   const initialLoadDone = useRef(false);
-  const [eventsLoadState, setEventsLoadState] = useState<Record<string, EventsLoadState>>({});
+  const [, setEventsLoadState] = useState<Record<string, EventsLoadState>>({});
   const pendingRenderLogsRef = useRef<Array<{ label: string; start: number; payload?: Record<string, unknown> }>>([]);
 
   const today = formatDate(new Date());
@@ -148,14 +148,16 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
   useEffect(() => {
     const handleExternalUpdate = (event: Event) => {
       const detail = (event as CustomEvent).detail as { date?: string; notes?: string } | undefined;
-      if (!detail?.date || detail.notes === undefined) return;
+      const date = detail?.date;
+      const notes = detail?.notes;
+      if (!date || notes === undefined) return;
       setDays(prev => prev.map(day => {
-        if (day.date !== detail.date) return day;
+        if (day.date !== date) return day;
         return {
           ...day,
           meal_note: day.meal_note
-            ? { ...day.meal_note, notes: detail.notes }
-            : { id: '', date: detail.date, notes: detail.notes, items: [], updated_at: new Date().toISOString() },
+            ? { ...day.meal_note, notes }
+            : { id: '', date, notes, items: [], updated_at: new Date().toISOString() },
         };
       }));
     };
@@ -172,23 +174,28 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
       if (!detail?.type) return;
       if (detail.type === 'notes.updated') {
         const payload = detail.payload as { date?: string; meal_note?: DayData['meal_note'] };
-        if (!payload?.date || payload.meal_note === undefined) return;
+        const date = payload?.date;
+        const mealNote = payload?.meal_note;
+        if (!date || mealNote === undefined) return;
         setDays(prev => prev.map(day => {
-          if (day.date !== payload.date) return day;
-          return { ...day, meal_note: payload.meal_note };
+          if (day.date !== date) return day;
+          return { ...day, meal_note: mealNote ?? null };
         }));
       }
       if (detail.type === 'item.updated') {
         const payload = detail.payload as { date?: string; line_index?: number; itemized?: boolean };
-        if (!payload?.date || payload.line_index === undefined || payload.itemized === undefined) return;
+        const date = payload?.date;
+        const lineIndex = payload?.line_index;
+        const itemized = payload?.itemized;
+        if (!date || lineIndex === undefined || itemized === undefined) return;
         setDays(prev => prev.map(day => {
-          if (day.date !== payload.date || !day.meal_note) return day;
+          if (day.date !== date || !day.meal_note) return day;
           const items = [...day.meal_note.items];
-          const existing = items.findIndex(item => item.line_index === payload.line_index);
+          const existing = items.findIndex(item => item.line_index === lineIndex);
           if (existing >= 0) {
-            items[existing] = { ...items[existing], itemized: payload.itemized };
+            items[existing] = { ...items[existing], itemized };
           } else {
-            items.push({ line_index: payload.line_index, itemized: payload.itemized });
+            items.push({ line_index: lineIndex, itemized });
           }
           return { ...day, meal_note: { ...day.meal_note, items } };
         }));

@@ -17,7 +17,6 @@ import { getLocalNote, queueChange, saveLocalNote } from './db';
 function App() {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showJumpToToday, setShowJumpToToday] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const { status, pendingCount } = useSync();
   const { isDark, toggle: toggleDarkMode } = useDarkMode();
@@ -25,7 +24,6 @@ function App() {
   useRealtime();
   const isOnline = useOnlineStatus();
   const todayRefElement = useRef<HTMLDivElement | null>(null);
-  const observerRef = useRef<IntersectionObserver | null>(null);
   const topSectionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -48,34 +46,7 @@ function App() {
   };
 
   const handleTodayRefReady = useCallback((ref: HTMLDivElement | null) => {
-    // Clean up previous observer
-    if (observerRef.current) {
-      observerRef.current.disconnect();
-      observerRef.current = null;
-    }
-
     todayRefElement.current = ref;
-
-    // Set up new intersection observer when ref is ready
-    if (ref) {
-      const observer = new IntersectionObserver(
-        (entries) => {
-          setShowJumpToToday(!entries[0].isIntersecting);
-        },
-        { threshold: 0.1 }
-      );
-      observer.observe(ref);
-      observerRef.current = observer;
-    }
-  }, []);
-
-  // Cleanup observer on unmount
-  useEffect(() => {
-    return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
-    };
   }, []);
 
   const scrollToToday = () => {

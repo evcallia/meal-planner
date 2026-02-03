@@ -77,7 +77,7 @@ export function RichTextEditor({ value, onChange, onBlur, placeholder, autoFocus
     }
   }, [handleInput]);
 
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+  const handlePaste = useCallback(() => {
     // Allow paste with formatting (links, bold, etc.)
     // The browser handles this automatically with contenteditable
     // We just need to clean up any unwanted styles after paste
@@ -126,11 +126,6 @@ export function RichTextEditor({ value, onChange, onBlur, placeholder, autoFocus
     editorRef.current?.focus();
     handleInput();
   }, [handleInput]);
-
-  const hasSelection = () => {
-    const selection = window.getSelection();
-    return selection && selection.toString().length > 0;
-  };
 
   return (
     <div className="relative">
