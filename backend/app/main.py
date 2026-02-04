@@ -2,6 +2,9 @@ from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
 import time
+import signal
+import threading
+import asyncio
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
@@ -12,8 +15,10 @@ from sqlalchemy import delete
 
 from app.config import get_settings
 from app.database import engine, Base, SessionLocal
-from app.models import MealNote
-from app.routers import days, auth, pantry, meal_ideas, realtime
+from app.models import MealNote, CachedCalendarEvent
+from app.routers import days, auth, pantry, meal_ideas, realtime, calendar
+from app.ical_service import initialize_cache, shutdown_cache
+from app.realtime import broadcaster, shutdown_event
 
 settings = get_settings()
 settings.validate_security()
@@ -37,14 +42,20 @@ class TimingMiddleware(BaseHTTPMiddleware):
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
 
-def cleanup_old_notes():
-    """Delete meal notes older than 30 days."""
+def cleanup_old_data():
+    """Delete meal notes and cached calendar events older than 30 days."""
     db = SessionLocal()
     try:
         cutoff = date.today() - timedelta(days=30)
-        db.execute(delete(MealNote).where(MealNote.date < cutoff))
+
+        # Clean up old meal notes
+        notes_deleted = db.execute(delete(MealNote).where(MealNote.date < cutoff))
+
+        # Clean up old cached calendar events
+        events_deleted = db.execute(delete(CachedCalendarEvent).where(CachedCalendarEvent.event_date < cutoff))
+
         db.commit()
-        print(f"Cleaned up meal notes older than {cutoff}")
+        print(f"Cleaned up data older than {cutoff}: {notes_deleted.rowcount} meal notes, {events_deleted.rowcount} cached events")
     finally:
         db.close()
 
@@ -53,9 +64,32 @@ def cleanup_old_notes():
 async def lifespan(app: FastAPI):
     # Startup: create tables and cleanup old data
     Base.metadata.create_all(bind=engine)
-    cleanup_old_notes()
+    cleanup_old_data()
+
+    if threading.current_thread() is threading.main_thread():
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            previous = signal.getsignal(sig)
+
+            def _handler(signum, frame, prev=previous):
+                loop.call_soon_threadsafe(shutdown_event.set)
+                if callable(prev):
+                    prev(signum, frame)
+
+            try:
+                signal.signal(sig, _handler)
+            except ValueError:
+                # Test runners may execute lifespan in a non-main thread.
+                pass
+
+    # Initialize calendar cache in background (don't block startup)
+    asyncio.create_task(initialize_cache())
+
     yield
-    # Shutdown
+
+    # Shutdown: stop background cache refresh
+    broadcaster.close()
+    await shutdown_cache()
 
 
 app = FastAPI(title="Meal Planner", lifespan=lifespan)
@@ -78,6 +112,7 @@ app.include_router(auth.router)
 app.include_router(pantry.router)
 app.include_router(meal_ideas.router)
 app.include_router(realtime.router)
+app.include_router(calendar.router)
 
 
 # Health check

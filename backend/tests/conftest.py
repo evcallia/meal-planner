@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import MealNote, MealItem
+from app.models import MealNote, MealItem, CachedCalendarEvent, CalendarCacheMetadata
 from app.config import Settings
 
 
@@ -191,12 +191,64 @@ def authenticated_client(client: TestClient, mock_user):
     """Create a test client with authentication mocked."""
     from app.main import app
     from app.auth import get_current_user
-    
+
     # Override the auth dependency
     app.dependency_overrides[get_current_user] = lambda: mock_user
-    
+
     yield client
-    
+
     # Clean up the dependency override
     if get_current_user in app.dependency_overrides:
         del app.dependency_overrides[get_current_user]
+
+
+@pytest.fixture
+def sample_cache_metadata(db_session: Session) -> CalendarCacheMetadata:
+    """Create sample calendar cache metadata for testing."""
+    from datetime import timedelta
+    today = date.today()
+
+    metadata = CalendarCacheMetadata(
+        id=1,
+        last_refresh=datetime.utcnow(),
+        cache_start=today - timedelta(weeks=4),
+        cache_end=today + timedelta(weeks=8)
+    )
+    db_session.add(metadata)
+    db_session.commit()
+    db_session.refresh(metadata)
+    return metadata
+
+
+@pytest.fixture
+def sample_cached_events(db_session: Session, sample_cache_metadata: CalendarCacheMetadata) -> list[CachedCalendarEvent]:
+    """Create sample cached calendar events for testing."""
+    today = date.today()
+
+    events = [
+        CachedCalendarEvent(
+            event_date=today,
+            title="Morning Meeting",
+            start_time=datetime.combine(today, datetime.min.time().replace(hour=9)),
+            end_time=datetime.combine(today, datetime.min.time().replace(hour=10)),
+            all_day=False
+        ),
+        CachedCalendarEvent(
+            event_date=today,
+            title="Lunch",
+            start_time=datetime.combine(today, datetime.min.time().replace(hour=12)),
+            end_time=datetime.combine(today, datetime.min.time().replace(hour=13)),
+            all_day=False
+        ),
+        CachedCalendarEvent(
+            event_date=today + timedelta(days=1),
+            title="All Day Event",
+            start_time=datetime.combine(today + timedelta(days=1), datetime.min.time()),
+            all_day=True
+        ),
+    ]
+    db_session.add_all(events)
+    db_session.commit()
+    for event in events:
+        db_session.refresh(event)
+    return events

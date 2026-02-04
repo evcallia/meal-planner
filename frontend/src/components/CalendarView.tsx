@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { DayData } from '../types';
+import { CalendarEvent, DayData } from '../types';
 import { DayCard } from './DayCard';
 import { getDays, getEvents, updateNotes, toggleItemized } from '../api/client';
 import { saveLocalNote, queueChange } from '../db';
@@ -8,7 +8,11 @@ import { scrollToElementWithOffset } from '../utils/scroll';
 import { isPerfEnabled, logDuration, logRenderDuration, perfNow } from '../utils/perf';
 
 function formatDate(date: Date): string {
-  return date.toISOString().split('T')[0];
+  // Use local date to avoid timezone issues (toISOString uses UTC)
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function addDays(date: Date, days: number): Date {
@@ -32,21 +36,32 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
   const [loadingMore, setLoadingMore] = useState<'prev' | 'next' | null>(null);
   const endDateRef = useRef<Date>(addDays(new Date(), 6));
   const startDateRef = useRef<Date>(new Date());
-  const todayRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const todayRef = useRef<HTMLDivElement | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
   const isOnline = useOnlineStatus();
   const initialLoadDone = useRef(false);
+  const notifiedTodayRef = useRef<string | null>(null);
   const [, setEventsLoadState] = useState<Record<string, EventsLoadState>>({});
   const pendingRenderLogsRef = useRef<Array<{ label: string; start: number; payload?: Record<string, unknown> }>>([]);
 
-  const today = formatDate(new Date());
-
-  // Pass today ref up to parent whenever it changes
-  useEffect(() => {
-    if (!loading && todayRef.current) {
-      onTodayRefReady(todayRef.current);
+  const today = useRef(formatDate(new Date())).current;
+  const handleTodayRef = useCallback((node: HTMLDivElement | null) => {
+    if (node) {
+      todayRef.current = node;
+      onTodayRefReady(node);
     }
-  }, [loading, days, onTodayRefReady]);
+  }, [onTodayRefReady]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (notifiedTodayRef.current === today) return;
+    const element = todayRef.current
+      ?? document.querySelector<HTMLDivElement>(`[data-date="${today}"]`)
+      ?? document.querySelector<HTMLDivElement>('[data-date]');
+    if (!element) return;
+    notifiedTodayRef.current = today;
+    onTodayRefReady(element);
+  }, [loading, days, onTodayRefReady, today]);
 
   // Load events for a date range (non-blocking)
   const loadEventsForRange = useCallback(async (start: Date, end: Date) => {
@@ -198,6 +213,19 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
             items.push({ line_index: lineIndex, itemized });
           }
           return { ...day, meal_note: { ...day.meal_note, items } };
+        }));
+      }
+      if (detail.type === 'calendar.refreshed') {
+        const payload = detail.payload as { events_by_date?: Record<string, CalendarEvent[]> };
+        const eventsByDate = payload?.events_by_date;
+        if (!eventsByDate) return;
+        setDays(prev => prev.map(day => {
+          const dayEvents = eventsByDate[day.date];
+          if (dayEvents !== undefined) {
+            return { ...day, events: dayEvents };
+          }
+          // If not in the refreshed data, keep existing events
+          return day;
         }));
       }
     };
@@ -365,7 +393,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
 
       {/* Day Cards */}
       {days.map(day => (
-        <div key={day.date} ref={day.date === today ? todayRef : undefined}>
+        <div key={day.date} data-date={day.date} ref={day.date === today ? handleTodayRef : undefined}>
           <DayCard
             day={day}
             isToday={day.date === today}

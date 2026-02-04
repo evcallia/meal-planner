@@ -187,6 +187,195 @@ class TestMealItem:
         fake_id = uuid.uuid4()
         meal_item = MealItem(meal_note_id=fake_id, line_index=0)
         db_session.add(meal_item)
-        
+
         with pytest.raises(Exception):  # Should raise foreign key constraint error
             db_session.commit()
+
+
+class TestCachedCalendarEvent:
+    """Test the CachedCalendarEvent model."""
+
+    def test_create_cached_event(self, db_session: Session):
+        """Test creating a cached calendar event."""
+        from app.models import CachedCalendarEvent
+
+        event = CachedCalendarEvent(
+            event_date=date(2024, 2, 15),
+            title="Test Event",
+            start_time=datetime(2024, 2, 15, 10, 0, 0),
+            end_time=datetime(2024, 2, 15, 11, 0, 0),
+            all_day=False
+        )
+        db_session.add(event)
+        db_session.commit()
+        db_session.refresh(event)
+
+        assert event.id is not None
+        assert isinstance(event.id, uuid.UUID)
+        assert event.event_date == date(2024, 2, 15)
+        assert event.title == "Test Event"
+        assert event.start_time == datetime(2024, 2, 15, 10, 0, 0)
+        assert event.end_time == datetime(2024, 2, 15, 11, 0, 0)
+        assert event.all_day is False
+        assert event.created_at is not None
+
+    def test_cached_event_all_day(self, db_session: Session):
+        """Test creating an all-day cached event."""
+        from app.models import CachedCalendarEvent
+
+        event = CachedCalendarEvent(
+            event_date=date(2024, 2, 15),
+            title="All Day Event",
+            start_time=datetime(2024, 2, 15, 0, 0, 0),
+            end_time=None,
+            all_day=True
+        )
+        db_session.add(event)
+        db_session.commit()
+        db_session.refresh(event)
+
+        assert event.all_day is True
+        assert event.end_time is None
+
+    def test_cached_events_multiple_per_day(self, db_session: Session):
+        """Test multiple cached events for the same day."""
+        from app.models import CachedCalendarEvent
+
+        events = [
+            CachedCalendarEvent(
+                event_date=date(2024, 2, 15),
+                title="Event 1",
+                start_time=datetime(2024, 2, 15, 9, 0, 0),
+                all_day=False
+            ),
+            CachedCalendarEvent(
+                event_date=date(2024, 2, 15),
+                title="Event 2",
+                start_time=datetime(2024, 2, 15, 14, 0, 0),
+                all_day=False
+            ),
+            CachedCalendarEvent(
+                event_date=date(2024, 2, 15),
+                title="Event 3",
+                start_time=datetime(2024, 2, 15, 18, 0, 0),
+                all_day=False
+            ),
+        ]
+
+        db_session.add_all(events)
+        db_session.commit()
+
+        # Query events for this date
+        saved_events = (
+            db_session.query(CachedCalendarEvent)
+            .filter_by(event_date=date(2024, 2, 15))
+            .order_by(CachedCalendarEvent.start_time)
+            .all()
+        )
+
+        assert len(saved_events) == 3
+        assert saved_events[0].title == "Event 1"
+        assert saved_events[1].title == "Event 2"
+        assert saved_events[2].title == "Event 3"
+
+    def test_cached_event_date_index(self, db_session: Session):
+        """Test that event_date is indexed for efficient querying."""
+        from app.models import CachedCalendarEvent
+
+        # Add events on different dates
+        for i in range(10):
+            event = CachedCalendarEvent(
+                event_date=date(2024, 2, i + 1),
+                title=f"Event {i}",
+                start_time=datetime(2024, 2, i + 1, 10, 0, 0),
+                all_day=False
+            )
+            db_session.add(event)
+        db_session.commit()
+
+        # Query specific date (would use index)
+        results = (
+            db_session.query(CachedCalendarEvent)
+            .filter_by(event_date=date(2024, 2, 5))
+            .all()
+        )
+
+        assert len(results) == 1
+        assert results[0].title == "Event 4"
+
+
+class TestCalendarCacheMetadata:
+    """Test the CalendarCacheMetadata model."""
+
+    def test_create_metadata(self, db_session: Session):
+        """Test creating cache metadata."""
+        from app.models import CalendarCacheMetadata
+
+        metadata = CalendarCacheMetadata(
+            id=1,
+            last_refresh=datetime(2024, 2, 15, 12, 0, 0),
+            cache_start=date(2024, 1, 15),
+            cache_end=date(2024, 4, 15)
+        )
+        db_session.add(metadata)
+        db_session.commit()
+        db_session.refresh(metadata)
+
+        assert metadata.id == 1
+        assert metadata.last_refresh == datetime(2024, 2, 15, 12, 0, 0)
+        assert metadata.cache_start == date(2024, 1, 15)
+        assert metadata.cache_end == date(2024, 4, 15)
+
+    def test_metadata_nullable_fields(self, db_session: Session):
+        """Test metadata with null fields."""
+        from app.models import CalendarCacheMetadata
+
+        metadata = CalendarCacheMetadata(id=1)
+        db_session.add(metadata)
+        db_session.commit()
+        db_session.refresh(metadata)
+
+        assert metadata.last_refresh is None
+        assert metadata.cache_start is None
+        assert metadata.cache_end is None
+
+    def test_metadata_update(self, db_session: Session):
+        """Test updating cache metadata."""
+        from app.models import CalendarCacheMetadata
+
+        # Create initial metadata
+        metadata = CalendarCacheMetadata(
+            id=1,
+            last_refresh=datetime(2024, 2, 15, 12, 0, 0),
+            cache_start=date(2024, 1, 15),
+            cache_end=date(2024, 4, 15)
+        )
+        db_session.add(metadata)
+        db_session.commit()
+
+        # Update metadata
+        metadata.last_refresh = datetime(2024, 2, 16, 12, 0, 0)
+        metadata.cache_start = date(2024, 1, 16)
+        metadata.cache_end = date(2024, 4, 16)
+        db_session.commit()
+        db_session.refresh(metadata)
+
+        assert metadata.last_refresh == datetime(2024, 2, 16, 12, 0, 0)
+        assert metadata.cache_start == date(2024, 1, 16)
+        assert metadata.cache_end == date(2024, 4, 16)
+
+    def test_metadata_singleton(self, db_session: Session):
+        """Test that only one metadata record exists (singleton pattern)."""
+        from app.models import CalendarCacheMetadata
+
+        # Create first metadata
+        metadata1 = CalendarCacheMetadata(
+            id=1,
+            last_refresh=datetime.utcnow()
+        )
+        db_session.add(metadata1)
+        db_session.commit()
+
+        # Query should return single record
+        all_metadata = db_session.query(CalendarCacheMetadata).all()
+        assert len(all_metadata) == 1

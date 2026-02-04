@@ -5,6 +5,8 @@
 
 set -e  # Exit on first error
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -32,6 +34,12 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+PYTHON_CMD=""
+PIP_CMD=""
+VENV_DIR=""
+VENV_PYTHON=""
+VENV_PIP=""
+
 # Check for required commands
 check_requirements() {
     print_header "Checking Requirements"
@@ -42,12 +50,18 @@ check_requirements() {
         missing_commands+=("npm")
     fi
     
-    if ! command_exists python; then
-        missing_commands+=("python")
+    if command_exists python; then
+        PYTHON_CMD="python"
+    elif command_exists python3; then
+        PYTHON_CMD="python3"
+    else
+        missing_commands+=("python or python3")
     fi
     
-    if ! command_exists pip; then
-        missing_commands+=("pip")
+    if command_exists pip; then
+        PIP_CMD="pip"
+    elif command_exists pip3; then
+        PIP_CMD="pip3"
     fi
     
     if [ ${#missing_commands[@]} -ne 0 ]; then
@@ -59,21 +73,33 @@ check_requirements() {
     print_color $GREEN "All required commands are available."
 }
 
+setup_backend_venv() {
+    VENV_DIR="$ROOT_DIR/backend/.venv"
+    if [ ! -x "$VENV_DIR/bin/python" ]; then
+        print_color $YELLOW "Creating backend virtual environment..."
+        "$PYTHON_CMD" -m venv "$VENV_DIR"
+    fi
+
+    VENV_PYTHON="$VENV_DIR/bin/python"
+    VENV_PIP="$VENV_DIR/bin/pip"
+}
+
 # Install dependencies
 install_dependencies() {
     print_header "Installing Dependencies"
     
     # Frontend dependencies
     print_color $YELLOW "Installing frontend dependencies..."
-    cd frontend
+    cd "$ROOT_DIR/frontend"
     npm install
-    cd ..
+    cd "$ROOT_DIR"
     
     # Backend dependencies
     print_color $YELLOW "Installing backend dependencies..."
-    cd backend
-    pip install -r requirements.txt
-    cd ..
+    cd "$ROOT_DIR/backend"
+    setup_backend_venv
+    "$VENV_PIP" install -r requirements.txt
+    cd "$ROOT_DIR"
     
     print_color $GREEN "Dependencies installed successfully."
 }
@@ -82,7 +108,7 @@ install_dependencies() {
 run_frontend_tests() {
     print_header "Running Frontend Tests"
     
-    cd frontend
+    cd "$ROOT_DIR/frontend"
     
     # Run tests with coverage and capture output
     print_color $YELLOW "Running React/TypeScript tests with Vitest..."
@@ -98,7 +124,7 @@ run_frontend_tests() {
     # Store coverage for later use
     echo "$frontend_coverage_pct" > /tmp/frontend_coverage.txt
     
-    cd ..
+    cd "$ROOT_DIR"
     print_color $GREEN "Frontend tests completed."
 }
 
@@ -106,15 +132,16 @@ run_frontend_tests() {
 run_backend_tests() {
     print_header "Running Backend Tests"
     
-    cd backend
+    cd "$ROOT_DIR/backend"
+    setup_backend_venv
     
     # Run tests with coverage and capture output
     print_color $YELLOW "Running Python/FastAPI tests with pytest..."
-    python -m pytest --verbose --tb=short || true
+    "$VENV_PYTHON" -m pytest --verbose --tb=short || true
     
     # Generate detailed coverage report and capture percentage
     print_color $YELLOW "Generating detailed coverage report..."
-    coverage_output=$(python -m pytest --cov=app --cov-report=html --cov-report=term-missing 2>&1) || true
+    coverage_output=$("$VENV_PYTHON" -m pytest --cov=app --cov-report=html --cov-report=term-missing 2>&1) || true
     
     # Extract coverage percentage from pytest output  
     backend_coverage_pct=$(echo "$coverage_output" | grep -oE "TOTAL.*[0-9]+%" | grep -oE "[0-9]+%" | sed 's/%//' || echo "0")
@@ -122,7 +149,7 @@ run_backend_tests() {
     # Store coverage for later use
     echo "$backend_coverage_pct" > /tmp/backend_coverage.txt
     
-    cd ..
+    cd "$ROOT_DIR"
     print_color $GREEN "Backend tests completed."
 }
 
