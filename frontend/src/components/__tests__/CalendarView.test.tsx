@@ -145,6 +145,15 @@ describe('CalendarView', () => {
   });
 
   it('should load previous week when button is clicked', async () => {
+    const prevDays = [
+      {
+        date: formatDate(addDays(today, -7)),
+        meal_note: null,
+        events: [],
+      },
+    ];
+    mockGetDays.mockResolvedValueOnce(mockDays).mockResolvedValueOnce(prevDays);
+
     render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
 
     await waitFor(() => {

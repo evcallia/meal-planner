@@ -19,22 +19,30 @@ describe('useRealtime', () => {
   });
 
   it('creates an EventSource and dispatches events', () => {
-    const source = new MockEventSource('/api/stream');
-    const eventSourceSpy = vi.fn(() => source);
+    let source: MockEventSource | null = null;
+    const eventSourceSpy = vi.fn(function (url: string) {
+      source = new MockEventSource(url);
+      return source;
+    });
     // @ts-expect-error - test override
     global.EventSource = eventSourceSpy;
 
     const listener = vi.fn();
     window.addEventListener('meal-planner-realtime', listener);
 
-    renderHook(() => useRealtime());
+    const { unmount } = renderHook(() => useRealtime());
 
     expect(eventSourceSpy).toHaveBeenCalledWith('/api/stream');
+
+    if (!source) {
+      throw new Error('EventSource was not created');
+    }
 
     source.emit({ type: 'pantry.updated', payload: { id: '1' } });
 
     expect(listener).toHaveBeenCalled();
 
+    unmount();
     window.removeEventListener('meal-planner-realtime', listener);
   });
 });

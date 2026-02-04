@@ -1,8 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SettingsModal } from '../SettingsModal'
 import type { Settings } from '../../hooks/useSettings'
+
+vi.mock('../../api/client', () => ({
+  getCalendarCacheStatus: vi.fn(() => Promise.resolve({ is_refreshing: false, last_refresh: null })),
+  refreshCalendarCache: vi.fn(() => Promise.resolve()),
+}))
 
 describe('SettingsModal', () => {
   const defaultSettings: Settings = {
@@ -11,24 +16,31 @@ describe('SettingsModal', () => {
     showMealIdeas: true,
   }
 
-  const defaultProps = {
-    settings: defaultSettings,
-    onUpdate: vi.fn(),
-    onClose: vi.fn(),
-  }
+const defaultProps = {
+  settings: defaultSettings,
+  onUpdate: vi.fn(),
+  onClose: vi.fn(),
+}
+
+const renderModal = async (props = defaultProps) => {
+  await act(async () => {
+    render(<SettingsModal {...props} />)
+    await Promise.resolve()
+  })
+}
 
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('renders the modal with correct title', () => {
-    render(<SettingsModal {...defaultProps} />)
+  it('renders the modal with correct title', async () => {
+    await renderModal()
     
     expect(screen.getByText('Settings')).toBeInTheDocument()
   })
 
-  it('displays the current setting state correctly', () => {
-    render(<SettingsModal {...defaultProps} />)
+  it('displays the current setting state correctly', async () => {
+    await renderModal()
     
     const ideasToggle = screen.getByRole('switch', { name: /show future meals/i })
     expect(ideasToggle).toHaveAttribute('aria-checked', 'true')
@@ -40,14 +52,14 @@ describe('SettingsModal', () => {
     expect(toggle).toHaveAttribute('aria-checked', 'true')
   })
 
-  it('displays unchecked state when setting is false', () => {
+  it('displays unchecked state when setting is false', async () => {
     const settings: Settings = {
       showItemizedColumn: false,
       showPantry: false,
       showMealIdeas: false,
     }
     
-    render(<SettingsModal {...defaultProps} settings={settings} />)
+    await renderModal({ ...defaultProps, settings })
     
     const ideasToggle = screen.getByRole('switch', { name: /show future meals/i })
     expect(ideasToggle).toHaveAttribute('aria-checked', 'false')
@@ -61,7 +73,7 @@ describe('SettingsModal', () => {
 
   it('calls onUpdate when checkbox is toggled', async () => {
     const user = userEvent.setup()
-    render(<SettingsModal {...defaultProps} />)
+    await renderModal()
     
     const toggle = screen.getByRole('switch', { name: /show itemized column/i })
     
@@ -74,7 +86,7 @@ describe('SettingsModal', () => {
 
   it('updates pantry visibility when toggled', async () => {
     const user = userEvent.setup()
-    render(<SettingsModal {...defaultProps} />)
+    await renderModal()
 
     const pantryToggle = screen.getByRole('switch', { name: /show pantry/i })
 
@@ -87,7 +99,7 @@ describe('SettingsModal', () => {
 
   it('updates future meals visibility when toggled', async () => {
     const user = userEvent.setup()
-    render(<SettingsModal {...defaultProps} />)
+    await renderModal()
 
     const ideasToggle = screen.getByRole('switch', { name: /show future meals/i })
 
@@ -100,7 +112,7 @@ describe('SettingsModal', () => {
 
   it('calls onClose when close button is clicked', async () => {
     const user = userEvent.setup()
-    render(<SettingsModal {...defaultProps} />)
+    await renderModal()
     
     const closeButton = screen.getByRole('button', { name: '' }) // The X button has no text
     
@@ -111,7 +123,7 @@ describe('SettingsModal', () => {
 
   it('calls onClose when clicking outside the modal', async () => {
     const { fireEvent } = await import('@testing-library/react')
-    render(<SettingsModal {...defaultProps} />)
+    await renderModal()
     
     // Click on the backdrop (the overlay)
     const backdrop = screen.getByText('Settings').closest('[class*="fixed inset-0"]')
@@ -124,7 +136,7 @@ describe('SettingsModal', () => {
 
   it('does not close when clicking inside the modal content', async () => {
     const { fireEvent } = await import('@testing-library/react')
-    render(<SettingsModal {...defaultProps} />)
+    await renderModal()
     
     const modalContent = screen.getByText('Settings').closest('[class*="bg-white"]')
     expect(modalContent).toBeInTheDocument()
@@ -134,8 +146,8 @@ describe('SettingsModal', () => {
     expect(defaultProps.onClose).not.toHaveBeenCalled()
   })
 
-  it('has proper accessibility attributes', () => {
-    render(<SettingsModal {...defaultProps} />)
+  it('has proper accessibility attributes', async () => {
+    await renderModal()
     
     const ideasToggle = screen.getByRole('switch', { name: /show future meals/i })
     expect(ideasToggle).toHaveAttribute('aria-checked', 'true')
@@ -150,14 +162,14 @@ describe('SettingsModal', () => {
     expect(closeButton).toBeInTheDocument()
   })
 
-  it('shows correct description for itemized column setting', () => {
-    render(<SettingsModal {...defaultProps} />)
+  it('shows correct description for itemized column setting', async () => {
+    await renderModal()
     
     expect(screen.getByText('Show checkboxes to mark meals as added to shopping list')).toBeInTheDocument()
   })
 
-  it('handles keyboard navigation', () => {
-    render(<SettingsModal {...defaultProps} />)
+  it('handles keyboard navigation', async () => {
+    await renderModal()
     
     const toggle = screen.getByRole('switch', { name: /show itemized column/i })
     const closeButton = screen.getByRole('button', { name: '' }) // Empty name for X button

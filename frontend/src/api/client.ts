@@ -130,3 +130,20 @@ export async function deleteMealIdea(ideaId: string): Promise<void> {
     method: 'DELETE',
   });
 }
+
+export interface CalendarCacheStatus {
+  last_refresh: string | null;
+  cache_start: string | null;
+  cache_end: string | null;
+  is_refreshing: boolean;
+}
+
+export async function getCalendarCacheStatus(): Promise<CalendarCacheStatus> {
+  return fetchAPI<CalendarCacheStatus>('/calendar/cache-status');
+}
+
+export async function refreshCalendarCache(): Promise<{ message: string }> {
+  return fetchAPI<{ message: string }>('/calendar/refresh', {
+    method: 'POST',
+  });
+}

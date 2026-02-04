@@ -26,7 +26,7 @@ export function PantryPanel() {
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="px-4 py-4 border-b border-gray-200 dark:border-gray-700 grid gap-3 sm:grid-cols-[3fr_1fr_auto]">
+      <form onSubmit={handleSubmit} className="px-4 py-4 border-b border-gray-200 dark:border-gray-700 grid gap-3 grid-cols-[3fr_1fr_auto]">
         <div>
           <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Item</label>
           <input
@@ -65,7 +65,7 @@ export function PantryPanel() {
           items.map(item => (
             <div key={item.id} className="border border-gray-200 dark:border-gray-700 rounded-md p-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex-1 grid gap-2 sm:grid-cols-[2fr_1fr]">
+                <div className="flex-1 grid gap-2 grid-cols-[2fr_1fr]">
                   <input
                     value={item.name}
                     onChange={(event) => updateItem(item.id, { name: event.target.value })}

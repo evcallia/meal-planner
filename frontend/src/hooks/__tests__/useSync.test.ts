@@ -151,11 +151,10 @@ describe('useSync', () => {
 
     const { result } = renderHook(() => useSync());
 
-    // Wait a bit to ensure no sync attempts are made
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    expect(mockUpdateNotes).not.toHaveBeenCalled();
-    expect(result.current.status).toBe('offline');
+    await waitFor(() => {
+      expect(mockUpdateNotes).not.toHaveBeenCalled();
+      expect(result.current.status).toBe('offline');
+    });
   });
 
   it('should update pending count during sync', async () => {
