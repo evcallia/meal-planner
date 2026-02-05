@@ -36,9 +36,14 @@ export function StatusBar({ status, pendingCount }: StatusBarProps) {
   const config = getStatusConfig();
 
   return (
-    <div className={`${config.bg} text-white px-4 py-2 flex items-center justify-center gap-2 text-sm font-medium dark:opacity-90`}>
-      {config.icon}
-      <span>{config.text}</span>
-    </div>
+    <>
+      {/* Fixed banner at top */}
+      <div className={`${config.bg} text-white px-4 py-2 flex items-center justify-center gap-2 text-sm font-medium dark:opacity-90 fixed top-0 left-0 right-0 z-50`}>
+        {config.icon}
+        <span>{config.text}</span>
+      </div>
+      {/* Spacer to push content down */}
+      <div className="h-10" />
+    </>
   );
 }

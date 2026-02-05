@@ -9,19 +9,43 @@ vi.mock('../../api/client', () => ({
   deleteMealIdea: vi.fn(),
 }));
 
+vi.mock('../../db', () => ({
+  generateTempId: vi.fn(() => `temp-${Date.now()}`),
+  isTempId: vi.fn((id: string) => id.startsWith('temp-')),
+  queueChange: vi.fn(),
+  saveLocalMealIdea: vi.fn(),
+  getLocalMealIdeas: vi.fn(() => Promise.resolve([])),
+  deleteLocalMealIdea: vi.fn(),
+  clearLocalMealIdeas: vi.fn(),
+}));
+
+vi.mock('../useOnlineStatus', () => ({
+  useOnlineStatus: vi.fn(),
+}));
+
 import { getMealIdeas, createMealIdea, updateMealIdea, deleteMealIdea } from '../../api/client';
+import { getLocalMealIdeas, clearLocalMealIdeas, saveLocalMealIdea } from '../../db';
+import { useOnlineStatus } from '../useOnlineStatus';
 
 describe('useMealIdeas', () => {
   const mockGetMealIdeas = vi.mocked(getMealIdeas);
   const mockCreateMealIdea = vi.mocked(createMealIdea);
   const mockUpdateMealIdea = vi.mocked(updateMealIdea);
   const mockDeleteMealIdea = vi.mocked(deleteMealIdea);
+  const mockGetLocalMealIdeas = vi.mocked(getLocalMealIdeas);
+  const mockClearLocalMealIdeas = vi.mocked(clearLocalMealIdeas);
+  const mockSaveLocalMealIdea = vi.mocked(saveLocalMealIdea);
+  const mockUseOnlineStatus = vi.mocked(useOnlineStatus);
   const storage = new Map<string, string>();
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
+    mockUseOnlineStatus.mockReturnValue(true);
     storage.clear();
+    mockGetLocalMealIdeas.mockResolvedValue([]);
+    mockClearLocalMealIdeas.mockResolvedValue(undefined);
+    mockSaveLocalMealIdea.mockResolvedValue(undefined);
     vi.mocked(localStorage.getItem).mockImplementation((key: string) => storage.get(key) ?? null);
     vi.mocked(localStorage.setItem).mockImplementation((key: string, value: string) => {
       storage.set(key, String(value));
@@ -114,18 +138,24 @@ describe('useMealIdeas', () => {
   });
 
   it('refreshes when a realtime meal-ideas update arrives', async () => {
-    mockGetMealIdeas
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ id: '1', title: 'Tacos', updated_at: '2026-02-03T13:30:00Z' }]);
+    let shouldReturnUpdated = false;
+    mockGetMealIdeas.mockImplementation(() => Promise.resolve(
+      shouldReturnUpdated
+        ? [{ id: '1', title: 'Tacos', updated_at: '2026-02-03T13:30:00Z' }]
+        : []
+    ));
 
     const { result } = renderHook(() => useMealIdeas());
 
+    await waitFor(() => expect(mockGetMealIdeas).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(result.current.ideas).toHaveLength(0));
 
+    shouldReturnUpdated = true;
     act(() => {
       window.dispatchEvent(new CustomEvent('meal-planner-realtime', { detail: { type: 'meal-ideas.updated' } }));
     });
 
+    await waitFor(() => expect(mockGetMealIdeas).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(result.current.ideas).toHaveLength(1));
   });
 
@@ -133,16 +163,21 @@ describe('useMealIdeas', () => {
     localStorage.setItem('meal-planner-meal-ideas', JSON.stringify([
       { id: 'local-1', title: 'Local Idea', updated_at: '2026-02-03T09:00:00Z' },
     ]));
-    mockGetMealIdeas
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ id: 'server-1', title: 'Local Idea', updated_at: '2026-02-03T09:00:00Z' }])
-      .mockResolvedValueOnce([]);
-    mockCreateMealIdea.mockResolvedValue({ id: 'server-1', title: 'Local Idea', updated_at: '2026-02-03T09:00:00Z' });
+    let created = false;
+    mockCreateMealIdea.mockImplementation(async () => {
+      created = true;
+      return { id: 'server-1', title: 'Local Idea', updated_at: '2026-02-03T09:00:00Z' };
+    });
+    mockGetMealIdeas.mockImplementation(() => Promise.resolve(
+      created
+        ? [{ id: 'server-1', title: 'Local Idea', updated_at: '2026-02-03T09:00:00Z' }]
+        : []
+    ));
 
     const { result } = renderHook(() => useMealIdeas());
 
+    await waitFor(() => expect(mockCreateMealIdea).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(result.current.ideas).toHaveLength(1));
-    expect(mockCreateMealIdea).toHaveBeenCalledTimes(1);
 
     localStorage.setItem('meal-planner-meal-ideas', JSON.stringify([
       { id: 'local-1', title: 'Local Idea', updated_at: '2026-02-03T09:00:00Z' },

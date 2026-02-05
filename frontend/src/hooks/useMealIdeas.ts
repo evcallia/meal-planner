@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MealIdea } from '../types';
 import { createMealIdea, deleteMealIdea, getMealIdeas, updateMealIdea } from '../api/client';
+import { useOnlineStatus } from './useOnlineStatus';
+import {
+  generateTempId,
+  isTempId,
+  queueChange,
+  saveLocalMealIdea,
+  getLocalMealIdeas,
+  deleteLocalMealIdea,
+  clearLocalMealIdeas,
+} from '../db';
 
 interface MealIdeaInput {
   title: string;
@@ -35,6 +45,7 @@ export function useMealIdeas() {
   const loadTokenRef = useRef(0);
   const hasHydratedRef = useRef(false);
   const hasSavedRef = useRef(false);
+  const isOnline = useOnlineStatus();
 
   const invalidateLoad = () => {
     loadTokenRef.current += 1;
@@ -65,13 +76,25 @@ export function useMealIdeas() {
     try {
       const serverIdeas = await getMealIdeas();
       if (!isMountedRef.current || token !== loadTokenRef.current) return;
-      setIdeas(serverIdeas);
+
+      // Merge with any local-only ideas (temp IDs)
+      const localIdeas = await getLocalMealIdeas();
+      const tempIdeas = localIdeas.filter(idea => isTempId(idea.id));
+      const mergedIdeas = [...serverIdeas, ...tempIdeas];
+
+      setIdeas(mergedIdeas);
+
+      // Sync server ideas to local DB for offline access
+      await clearLocalMealIdeas();
+      for (const idea of mergedIdeas) {
+        await saveLocalMealIdea(idea);
+      }
 
       if (!hasHydratedRef.current) {
         hasHydratedRef.current = true;
-        const localIdeas = parseStoredIdeas(localStorage.getItem(STORAGE_KEY));
-        if (serverIdeas.length === 0 && localIdeas.length > 0) {
-          for (const idea of localIdeas) {
+        const legacyIdeas = parseStoredIdeas(localStorage.getItem(STORAGE_KEY));
+        if (serverIdeas.length === 0 && legacyIdeas.length > 0) {
+          for (const idea of legacyIdeas) {
             await createMealIdea({ title: idea.title });
           }
           const refreshed = await getMealIdeas();
@@ -83,7 +106,14 @@ export function useMealIdeas() {
     } catch (error) {
       console.error('Failed to load meal ideas:', error);
       if (isMountedRef.current && token === loadTokenRef.current) {
-        setIdeas(parseStoredIdeas(localStorage.getItem(STORAGE_KEY)));
+        // Load from IndexedDB when offline
+        const localIdeas = await getLocalMealIdeas();
+        if (localIdeas.length > 0) {
+          setIdeas(localIdeas);
+        } else {
+          // Fall back to localStorage
+          setIdeas(parseStoredIdeas(localStorage.getItem(STORAGE_KEY)));
+        }
       }
     }
   }, []);
@@ -109,18 +139,46 @@ export function useMealIdeas() {
     const run = async () => {
       const title = input.title.trim();
       if (!title) return;
-      try {
-        invalidateLoad();
-        const created = await createMealIdea({ title });
-        if (!isMountedRef.current) return;
-        setIdeas(prev => [...prev, created]);
-        void refreshIdeas();
-      } catch (error) {
-        console.error('Failed to add meal idea:', error);
+
+      // Always add optimistically with a temp ID first
+      const tempId = generateTempId();
+      const newIdea: MealIdea = {
+        id: tempId,
+        title,
+        updated_at: new Date().toISOString(),
+      };
+
+      // Add to local state immediately
+      setIdeas(prev => [...prev, newIdea]);
+
+      // Save to IndexedDB
+      await saveLocalMealIdea(newIdea);
+
+      if (isOnline) {
+        try {
+          invalidateLoad();
+          const created = await createMealIdea({ title });
+          if (!isMountedRef.current) return;
+
+          // Replace temp idea with server idea
+          setIdeas(prev => prev.map(idea => idea.id === tempId ? created : idea));
+
+          // Update IndexedDB with real ID
+          await deleteLocalMealIdea(tempId);
+          await saveLocalMealIdea(created);
+        } catch (error) {
+          console.error('Failed to add meal idea:', error);
+          // Queue for later sync - idea already in local state with temp ID
+          await queueChange('meal-idea-add', '', { id: tempId, title });
+        }
+      } else {
+        // Queue for sync when back online
+        await queueChange('meal-idea-add', '', { id: tempId, title });
       }
     };
+
     void run();
-  }, []);
+  }, [isOnline]);
 
   const updateIdea = useCallback((id: string, updates: Partial<Pick<MealIdea, 'title'>>) => {
     setIdeas(prev => prev.map(idea => {
@@ -153,19 +211,38 @@ export function useMealIdeas() {
       if (!payload || payload.title === undefined) {
         return;
       }
-      try {
-        invalidateLoad();
-        const updated = await updateMealIdea(id, {
-          title: payload?.title,
-        });
-        if (!isMountedRef.current) return;
-        setIdeas(prev => prev.map(idea => idea.id === id ? updated : idea));
-        void refreshIdeas();
-      } catch (error) {
-        console.error('Failed to update meal idea:', error);
+
+      // Update local DB
+      const currentIdea = ideas.find(idea => idea.id === id);
+      if (currentIdea) {
+        const updatedIdea = {
+          ...currentIdea,
+          title: payload.title !== undefined ? payload.title : currentIdea.title,
+          updated_at: new Date().toISOString(),
+        };
+        await saveLocalMealIdea(updatedIdea);
+      }
+
+      if (isOnline && !isTempId(id)) {
+        try {
+          invalidateLoad();
+          const updated = await updateMealIdea(id, {
+            title: payload?.title,
+          });
+          if (!isMountedRef.current) return;
+          setIdeas(prev => prev.map(idea => idea.id === id ? updated : idea));
+          void refreshIdeas();
+        } catch (error) {
+          console.error('Failed to update meal idea:', error);
+          // Queue for later sync
+          await queueChange('meal-idea-update', '', { id, ...payload });
+        }
+      } else {
+        // Queue for later sync (offline or temp ID)
+        await queueChange('meal-idea-update', '', { id, ...payload });
       }
     }, 500);
-  }, []);
+  }, [isOnline, ideas]);
 
   const removeIdea = useCallback((id: string) => {
     const run = async () => {
@@ -173,18 +250,33 @@ export function useMealIdeas() {
         clearTimeout(updateTimersRef.current[id]);
       }
       delete pendingUpdatesRef.current[id];
-      try {
-        invalidateLoad();
-        await deleteMealIdea(id);
-        if (!isMountedRef.current) return;
-        setIdeas(prev => prev.filter(idea => idea.id !== id));
-        void refreshIdeas();
-      } catch (error) {
-        console.error('Failed to remove meal idea:', error);
+
+      // Remove from local state immediately
+      setIdeas(prev => prev.filter(idea => idea.id !== id));
+
+      // Remove from local DB
+      await deleteLocalMealIdea(id);
+
+      if (isOnline && !isTempId(id)) {
+        try {
+          invalidateLoad();
+          await deleteMealIdea(id);
+          if (!isMountedRef.current) return;
+          void refreshIdeas();
+        } catch (error) {
+          console.error('Failed to remove meal idea:', error);
+          // Queue for later sync
+          await queueChange('meal-idea-delete', '', { id });
+        }
+      } else if (!isTempId(id)) {
+        // Queue for later sync (offline, but not a temp ID)
+        await queueChange('meal-idea-delete', '', { id });
       }
+      // If it's a temp ID, we just need to remove it from the add queue
+      // which will happen during sync when the temp ID isn't found
     };
     void run();
-  }, []);
+  }, [isOnline, refreshIdeas]);
 
   const sortedIdeas = useMemo(() => {
     return [...ideas].sort((a, b) => {

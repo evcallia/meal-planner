@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # Apple Calendar (CalDAV)
     apple_calendar_email: str = ""
     apple_calendar_app_password: str = ""
-    apple_calendar_name: str = ""  # Optional: filter to specific calendar by name
+    apple_calendar_names: str = ""  # Optional: comma-separated list of calendar names to sync
 
     # OIDC (Authentik)
     oidc_issuer: str = ""
@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:8000"
     secure_cookies: bool = False  # Set to True for HTTPS in production
     debug_timing: bool = False  # Enable timing logs for performance debugging
+    allow_tunnel: bool = False  # Set to True when testing with ngrok/tunnels
 
     @property
     def database_url(self) -> str:
@@ -45,7 +46,10 @@ class Settings(BaseSettings):
         """Fail fast when running in a non-local environment with insecure defaults."""
         is_local = _is_localhost_url(self.frontend_url)
         uses_oidc = bool(self.oidc_issuer)
+        # Skip security validation for local dev or tunnel testing
         if is_local and not uses_oidc:
+            return
+        if self.allow_tunnel:
             return
         if self.secret_key == "change-me-in-production":
             raise ValueError("SECRET_KEY must be set to a secure value for non-local deployments.")

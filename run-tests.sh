@@ -213,15 +213,7 @@ generate_summary() {
     print_color $CYAN "Frontend Coverage: ${frontend_coverage}%"
     print_color $CYAN "Backend Coverage:  ${backend_coverage}%"
     echo
-    
-    print_color $BLUE "Next steps:"
-    print_color $BLUE "1. Review coverage reports to identify areas needing more tests"
-    print_color $BLUE "2. Fix any failing tests"
-    print_color $BLUE "3. Add integration tests for critical user workflows"
-    print_color $BLUE "4. Set up CI/CD pipeline to run tests automatically"
-    
-    echo
-    
+
     # Clean up temp files
     rm -f /tmp/frontend_coverage.txt /tmp/backend_coverage.txt
 }

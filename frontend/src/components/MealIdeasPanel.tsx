@@ -3,9 +3,10 @@ import { useMealIdeas } from '../hooks/useMealIdeas';
 
 interface MealIdeasPanelProps {
   onSchedule?: (title: string, date: string) => Promise<void> | void;
+  compactView?: boolean;
 }
 
-export function MealIdeasPanel({ onSchedule }: MealIdeasPanelProps) {
+export function MealIdeasPanel({ onSchedule, compactView = false }: MealIdeasPanelProps) {
   const { ideas, addIdea, updateIdea, removeIdea } = useMealIdeas();
   const [title, setTitle] = useState('');
   const [scheduleDates, setScheduleDates] = useState<Record<string, string>>({});
@@ -16,7 +17,11 @@ export function MealIdeasPanel({ onSchedule }: MealIdeasPanelProps) {
     for (let i = 0; i < 14; i += 1) {
       const date = new Date(start);
       date.setDate(start.getDate() + i);
-      const value = date.toISOString().split('T')[0];
+      // Use local date formatting to avoid timezone issues (toISOString uses UTC)
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const value = `${year}-${month}-${day}`;
       const label = date.toLocaleDateString('en-US', {
         weekday: 'short',
         month: 'short',
@@ -49,6 +54,77 @@ export function MealIdeasPanel({ onSchedule }: MealIdeasPanelProps) {
       setSchedulingId(null);
     }
   };
+
+  if (compactView) {
+    return (
+      <section className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm">
+        <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Future Meals</h2>
+        </div>
+
+        <form onSubmit={handleSubmit} className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex gap-2">
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="Add meal..."
+            className="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1 text-xs text-gray-900 dark:text-gray-100"
+            required
+          />
+          <button
+            type="submit"
+            className="rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-2 py-1"
+          >
+            Add
+          </button>
+        </form>
+
+        <div className="px-3 py-2 space-y-1.5 max-h-40 overflow-y-auto">
+          {ideas.length === 0 ? (
+            <p className="text-xs text-gray-500 dark:text-gray-400">No future meals yet.</p>
+          ) : (
+            ideas.map(idea => (
+              <div key={idea.id} className="flex items-center gap-1.5 text-xs">
+                <input
+                  value={idea.title}
+                  onChange={(event) => updateIdea(idea.id, { title: event.target.value })}
+                  className="flex-1 min-w-0 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-1.5 py-0.5 text-xs text-gray-900 dark:text-gray-100"
+                />
+                <select
+                  value={scheduleDates[idea.id] ?? ''}
+                  onChange={(event) => setScheduleDates(prev => ({ ...prev, [idea.id]: event.target.value }))}
+                  className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-1 py-0.5 text-xs text-gray-900 dark:text-gray-100"
+                  aria-label={`Schedule ${idea.title}`}
+                >
+                  <option value="">Day</option>
+                  {upcomingDays.map(day => (
+                    <option key={day.value} value={day.value}>{day.label}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => handleSchedule(idea.id, idea.title)}
+                  disabled={!scheduleDates[idea.id] || !onSchedule || schedulingId === idea.id}
+                  className="rounded bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs px-1.5 py-0.5"
+                >
+                  Go
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeIdea(idea.id)}
+                  className="text-red-500 hover:text-red-600 p-0.5"
+                  aria-label={`Remove ${idea.title}`}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm">

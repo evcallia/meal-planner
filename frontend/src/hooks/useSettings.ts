@@ -4,12 +4,14 @@ export interface Settings {
   showItemizedColumn: boolean;
   showPantry: boolean;
   showMealIdeas: boolean;
+  compactView: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
   showItemizedColumn: true,
   showPantry: true,
   showMealIdeas: true,
+  compactView: false,
 };
 
 const STORAGE_KEY = 'meal-planner-settings';

@@ -11,9 +11,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from sqlalchemy import delete
+from sqlalchemy import delete, text, inspect
 
 from app.config import get_settings
+
+# Clear the settings cache on import to ensure fresh settings are loaded
+get_settings.cache_clear()
 from app.database import engine, Base, SessionLocal
 from app.models import MealNote, CachedCalendarEvent
 from app.routers import days, auth, pantry, meal_ideas, realtime, calendar
@@ -60,10 +63,25 @@ def cleanup_old_data():
         db.close()
 
 
+def run_migrations():
+    """Run database migrations for schema changes."""
+    inspector = inspect(engine)
+
+    # Check if calendar_name column exists in cached_calendar_events
+    columns = [col["name"] for col in inspector.get_columns("cached_calendar_events")]
+    if "calendar_name" not in columns:
+        print("Adding calendar_name column to cached_calendar_events...")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE cached_calendar_events ADD COLUMN calendar_name TEXT DEFAULT ''"))
+            conn.commit()
+        print("Migration complete: added calendar_name column")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: create tables and cleanup old data
+    # Startup: create tables, run migrations, and cleanup old data
     Base.metadata.create_all(bind=engine)
+    run_migrations()
     cleanup_old_data()
 
     if threading.current_thread() is threading.main_thread():
@@ -98,11 +116,12 @@ app = FastAPI(title="Meal Planner", lifespan=lifespan)
 app.add_middleware(TimingMiddleware)
 
 # Session middleware for auth
+# When using tunnels (ngrok), use same_site="none" to allow cross-site cookies
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.secret_key,
-    same_site="lax",
-    https_only=settings.secure_cookies,
+    same_site="none" if settings.allow_tunnel else "lax",
+    https_only=settings.secure_cookies or settings.allow_tunnel,  # ngrok uses HTTPS
     session_cookie="meal_planner_session",
 )
 

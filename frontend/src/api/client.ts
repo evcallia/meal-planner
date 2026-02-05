@@ -2,11 +2,16 @@ import { DayData, MealNote, MealItem, UserInfo, CalendarEvent, PantryItem, MealI
 import { logDuration, logPerf, perfNow } from '../utils/perf';
 
 const API_BASE = '/api';
+const API_TIMEOUT = 5000; // 5 second timeout for API requests
 
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   const method = options?.method ?? 'GET';
   const requestStart = perfNow();
   let response: Response;
+
+  // Create an AbortController for timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT);
 
   try {
     response = await fetch(`${API_BASE}${path}`, {
@@ -16,11 +21,15 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
         ...options?.headers,
       },
       credentials: 'include',
+      signal: controller.signal,
     });
   } catch (error) {
+    clearTimeout(timeoutId);
     logDuration('api.request_error', requestStart, { path, method });
     throw error;
   }
+
+  clearTimeout(timeoutId);
 
   logDuration('api.request', requestStart, { path, method, status: response.status });
 
@@ -62,9 +71,16 @@ export async function toggleItemized(date: string, lineIndex: number, itemized: 
 
 export async function getCurrentUser(): Promise<UserInfo | null> {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT);
+
     const response = await fetch(`${API_BASE}/auth/me`, {
       credentials: 'include',
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
+
     if (!response.ok) return null;
     return response.json();
   } catch {
@@ -146,4 +162,13 @@ export async function refreshCalendarCache(): Promise<{ message: string }> {
   return fetchAPI<{ message: string }>('/calendar/refresh', {
     method: 'POST',
   });
+}
+
+export interface CalendarListResponse {
+  available: string[];
+  selected: string[];
+}
+
+export async function getCalendarList(): Promise<CalendarListResponse> {
+  return fetchAPI<CalendarListResponse>('/calendar/list');
 }

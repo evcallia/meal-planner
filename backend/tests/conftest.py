@@ -40,16 +40,21 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 
 # Test settings that prevent database connection issues
 test_settings = Settings(
-    database_url="sqlite:///:memory:",
+    postgres_host="test",
+    postgres_port=5432,
+    postgres_db="test",
+    postgres_user="test",
+    postgres_password="test",
     secret_key="test-secret-key-for-testing-only",
     apple_calendar_email="",
     apple_calendar_app_password="",
-    apple_calendar_name="",
+    apple_calendar_names="",
     debug_timing=False,
     oidc_client_id="",
     oidc_client_secret="",
     oidc_issuer="",
-    environment="test"
+    frontend_url="http://localhost:3000",
+    secure_cookies=False,
 )
 
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -228,6 +233,7 @@ def sample_cached_events(db_session: Session, sample_cache_metadata: CalendarCac
     events = [
         CachedCalendarEvent(
             event_date=today,
+            calendar_name="TestCalendar",
             title="Morning Meeting",
             start_time=datetime.combine(today, datetime.min.time().replace(hour=9)),
             end_time=datetime.combine(today, datetime.min.time().replace(hour=10)),
@@ -235,6 +241,7 @@ def sample_cached_events(db_session: Session, sample_cache_metadata: CalendarCac
         ),
         CachedCalendarEvent(
             event_date=today,
+            calendar_name="TestCalendar",
             title="Lunch",
             start_time=datetime.combine(today, datetime.min.time().replace(hour=12)),
             end_time=datetime.combine(today, datetime.min.time().replace(hour=13)),
@@ -242,6 +249,7 @@ def sample_cached_events(db_session: Session, sample_cache_metadata: CalendarCac
         ),
         CachedCalendarEvent(
             event_date=today + timedelta(days=1),
+            calendar_name="TestCalendar",
             title="All Day Event",
             start_time=datetime.combine(today + timedelta(days=1), datetime.min.time()),
             all_day=True

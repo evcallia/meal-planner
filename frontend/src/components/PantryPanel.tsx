@@ -1,7 +1,11 @@
 import { FormEvent, useState } from 'react';
 import { usePantry } from '../hooks/usePantry';
 
-export function PantryPanel() {
+interface PantryPanelProps {
+  compactView?: boolean;
+}
+
+export function PantryPanel({ compactView = false }: PantryPanelProps) {
   const { items, addItem, updateItem, removeItem, adjustQuantity } = usePantry();
   const [name, setName] = useState('');
   const [quantity, setQuantity] = useState('1');
@@ -16,6 +20,84 @@ export function PantryPanel() {
     setName('');
     setQuantity('1');
   };
+
+  if (compactView) {
+    return (
+      <section className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm">
+        <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Pantry</h2>
+        </div>
+
+        <form onSubmit={handleSubmit} className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex gap-2">
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Add item..."
+            className="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1 text-xs text-gray-900 dark:text-gray-100"
+            required
+          />
+          <input
+            value={quantity}
+            onChange={(event) => setQuantity(event.target.value)}
+            type="number"
+            min="0"
+            step="1"
+            className="w-12 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-1.5 py-1 text-xs text-gray-900 dark:text-gray-100"
+            placeholder="Qty"
+          />
+          <button
+            type="submit"
+            className="rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-2 py-1"
+          >
+            Add
+          </button>
+        </form>
+
+        <div className="px-3 py-2 space-y-1 max-h-40 overflow-y-auto">
+          {items.length === 0 ? (
+            <p className="text-xs text-gray-500 dark:text-gray-400">No pantry items yet.</p>
+          ) : (
+            items.map(item => (
+              <div key={item.id} className="flex items-center gap-1.5 text-xs">
+                <input
+                  value={item.name}
+                  onChange={(event) => updateItem(item.id, { name: event.target.value })}
+                  className="flex-1 min-w-0 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-1.5 py-0.5 text-xs text-gray-900 dark:text-gray-100"
+                />
+                <button
+                  type="button"
+                  onClick={() => adjustQuantity(item.id, -1)}
+                  className="rounded border border-gray-300 dark:border-gray-600 px-1.5 py-0.5 text-xs text-gray-600 dark:text-gray-300"
+                  aria-label={`Decrease ${item.name}`}
+                >
+                  -
+                </button>
+                <span className="w-6 text-center text-gray-900 dark:text-gray-100">{item.quantity}</span>
+                <button
+                  type="button"
+                  onClick={() => adjustQuantity(item.id, 1)}
+                  className="rounded border border-gray-300 dark:border-gray-600 px-1.5 py-0.5 text-xs text-gray-600 dark:text-gray-300"
+                  aria-label={`Increase ${item.name}`}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeItem(item.id)}
+                  className="text-red-500 hover:text-red-600 p-0.5"
+                  aria-label={`Remove ${item.name}`}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm">

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MealItem } from '../MealItem'
 
@@ -76,7 +76,6 @@ describe('MealItem', () => {
   })
 
   it('calls onTextClick when text is clicked', async () => {
-    const { fireEvent } = await import('@testing-library/react')
     render(<MealItem {...defaultProps} />)
     
     const textElement = screen.getByText('Test meal item')
@@ -163,5 +162,88 @@ describe('MealItem', () => {
     
     const textElement = screen.getByText('Test meal item')
     expect(textElement).not.toHaveClass('mt-4')
+  })
+
+  it('fires drag callbacks and sets dataTransfer payload', () => {
+    const onDragStart = vi.fn()
+    const onDragEnd = vi.fn()
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: '',
+    }
+
+    const { container } = render(
+      <MealItem
+        {...defaultProps}
+        date="2026-02-05"
+        lineIndex={1}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+      />
+    )
+
+    const draggable = container.firstChild as HTMLElement
+    fireEvent.dragStart(draggable, { dataTransfer })
+
+    expect(dataTransfer.setData).toHaveBeenCalledWith(
+      'text/plain',
+      JSON.stringify({ date: '2026-02-05', lineIndex: 1, html: 'Test meal item' })
+    )
+    expect(dataTransfer.setDragImage).toHaveBeenCalled()
+    expect(onDragStart).toHaveBeenCalledWith('2026-02-05', 1, 'Test meal item')
+
+    fireEvent.dragEnd(draggable)
+    expect(onDragEnd).toHaveBeenCalled()
+  })
+
+  it('handles touch long press to start drag', () => {
+    vi.useFakeTimers()
+    const onDragStart = vi.fn()
+    const vibrateSpy = vi.fn()
+    Object.defineProperty(navigator, 'vibrate', { value: vibrateSpy, configurable: true })
+
+    const { container } = render(
+      <MealItem
+        {...defaultProps}
+        date="2026-02-05"
+        lineIndex={2}
+        onDragStart={onDragStart}
+      />
+    )
+
+    const draggable = container.firstChild as HTMLElement
+    fireEvent.touchStart(draggable, { touches: [{ clientX: 10, clientY: 10 }] })
+
+    vi.runAllTimers()
+
+    expect(onDragStart).toHaveBeenCalledWith('2026-02-05', 2, 'Test meal item')
+    expect(vibrateSpy).toHaveBeenCalledWith(50)
+
+    vi.useRealTimers()
+  })
+
+  it('cancels touch long press when the finger moves', () => {
+    vi.useFakeTimers()
+    const onDragStart = vi.fn()
+
+    const { container } = render(
+      <MealItem
+        {...defaultProps}
+        date="2026-02-05"
+        lineIndex={3}
+        onDragStart={onDragStart}
+      />
+    )
+
+    const draggable = container.firstChild as HTMLElement
+    fireEvent.touchStart(draggable, { touches: [{ clientX: 10, clientY: 10 }] })
+    fireEvent.touchMove(draggable, { touches: [{ clientX: 40, clientY: 40 }] })
+
+    vi.runAllTimers()
+
+    expect(onDragStart).not.toHaveBeenCalled()
+
+    vi.useRealTimers()
   })
 })

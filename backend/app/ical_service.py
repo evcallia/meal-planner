@@ -11,6 +11,8 @@ from app.schemas import CalendarEvent
 from app.database import SessionLocal
 from app.models import CachedCalendarEvent, CalendarCacheMetadata
 
+# Clear settings cache to ensure fresh values are loaded after restart
+get_settings.cache_clear()
 settings = get_settings()
 
 # Apple CalDAV URL
@@ -31,8 +33,9 @@ CACHE_WEEKS_BEFORE = 4
 CACHE_WEEKS_AFTER = 8
 CACHE_REFRESH_INTERVAL = 1800  # 30 minutes
 
-# Cache for CalDAV client/calendar (in-memory, short TTL)
-_calendar_cache: tuple[float, Optional[caldav.Calendar]] = (0, None)
+# Cache for CalDAV calendars (in-memory, short TTL)
+# Now stores list of calendars instead of single calendar
+_calendars_cache: tuple[float, list[caldav.Calendar]] = (0, [])
 CALENDAR_CACHE_TTL = 600  # 10 minutes
 
 # Background refresh task
@@ -60,18 +63,10 @@ def _is_all_day(component) -> bool:
     return False
 
 
-def _get_calendar_sync() -> Optional[caldav.Calendar]:
-    """Get cached calendar or create new connection (synchronous)."""
-    global _calendar_cache
-    now = time.time()
-
-    cached_time, cached_calendar = _calendar_cache
-    if cached_calendar and (now - cached_time) < CALENDAR_CACHE_TTL:
-        _log("[CalDAV] Using cached calendar connection")
-        return cached_calendar
-
+def _get_all_calendars_sync() -> list[caldav.Calendar]:
+    """Get all available calendars from CalDAV (synchronous)."""
     if not settings.apple_calendar_email or not settings.apple_calendar_app_password:
-        return None
+        return []
 
     try:
         _log(f"[CalDAV] Connecting to {APPLE_CALDAV_URL}...")
@@ -96,95 +91,154 @@ def _get_calendar_sync() -> Optional[caldav.Calendar]:
         t4 = time.time()
         _log(f"[CalDAV] Calendars fetched in {t4-t3:.2f}s (total: {t4-t1:.2f}s)")
 
-        if not calendars:
-            return None
-
-        calendar = None
-        if settings.apple_calendar_name:
-            for cal in calendars:
-                if cal.name == settings.apple_calendar_name:
-                    calendar = cal
-                    break
-            if not calendar:
-                _log(f"Calendar '{settings.apple_calendar_name}' not found. Available: {[c.name for c in calendars]}")
-                return None
-        else:
-            calendar = calendars[0]
-
-        _calendar_cache = (now, calendar)
-        return calendar
+        return calendars or []
 
     except Exception as e:
         _log(f"Error connecting to CalDAV: {e}")
-        return None
-
-
-def _fetch_events_from_caldav(start_date: date, end_date: date) -> list[CalendarEvent]:
-    """Fetch events from CalDAV (slow network call)."""
-    t_start = time.time()
-    calendar = _get_calendar_sync()
-    if not calendar:
         return []
+
+
+def _get_selected_calendars_sync() -> list[caldav.Calendar]:
+    """Get cached selected calendars or create new connection (synchronous)."""
+    global _calendars_cache
+    now = time.time()
+
+    # Get fresh settings each time to pick up env changes after restart
+    current_settings = get_settings()
+
+    # Parse the comma-separated calendar names from settings
+    selected_names = [name.strip() for name in current_settings.apple_calendar_names.split(",") if name.strip()]
+
+    cached_time, cached_calendars = _calendars_cache
+    if cached_calendars and (now - cached_time) < CALENDAR_CACHE_TTL:
+        # Verify cached calendars still match the selected names
+        cached_names = [c.name for c in cached_calendars]
+        if selected_names:
+            # Check if cached matches what's configured
+            if set(cached_names) == set(n for n in selected_names if n in cached_names):
+                _log("[CalDAV] Using cached calendar connections")
+                return cached_calendars
+        elif len(cached_calendars) == 1:
+            # No filter, using first calendar - cache is valid
+            _log("[CalDAV] Using cached calendar connections")
+            return cached_calendars
+        # Cache doesn't match current settings, refresh
+
+    all_calendars = _get_all_calendars_sync()
+    if not all_calendars:
+        return []
+
+    # Always log what we're trying to match (helps debug config issues)
+    available_names = [c.name for c in all_calendars]
+    print(f"[CalDAV] Config calendar names: {selected_names}", flush=True)
+    print(f"[CalDAV] Available calendars: {available_names}", flush=True)
+
+    if selected_names:
+        # Filter to only selected calendars
+        selected_calendars = []
+        for cal in all_calendars:
+            if cal.name in selected_names:
+                selected_calendars.append(cal)
+                print(f"[CalDAV] Matched calendar: '{cal.name}'", flush=True)
+        if not selected_calendars:
+            print(f"[CalDAV] No matching calendars found for {selected_names}. Available: {available_names}", flush=True)
+            # Fall back to first calendar if none match
+            selected_calendars = [all_calendars[0]]
+    else:
+        # No filter specified - use first calendar (backward compatible)
+        selected_calendars = [all_calendars[0]]
+
+    print(f"[CalDAV] Using calendars: {[c.name for c in selected_calendars]}", flush=True)
+    _calendars_cache = (now, selected_calendars)
+    return selected_calendars
+
+
+def list_available_calendars_sync() -> list[str]:
+    """List all available calendar names (for UI selection)."""
+    calendars = _get_all_calendars_sync()
+    return [cal.name for cal in calendars]
+
+
+class CalendarEventWithSource:
+    """Internal class to track event source calendar."""
+    def __init__(self, event: CalendarEvent, calendar_name: str):
+        self.event = event
+        self.calendar_name = calendar_name
+
+
+def _fetch_events_from_caldav(start_date: date, end_date: date) -> list[CalendarEventWithSource]:
+    """Fetch events from all selected CalDAV calendars (slow network call)."""
+    t_start = time.time()
+    calendars = _get_selected_calendars_sync()
+    if not calendars:
+        return []
+
+    all_events: list[CalendarEventWithSource] = []
 
     try:
         start_dt = datetime.combine(start_date, datetime.min.time())
         end_dt = datetime.combine(end_date, datetime.max.time())
 
-        _log(f"[CalDAV] Searching events {start_date} to {end_date}...")
-        t1 = time.time()
+        for calendar in calendars:
+            calendar_name = calendar.name or "Unknown"
+            _log(f"[CalDAV] Searching events in '{calendar_name}' {start_date} to {end_date}...")
+            t1 = time.time()
 
-        caldav_events = calendar.search(
-            start=start_dt,
-            end=end_dt,
-            event=True,
-            expand=True,
-        )
-
-        t2 = time.time()
-        _log(f"[CalDAV] Search completed in {t2-t1:.2f}s, found {len(caldav_events)} events")
-
-        events: list[CalendarEvent] = []
-
-        for caldav_event in caldav_events:
             try:
-                cal = Calendar.from_ical(caldav_event.data)
+                caldav_events = calendar.search(
+                    start=start_dt,
+                    end=end_dt,
+                    event=True,
+                    expand=True,
+                )
 
-                for component in cal.walk():
-                    if component.name != "VEVENT":
+                t2 = time.time()
+                _log(f"[CalDAV] Search in '{calendar_name}' completed in {t2-t1:.2f}s, found {len(caldav_events)} events")
+
+                for caldav_event in caldav_events:
+                    try:
+                        cal = Calendar.from_ical(caldav_event.data)
+
+                        for component in cal.walk():
+                            if component.name != "VEVENT":
+                                continue
+
+                            dtstart = component.get("dtstart")
+                            dtend = component.get("dtend")
+                            summary = str(component.get("summary", ""))
+
+                            if not dtstart:
+                                continue
+
+                            event_start = _parse_ical_date(dtstart)
+                            event_end = _parse_ical_date(dtend) if dtend else None
+                            event_date = event_start.date()
+
+                            if event_date < start_date or event_date > end_date:
+                                continue
+
+                            event = CalendarEvent(
+                                title=summary,
+                                start_time=event_start,
+                                end_time=event_end,
+                                all_day=_is_all_day(component),
+                            )
+                            all_events.append(CalendarEventWithSource(event, calendar_name))
+                    except Exception as e:
+                        _log(f"Error parsing event: {e}")
                         continue
 
-                    dtstart = component.get("dtstart")
-                    dtend = component.get("dtend")
-                    summary = str(component.get("summary", ""))
-
-                    if not dtstart:
-                        continue
-
-                    event_start = _parse_ical_date(dtstart)
-                    event_end = _parse_ical_date(dtend) if dtend else None
-                    event_date = event_start.date()
-
-                    if event_date < start_date or event_date > end_date:
-                        continue
-
-                    events.append(
-                        CalendarEvent(
-                            title=summary,
-                            start_time=event_start,
-                            end_time=event_end,
-                            all_day=_is_all_day(component),
-                        )
-                    )
             except Exception as e:
-                _log(f"Error parsing event: {e}")
+                _log(f"Error fetching from calendar '{calendar_name}': {e}")
                 continue
 
-        events.sort(key=lambda e: e.start_time)
+        # Sort by start time
+        all_events.sort(key=lambda e: e.event.start_time)
 
         t_end = time.time()
-        _log(f"[CalDAV] Total fetch time: {t_end-t_start:.2f}s, {len(events)} events")
+        _log(f"[CalDAV] Total fetch time: {t_end-t_start:.2f}s, {len(all_events)} events from {len(calendars)} calendars")
 
-        return events
+        return all_events
 
     except Exception as e:
         _log(f"Error fetching from Apple Calendar: {e}")
@@ -204,8 +258,8 @@ def _refresh_db_cache_sync() -> None:
     start, end = _get_cache_range()
     _log(f"[CalDAV Cache] Refreshing DB cache for {start} to {end}...")
 
-    # Fetch from CalDAV
-    events = _fetch_events_from_caldav(start, end)
+    # Fetch from CalDAV (now returns CalendarEventWithSource objects)
+    events_with_source = _fetch_events_from_caldav(start, end)
 
     # Update database
     db = SessionLocal()
@@ -216,10 +270,12 @@ def _refresh_db_cache_sync() -> None:
             CachedCalendarEvent.event_date <= end
         ).delete()
 
-        # Insert new events
-        for event in events:
+        # Insert new events with calendar source
+        for event_with_source in events_with_source:
+            event = event_with_source.event
             cached_event = CachedCalendarEvent(
                 event_date=event.start_time.date(),
+                calendar_name=event_with_source.calendar_name,
                 title=event.title,
                 start_time=event.start_time,
                 end_time=event.end_time,
@@ -238,7 +294,7 @@ def _refresh_db_cache_sync() -> None:
         metadata.cache_end = end
 
         db.commit()
-        _log(f"[CalDAV Cache] DB cache refreshed with {len(events)} events")
+        _log(f"[CalDAV Cache] DB cache refreshed with {len(events_with_source)} events")
 
     except Exception as e:
         db.rollback()
@@ -289,14 +345,10 @@ async def initialize_cache() -> None:
     """Initialize the cache on startup. Called from app lifespan."""
     global _refresh_task
 
-    _log("[CalDAV Cache] Checking DB cache on startup...")
+    _log("[CalDAV Cache] Refreshing cache on startup...")
 
-    # Check if we have valid cache
-    if _is_cache_valid():
-        _log("[CalDAV Cache] Valid cache exists, starting background refresh task")
-    else:
-        _log("[CalDAV Cache] No valid cache, refreshing now...")
-        await _refresh_cache_async()
+    # Always refresh on startup to pick up any config changes (e.g., new calendars)
+    await _refresh_cache_async()
 
     # Start background refresh task
     _refresh_task = asyncio.create_task(_background_refresh_loop())
@@ -355,8 +407,8 @@ def _fetch_and_cache_events_sync(start_date: date, end_date: date) -> list[Calen
     """Fetch events from CalDAV and add them to the DB cache."""
     _log(f"[CalDAV Cache] Fetching and caching events for {start_date} to {end_date}...")
 
-    # Fetch from CalDAV
-    events = _fetch_events_from_caldav(start_date, end_date)
+    # Fetch from CalDAV (now returns CalendarEventWithSource objects)
+    events_with_source = _fetch_events_from_caldav(start_date, end_date)
 
     # Add to database cache
     db = SessionLocal()
@@ -367,10 +419,12 @@ def _fetch_and_cache_events_sync(start_date: date, end_date: date) -> list[Calen
             CachedCalendarEvent.event_date <= end_date
         ).delete()
 
-        # Insert new events
-        for event in events:
+        # Insert new events with calendar source
+        for event_with_source in events_with_source:
+            event = event_with_source.event
             cached_event = CachedCalendarEvent(
                 event_date=event.start_time.date(),
+                calendar_name=event_with_source.calendar_name,
                 title=event.title,
                 start_time=event.start_time,
                 end_time=event.end_time,
@@ -379,7 +433,7 @@ def _fetch_and_cache_events_sync(start_date: date, end_date: date) -> list[Calen
             db.add(cached_event)
 
         db.commit()
-        _log(f"[CalDAV Cache] Added {len(events)} events to cache for {start_date} to {end_date}")
+        _log(f"[CalDAV Cache] Added {len(events_with_source)} events to cache for {start_date} to {end_date}")
 
     except Exception as e:
         db.rollback()
@@ -387,7 +441,8 @@ def _fetch_and_cache_events_sync(start_date: date, end_date: date) -> list[Calen
     finally:
         db.close()
 
-    return events
+    # Return just the CalendarEvent objects (without source) for API compatibility
+    return [e.event for e in events_with_source]
 
 
 async def fetch_ical_events(start_date: date, end_date: date) -> list[CalendarEvent]:
@@ -457,4 +512,4 @@ def get_events_for_date(events: list[CalendarEvent], target_date: date) -> list[
 
 
 # Alias for backward compatibility with tests
-_get_calendar = _get_calendar_sync
+_get_calendar = _get_selected_calendars_sync

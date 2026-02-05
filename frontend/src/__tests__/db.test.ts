@@ -1,16 +1,54 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { saveLocalNote, getLocalNote, queueChange, getPendingChanges, removePendingChange, markNoteSynced, clearPendingChanges, db } from '../db';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import {
+  saveLocalNote,
+  getLocalNote,
+  queueChange,
+  getPendingChanges,
+  removePendingChange,
+  markNoteSynced,
+  clearPendingChanges,
+  getLocalNotesForRange,
+  getAllLocalNotes,
+  generateTempId,
+  isTempId,
+  saveLocalPantryItem,
+  getLocalPantryItems,
+  getLocalPantryItem,
+  deleteLocalPantryItem,
+  clearLocalPantryItems,
+  saveLocalMealIdea,
+  getLocalMealIdeas,
+  getLocalMealIdea,
+  deleteLocalMealIdea,
+  clearLocalMealIdeas,
+  saveTempIdMapping,
+  getTempIdMapping,
+  clearTempIdMappings,
+  saveLocalCalendarEvents,
+  getLocalCalendarEvents,
+  getLocalCalendarEventsForRange,
+  db
+} from '../db';
 
 // Mock Dexie
 vi.mock('dexie', () => {
-  const mockTable = {
-    put: vi.fn(),
-    get: vi.fn(),
-    add: vi.fn(),
-    toArray: vi.fn(),
-    delete: vi.fn(),
-    clear: vi.fn(),
+  const createMockTable = () => {
+    const table = {
+      put: vi.fn(),
+      get: vi.fn(),
+      add: vi.fn(),
+      toArray: vi.fn(),
+      delete: vi.fn(),
+      clear: vi.fn(),
+      where: vi.fn(),
+    };
+    table.where.mockImplementation(() => ({
+      between: vi.fn(() => ({ toArray: table.toArray })),
+    }));
+    return table;
   };
+
+  const tables: Record<string, ReturnType<typeof createMockTable>> = {};
 
   return {
     default: class MockDexie {
@@ -20,12 +58,12 @@ vi.mock('dexie', () => {
         };
       }
 
-      table() {
-        return mockTable;
+      table(name: string) {
+        if (!tables[name]) {
+          tables[name] = createMockTable();
+        }
+        return tables[name];
       }
-      
-      mealNotes = mockTable;
-      pendingChanges = mockTable;
     },
     Table: class {},
   };
@@ -175,6 +213,129 @@ describe('db utilities', () => {
       await clearPendingChanges();
 
       expect(db.pendingChanges.clear).toHaveBeenCalled();
+    });
+  });
+
+  describe('range queries', () => {
+    it('should get notes for a date range', async () => {
+      const notes = [
+        { date: '2024-01-01', notes: 'A', items: [], updatedAt: Date.now(), synced: false }
+      ];
+      vi.mocked(db.mealNotes.toArray).mockResolvedValue(notes);
+
+      const result = await getLocalNotesForRange('2024-01-01', '2024-01-07');
+
+      expect(db.mealNotes.where).toHaveBeenCalledWith('date');
+      expect(result).toEqual(notes);
+    });
+
+    it('should return all local notes', async () => {
+      const notes = [
+        { date: '2024-01-02', notes: 'B', items: [], updatedAt: Date.now(), synced: false }
+      ];
+      vi.mocked(db.mealNotes.toArray).mockResolvedValue(notes);
+
+      const result = await getAllLocalNotes();
+
+      expect(db.mealNotes.toArray).toHaveBeenCalled();
+      expect(result).toEqual(notes);
+    });
+  });
+
+  describe('temp ids', () => {
+    it('generates and detects temp ids', () => {
+      const tempId = generateTempId();
+      expect(tempId.startsWith('temp-')).toBe(true);
+      expect(isTempId(tempId)).toBe(true);
+      expect(isTempId('real-123')).toBe(false);
+    });
+  });
+
+  describe('pantry items', () => {
+    it('saves and fetches pantry items', async () => {
+      const item = { id: '1', name: 'Rice', quantity: 2, updated_at: '2026-01-01T00:00:00Z' };
+      await saveLocalPantryItem(item);
+      expect(db.pantryItems.put).toHaveBeenCalledWith(item);
+
+      vi.mocked(db.pantryItems.toArray).mockResolvedValue([item]);
+      expect(await getLocalPantryItems()).toEqual([item]);
+
+      vi.mocked(db.pantryItems.get).mockResolvedValue(item);
+      expect(await getLocalPantryItem('1')).toEqual(item);
+    });
+
+    it('deletes and clears pantry items', async () => {
+      await deleteLocalPantryItem('1');
+      expect(db.pantryItems.delete).toHaveBeenCalledWith('1');
+
+      await clearLocalPantryItems();
+      expect(db.pantryItems.clear).toHaveBeenCalled();
+    });
+  });
+
+  describe('meal ideas', () => {
+    it('saves and fetches meal ideas', async () => {
+      const idea = { id: '1', title: 'Pasta', updated_at: '2026-01-01T00:00:00Z' };
+      await saveLocalMealIdea(idea);
+      expect(db.mealIdeas.put).toHaveBeenCalledWith(idea);
+
+      vi.mocked(db.mealIdeas.toArray).mockResolvedValue([idea]);
+      expect(await getLocalMealIdeas()).toEqual([idea]);
+
+      vi.mocked(db.mealIdeas.get).mockResolvedValue(idea);
+      expect(await getLocalMealIdea('1')).toEqual(idea);
+    });
+
+    it('deletes and clears meal ideas', async () => {
+      await deleteLocalMealIdea('1');
+      expect(db.mealIdeas.delete).toHaveBeenCalledWith('1');
+
+      await clearLocalMealIdeas();
+      expect(db.mealIdeas.clear).toHaveBeenCalled();
+    });
+  });
+
+  describe('temp id mappings', () => {
+    it('stores and retrieves temp id mappings', async () => {
+      await saveTempIdMapping('temp-1', 'real-1');
+      expect(db.tempIdMap.put).toHaveBeenCalledWith({ tempId: 'temp-1', realId: 'real-1' });
+
+      vi.mocked(db.tempIdMap.get).mockResolvedValue({ tempId: 'temp-1', realId: 'real-1' });
+      expect(await getTempIdMapping('temp-1')).toBe('real-1');
+
+      await clearTempIdMappings();
+      expect(db.tempIdMap.clear).toHaveBeenCalled();
+    });
+  });
+
+  describe('calendar events', () => {
+    it('saves and gets calendar events', async () => {
+      const events = [
+        { title: 'Event', start_time: '2026-01-01T10:00:00Z', end_time: null, all_day: false },
+      ];
+      await saveLocalCalendarEvents('2026-01-01', events);
+      expect(db.calendarDays.put).toHaveBeenCalledWith({
+        date: '2026-01-01',
+        events,
+        updatedAt: expect.any(Number),
+      });
+
+      vi.mocked(db.calendarDays.get).mockResolvedValue({ date: '2026-01-01', events, updatedAt: Date.now() });
+      expect(await getLocalCalendarEvents('2026-01-01')).toEqual(events);
+    });
+
+    it('builds event maps for ranges', async () => {
+      const days = [
+        { date: '2026-01-01', events: [{ title: 'A', start_time: '2026-01-01T10:00:00Z', end_time: null, all_day: false }], updatedAt: 1 },
+        { date: '2026-01-02', events: [], updatedAt: 1 },
+      ];
+      vi.mocked(db.calendarDays.toArray).mockResolvedValue(days);
+
+      const result = await getLocalCalendarEventsForRange('2026-01-01', '2026-01-02');
+
+      expect(db.calendarDays.where).toHaveBeenCalledWith('date');
+      expect(result['2026-01-01']).toHaveLength(1);
+      expect(result['2026-01-02']).toHaveLength(0);
     });
   });
 });

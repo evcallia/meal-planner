@@ -359,6 +359,54 @@ class TestPantryAPI:
         remaining = db_session.query(PantryItem).filter(PantryItem.id == UUID(item_id)).first()
         assert remaining is None
 
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_create_pantry_item_empty_name(self, mock_broadcast, authenticated_client: TestClient):
+        """Test creating pantry item with empty name fails."""
+        response = authenticated_client.post("/api/pantry", json={"name": "  ", "quantity": 1})
+        assert response.status_code == 400
+        assert "Name is required" in response.json()["detail"]
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_update_pantry_item_not_found(self, mock_broadcast, authenticated_client: TestClient):
+        """Test updating non-existent pantry item fails."""
+        response = authenticated_client.put(
+            "/api/pantry/00000000-0000-0000-0000-000000000001",
+            json={"quantity": 5}
+        )
+        assert response.status_code == 404
+        assert "Item not found" in response.json()["detail"]
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_update_pantry_item_empty_name(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test updating pantry item with empty name fails."""
+        # Create item first
+        create_response = authenticated_client.post("/api/pantry", json={"name": "Test Item", "quantity": 1})
+        item_id = create_response.json()["id"]
+
+        # Try to update with empty name
+        response = authenticated_client.put(f"/api/pantry/{item_id}", json={"name": "  "})
+        assert response.status_code == 400
+        assert "Name is required" in response.json()["detail"]
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_update_pantry_item_with_name(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test updating pantry item name."""
+        # Create item first
+        create_response = authenticated_client.post("/api/pantry", json={"name": "Old Name", "quantity": 1})
+        item_id = create_response.json()["id"]
+
+        # Update name
+        response = authenticated_client.put(f"/api/pantry/{item_id}", json={"name": "New Name"})
+        assert response.status_code == 200
+        assert response.json()["name"] == "New Name"
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_delete_pantry_item_not_found(self, mock_broadcast, authenticated_client: TestClient):
+        """Test deleting non-existent pantry item fails."""
+        response = authenticated_client.delete("/api/pantry/00000000-0000-0000-0000-000000000001")
+        assert response.status_code == 404
+        assert "Item not found" in response.json()["detail"]
+
 
 class TestMealIdeasAPI:
     def test_list_meal_ideas_empty(self, authenticated_client: TestClient):
@@ -388,3 +436,39 @@ class TestMealIdeasAPI:
         from uuid import UUID
         remaining = db_session.query(MealIdea).filter(MealIdea.id == UUID(idea_id)).first()
         assert remaining is None
+
+    @patch("app.routers.meal_ideas.broadcast_event", new_callable=AsyncMock)
+    def test_create_meal_idea_empty_title(self, mock_broadcast, authenticated_client: TestClient):
+        """Test creating meal idea with empty title fails."""
+        response = authenticated_client.post("/api/meal-ideas", json={"title": "  "})
+        assert response.status_code == 400
+        assert "Title is required" in response.json()["detail"]
+
+    @patch("app.routers.meal_ideas.broadcast_event", new_callable=AsyncMock)
+    def test_update_meal_idea_not_found(self, mock_broadcast, authenticated_client: TestClient):
+        """Test updating non-existent meal idea fails."""
+        response = authenticated_client.put(
+            "/api/meal-ideas/00000000-0000-0000-0000-000000000001",
+            json={"title": "New Title"}
+        )
+        assert response.status_code == 404
+        assert "Idea not found" in response.json()["detail"]
+
+    @patch("app.routers.meal_ideas.broadcast_event", new_callable=AsyncMock)
+    def test_update_meal_idea_empty_title(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test updating meal idea with empty title fails."""
+        # Create idea first
+        create_response = authenticated_client.post("/api/meal-ideas", json={"title": "Test Idea"})
+        idea_id = create_response.json()["id"]
+
+        # Try to update with empty title
+        response = authenticated_client.put(f"/api/meal-ideas/{idea_id}", json={"title": "  "})
+        assert response.status_code == 400
+        assert "Title is required" in response.json()["detail"]
+
+    @patch("app.routers.meal_ideas.broadcast_event", new_callable=AsyncMock)
+    def test_delete_meal_idea_not_found(self, mock_broadcast, authenticated_client: TestClient):
+        """Test deleting non-existent meal idea fails."""
+        response = authenticated_client.delete("/api/meal-ideas/00000000-0000-0000-0000-000000000001")
+        assert response.status_code == 404
+        assert "Idea not found" in response.json()["detail"]

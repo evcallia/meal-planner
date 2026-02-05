@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { CalendarEvent, DayData } from '../types';
 import { DayCard } from './DayCard';
 import { getDays, getEvents, updateNotes, toggleItemized } from '../api/client';
-import { saveLocalNote, queueChange } from '../db';
+import { saveLocalNote, queueChange, getLocalNotesForRange, LocalMealNote, saveLocalCalendarEvents, getLocalCalendarEventsForRange } from '../db';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { scrollToElementWithOffset } from '../utils/scroll';
 import { isPerfEnabled, logDuration, logRenderDuration, perfNow } from '../utils/perf';
@@ -21,21 +21,77 @@ function addDays(date: Date, days: number): Date {
   return result;
 }
 
+// Split HTML content into lines (same as DayCard)
+function splitHtmlLines(html: string): string[] {
+  const normalized = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/div><div>/gi, '\n')
+    .replace(/<div>/gi, '\n')
+    .replace(/<\/div>/gi, '');
+
+  return normalized.split('\n').filter(line => {
+    const textContent = line.replace(/<[^>]*>/g, '').trim();
+    return textContent.length > 0;
+  });
+}
+
+// Join lines back into HTML format
+function joinHtmlLines(lines: string[]): string {
+  if (lines.length === 0) return '';
+  if (lines.length === 1) return lines[0];
+  return lines.map((line, i) => i === 0 ? line : `<div>${line}</div>`).join('');
+}
+
+// Convert local IndexedDB notes to DayData format
+function localNotesToDayData(localNotes: LocalMealNote[], startDate: string, endDate: string): DayData[] {
+  const notesByDate = new Map(localNotes.map(n => [n.date, n]));
+  const days: DayData[] = [];
+
+  // Generate all dates in range
+  const start = new Date(startDate + 'T12:00:00');
+  const end = new Date(endDate + 'T12:00:00');
+
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const dateStr = formatDate(d);
+    const localNote = notesByDate.get(dateStr);
+
+    days.push({
+      date: dateStr,
+      events: [], // Events won't be available offline
+      meal_note: localNote ? {
+        id: '', // Local notes don't have server IDs
+        date: dateStr,
+        notes: localNote.notes,
+        items: localNote.items,
+        updated_at: new Date(localNote.updatedAt).toISOString(),
+      } : null,
+    });
+  }
+
+  return days;
+}
+
 interface CalendarViewProps {
   onTodayRefReady: (ref: HTMLDivElement | null) => void;
   showItemizedColumn?: boolean;
+  compactView?: boolean;
 }
 
 // Track which date ranges have finished loading events
 type EventsLoadState = 'loading' | 'loaded' | 'error';
 
-export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: CalendarViewProps) {
+export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false }: CalendarViewProps) {
+  // days = what's displayed in the UI
   const [days, setDays] = useState<DayData[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [loadingMore, setLoadingMore] = useState<'prev' | 'next' | null>(null);
-  const endDateRef = useRef<Date>(addDays(new Date(), 6));
-  const startDateRef = useRef<Date>(new Date());
+  // Display range: today + 6 days (1 week) - controls what's shown in UI
+  const displayEndRef = useRef<Date>(addDays(new Date(), 6));
+  const displayStartRef = useRef<Date>(new Date());
+  // In-memory cache for pre-fetched data (separate from displayed days)
+  const daysCache = useRef<Map<string, DayData>>(new Map());
+  const backgroundCacheDone = useRef(false);
   const todayRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const isOnline = useOnlineStatus();
@@ -43,6 +99,10 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
   const notifiedTodayRef = useRef<string | null>(null);
   const [, setEventsLoadState] = useState<Record<string, EventsLoadState>>({});
   const pendingRenderLogsRef = useRef<Array<{ label: string; start: number; payload?: Record<string, unknown> }>>([]);
+
+  // Drag and drop state
+  const [isDragActive, setIsDragActive] = useState(false);
+  const [dragSourceDate, setDragSourceDate] = useState<string | null>(null);
 
   const today = useRef(formatDate(new Date())).current;
   const handleTodayRef = useCallback((node: HTMLDivElement | null) => {
@@ -64,7 +124,9 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
   }, [loading, days, onTodayRefReady, today]);
 
   // Load events for a date range (non-blocking)
-  const loadEventsForRange = useCallback(async (start: Date, end: Date) => {
+  // Also updates the in-memory cache with event data
+  // Pass online=false to skip API and load from IndexedDB directly (for offline)
+  const loadEventsForRange = useCallback(async (start: Date, end: Date, online: boolean = true) => {
     const rangeKey = `${formatDate(start)}_${formatDate(end)}`;
     const startStr = formatDate(start);
     const endStr = formatDate(end);
@@ -82,10 +144,16 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
 
     setLoadingEvents(true);
 
-    try {
-      const requestStart = perfNow();
-      const eventsMap = await getEvents(startStr, endStr);
-      logDuration('calendar.events.request', requestStart, { start: startStr, end: endStr });
+    // Helper to apply events to state
+    const applyEvents = (eventsMap: Record<string, CalendarEvent[]>) => {
+      // Update memory cache with events
+      for (const [date, events] of Object.entries(eventsMap)) {
+        const cached = daysCache.current.get(date);
+        if (cached) {
+          daysCache.current.set(date, { ...cached, events });
+        }
+      }
+
       const renderStart = perfNow();
       setDays(prev => prev.map(day => {
         // Only update days within the loaded range
@@ -98,13 +166,98 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
       }));
       enqueueRenderLog('calendar.events.render', renderStart, { rangeKey });
       setEventsLoadState(prev => ({ ...prev, [rangeKey]: 'loaded' }));
+    };
+
+    // Helper to load from IndexedDB
+    const loadFromIndexedDB = async () => {
+      try {
+        const localEvents = await getLocalCalendarEventsForRange(startStr, endStr);
+        if (Object.keys(localEvents).length > 0) {
+          applyEvents(localEvents);
+        } else {
+          setEventsLoadState(prev => ({ ...prev, [rangeKey]: 'error' }));
+        }
+      } catch (dbError) {
+        console.error('Failed to load events from IndexedDB:', dbError);
+        setEventsLoadState(prev => ({ ...prev, [rangeKey]: 'error' }));
+      }
+    };
+
+    // If offline, skip API and load directly from IndexedDB
+    if (!online) {
+      await loadFromIndexedDB();
+      setLoadingEvents(false);
+      return;
+    }
+
+    try {
+      const requestStart = perfNow();
+      const eventsMap = await getEvents(startStr, endStr);
+      logDuration('calendar.events.request', requestStart, { start: startStr, end: endStr });
+
+      // Save events to IndexedDB for offline access
+      for (const [date, events] of Object.entries(eventsMap)) {
+        saveLocalCalendarEvents(date, events);
+      }
+
+      applyEvents(eventsMap);
     } catch (error) {
-      console.error('Failed to load events:', error);
-      setEventsLoadState(prev => ({ ...prev, [rangeKey]: 'error' }));
+      console.error('Failed to load events from API, trying local cache:', error);
+      await loadFromIndexedDB();
     } finally {
       setLoadingEvents(false);
     }
   }, []);
+
+  // Pre-fetch extended cache range in background (for offline support)
+  // This caches data but does NOT display it - data is added to UI only when user scrolls
+  const prefetchCacheRange = useCallback(async () => {
+    if (backgroundCacheDone.current) return;
+    backgroundCacheDone.current = true;
+
+    try {
+      // Fetch past 2 weeks
+      const pastStart = addDays(new Date(), -14);
+      const pastEnd = addDays(new Date(), -1);
+      if (pastEnd >= pastStart) {
+        const pastData = await getDays(formatDate(pastStart), formatDate(pastEnd));
+        // Store in memory cache and IndexedDB, don't display
+        pastData.forEach(d => {
+          if (!daysCache.current.has(d.date)) {
+            daysCache.current.set(d.date, d);
+          }
+          // Save to IndexedDB for offline access
+          if (d.meal_note) {
+            saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
+          }
+        });
+        // Pre-fetch events for cached data (populates service worker cache)
+        loadEventsForRange(pastStart, pastEnd, true);
+      }
+
+      // Fetch future 8 weeks (56 days from today)
+      const futureStart = addDays(displayEndRef.current, 1);
+      const futureEnd = addDays(new Date(), 56);
+      if (futureEnd >= futureStart) {
+        const futureData = await getDays(formatDate(futureStart), formatDate(futureEnd));
+        // Store in memory cache and IndexedDB, don't display
+        futureData.forEach(d => {
+          if (!daysCache.current.has(d.date)) {
+            daysCache.current.set(d.date, d);
+          }
+          // Save to IndexedDB for offline access
+          if (d.meal_note) {
+            saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
+          }
+        });
+        // Pre-fetch events for cached data (populates service worker cache)
+        loadEventsForRange(futureStart, futureEnd, true);
+      }
+    } catch (error) {
+      // Background caching failed - not critical, user can still load on demand
+      console.error('Background cache prefetch failed:', error);
+    }
+  }, [loadEventsForRange]);
 
   // Initial load - use ref to prevent double load in StrictMode
   useEffect(() => {
@@ -113,28 +266,58 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
 
     const init = async () => {
       setLoading(true);
+      const startStr = formatDate(displayStartRef.current);
+      const endStr = formatDate(displayEndRef.current);
+
       try {
-        // Load days without events first (fast)
+        // Load days without events first (fast) - only the display range (1 week)
         const requestStart = perfNow();
-        const data = await getDays(formatDate(startDateRef.current), formatDate(endDateRef.current));
+        const data = await getDays(startStr, endStr);
         logDuration('calendar.days.request', requestStart, {
-          start: formatDate(startDateRef.current),
-          end: formatDate(endDateRef.current),
+          start: startStr,
+          end: endStr,
         });
         const renderStart = perfNow();
         setDays(data);
+        // Also add to cache
+        data.forEach(d => daysCache.current.set(d.date, d));
+        // Save to IndexedDB for offline access
+        data.forEach(d => {
+          if (d.meal_note) {
+            saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
+          }
+        });
         enqueueRenderLog('calendar.days.render', renderStart, { count: data.length });
         setLoading(false);
 
         // Then load events separately (slow, but non-blocking)
-        loadEventsForRange(startDateRef.current, endDateRef.current);
+        loadEventsForRange(displayStartRef.current, displayEndRef.current, true);
+
+        // Pre-fetch extended cache range in background after a short delay
+        // This caches 2 weeks past and 8 weeks future for offline support
+        // Data is cached but NOT displayed until user scrolls
+        setTimeout(() => prefetchCacheRange(), 500);
       } catch (error) {
-        console.error('Failed to load days:', error);
+        console.error('Failed to load days from API, trying local cache:', error);
+
+        // Try to load from IndexedDB when API fails (offline)
+        try {
+          const localNotes = await getLocalNotesForRange(startStr, endStr);
+          const data = localNotesToDayData(localNotes, startStr, endStr);
+          setDays(data);
+          data.forEach(d => daysCache.current.set(d.date, d));
+          console.log('Loaded from local cache:', data.length, 'days');
+
+          // Also try to load events from local cache (offline mode)
+          loadEventsForRange(displayStartRef.current, displayEndRef.current, false);
+        } catch (dbError) {
+          console.error('Failed to load from local cache:', dbError);
+        }
         setLoading(false);
       }
     };
     init();
-  }, [loadEventsForRange]);
+  }, [loadEventsForRange, prefetchCacheRange]);
 
   // Scroll to today after initial load
   useEffect(() => {
@@ -239,23 +422,87 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
   const loadPreviousWeek = async () => {
     if (loadingMore) return;
     setLoadingMore('prev');
-    const newStart = addDays(startDateRef.current, -7);
-    const newEnd = addDays(startDateRef.current, -1);
-    try {
-      const requestStart = perfNow();
-      const data = await getDays(formatDate(newStart), formatDate(newEnd));
-      logDuration('calendar.days.request', requestStart, {
-        start: formatDate(newStart),
-        end: formatDate(newEnd),
+    const newStart = addDays(displayStartRef.current, -7);
+    const newEnd = addDays(displayStartRef.current, -1);
+    const startStr = formatDate(newStart);
+    const endStr = formatDate(newEnd);
+
+    // Check which dates we have in memory cache
+    const daysFromMemCache: DayData[] = [];
+    for (let d = new Date(newStart); d <= newEnd; d.setDate(d.getDate() + 1)) {
+      const dateStr = formatDate(d);
+      const cached = daysCache.current.get(dateStr);
+      if (cached) {
+        daysFromMemCache.push(cached);
+      }
+    }
+
+    // Helper to add days to display
+    const addDaysToDisplay = (newDays: DayData[]) => {
+      setDays(prev => {
+        const existingMap = new Map(prev.map(d => [d.date, d]));
+        newDays.forEach(d => existingMap.set(d.date, d));
+        return Array.from(existingMap.values()).sort((a, b) => a.date.localeCompare(b.date));
       });
-      const renderStart = perfNow();
-      setDays(prev => [...data, ...prev]);
-      enqueueRenderLog('calendar.days.render', renderStart, { count: data.length, direction: 'prev' });
-      startDateRef.current = newStart;
-      // Load events for the new range
-      loadEventsForRange(newStart, newEnd);
+      displayStartRef.current = newStart;
+    };
+
+    // Helper to load from local cache (IndexedDB)
+    const loadFromLocalCache = async () => {
+      // First check memory cache
+      if (daysFromMemCache.length === 7) {
+        addDaysToDisplay(daysFromMemCache);
+        return true;
+      }
+      // Then try IndexedDB
+      try {
+        const localNotes = await getLocalNotesForRange(startStr, endStr);
+        const data = localNotesToDayData(localNotes, startStr, endStr);
+        data.forEach(d => daysCache.current.set(d.date, d));
+        addDaysToDisplay(data);
+        return true;
+      } catch (dbError) {
+        console.error('Failed to load from IndexedDB:', dbError);
+        // Last resort: use partial memory cache
+        if (daysFromMemCache.length > 0) {
+          addDaysToDisplay(daysFromMemCache);
+          return true;
+        }
+        return false;
+      }
+    };
+
+    try {
+      if (isOnline) {
+        // Online: try API first
+        const requestStart = perfNow();
+        const data = await getDays(startStr, endStr);
+        logDuration('calendar.days.request', requestStart, { start: startStr, end: endStr });
+
+        // Update memory cache and IndexedDB
+        data.forEach(d => {
+          daysCache.current.set(d.date, d);
+          if (d.meal_note) {
+            saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
+          }
+        });
+
+        const renderStart = perfNow();
+        addDaysToDisplay(data);
+        enqueueRenderLog('calendar.days.render', renderStart, { count: data.length, direction: 'prev' });
+        loadEventsForRange(newStart, newEnd, true);
+      } else {
+        // Offline: use local cache
+        await loadFromLocalCache();
+        // Also load events from local cache (offline mode - instant)
+        loadEventsForRange(newStart, newEnd, false);
+      }
     } catch (error) {
-      console.error('Failed to load previous week:', error);
+      console.error('Failed to load previous week from API, trying local cache:', error);
+      // API failed - try local cache
+      await loadFromLocalCache();
+      // Also try to load events from local cache (offline mode - instant)
+      loadEventsForRange(newStart, newEnd, false);
     } finally {
       setLoadingMore(null);
     }
@@ -264,27 +511,91 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
   const loadNextWeek = useCallback(async () => {
     if (loadingMore) return;
     setLoadingMore('next');
-    const newStart = addDays(endDateRef.current, 1);
-    const newEnd = addDays(endDateRef.current, 7);
-    try {
-      const requestStart = perfNow();
-      const data = await getDays(formatDate(newStart), formatDate(newEnd));
-      logDuration('calendar.days.request', requestStart, {
-        start: formatDate(newStart),
-        end: formatDate(newEnd),
+    const newStart = addDays(displayEndRef.current, 1);
+    const newEnd = addDays(displayEndRef.current, 7);
+    const startStr = formatDate(newStart);
+    const endStr = formatDate(newEnd);
+
+    // Check which dates we have in memory cache
+    const daysFromMemCache: DayData[] = [];
+    for (let d = new Date(newStart); d <= newEnd; d.setDate(d.getDate() + 1)) {
+      const dateStr = formatDate(d);
+      const cached = daysCache.current.get(dateStr);
+      if (cached) {
+        daysFromMemCache.push(cached);
+      }
+    }
+
+    // Helper to add days to display
+    const addDaysToDisplay = (newDays: DayData[]) => {
+      setDays(prev => {
+        const existingMap = new Map(prev.map(d => [d.date, d]));
+        newDays.forEach(d => existingMap.set(d.date, d));
+        return Array.from(existingMap.values()).sort((a, b) => a.date.localeCompare(b.date));
       });
-      const renderStart = perfNow();
-      setDays(prev => [...prev, ...data]);
-      enqueueRenderLog('calendar.days.render', renderStart, { count: data.length, direction: 'next' });
-      endDateRef.current = newEnd;
-      // Load events for the new range
-      loadEventsForRange(newStart, newEnd);
+      displayEndRef.current = newEnd;
+    };
+
+    // Helper to load from local cache (IndexedDB)
+    const loadFromLocalCache = async () => {
+      // First check memory cache
+      if (daysFromMemCache.length === 7) {
+        addDaysToDisplay(daysFromMemCache);
+        return true;
+      }
+      // Then try IndexedDB
+      try {
+        const localNotes = await getLocalNotesForRange(startStr, endStr);
+        const data = localNotesToDayData(localNotes, startStr, endStr);
+        data.forEach(d => daysCache.current.set(d.date, d));
+        addDaysToDisplay(data);
+        return true;
+      } catch (dbError) {
+        console.error('Failed to load from IndexedDB:', dbError);
+        // Last resort: use partial memory cache
+        if (daysFromMemCache.length > 0) {
+          addDaysToDisplay(daysFromMemCache);
+          return true;
+        }
+        return false;
+      }
+    };
+
+    try {
+      if (isOnline) {
+        // Online: try API first
+        const requestStart = perfNow();
+        const data = await getDays(startStr, endStr);
+        logDuration('calendar.days.request', requestStart, { start: startStr, end: endStr });
+
+        // Update memory cache and IndexedDB
+        data.forEach(d => {
+          daysCache.current.set(d.date, d);
+          if (d.meal_note) {
+            saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
+          }
+        });
+
+        const renderStart = perfNow();
+        addDaysToDisplay(data);
+        enqueueRenderLog('calendar.days.render', renderStart, { count: data.length, direction: 'next' });
+        loadEventsForRange(newStart, newEnd, true);
+      } else {
+        // Offline: use local cache
+        await loadFromLocalCache();
+        // Also load events from local cache (offline mode - instant)
+        loadEventsForRange(newStart, newEnd, false);
+      }
     } catch (error) {
-      console.error('Failed to load next week:', error);
+      console.error('Failed to load next week from API, trying local cache:', error);
+      // API failed - try local cache
+      await loadFromLocalCache();
+      // Also try to load events from local cache (offline mode - instant)
+      loadEventsForRange(newStart, newEnd, false);
     } finally {
       setLoadingMore(null);
     }
-  }, [loadingMore, loadEventsForRange]);
+  }, [loadingMore, loadEventsForRange, isOnline]);
 
   // Infinite scroll - load more when bottom is visible
   useEffect(() => {
@@ -304,6 +615,10 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
   }, [loadNextWeek, loadingMore, loading]);
 
   const handleNotesChange = async (date: string, notes: string) => {
+    // Get existing items BEFORE updating state
+    const existing = days.find(d => d.date === date);
+    const existingItems = existing?.meal_note?.items || [];
+
     // Optimistic update
     setDays(prev => prev.map(d => {
       if (d.date === date) {
@@ -317,14 +632,33 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
       return d;
     }));
 
-    // Save locally
-    const existing = days.find(d => d.date === date);
-    await saveLocalNote(date, notes, existing?.meal_note?.items || []);
+    // Also update cache
+    const cachedDay = daysCache.current.get(date);
+    if (cachedDay) {
+      daysCache.current.set(date, {
+        ...cachedDay,
+        meal_note: cachedDay.meal_note
+          ? { ...cachedDay.meal_note, notes }
+          : { id: '', date, notes, items: [], updated_at: new Date().toISOString() }
+      });
+    }
+
+    // Save locally with existing items preserved
+    await saveLocalNote(date, notes, existingItems);
 
     if (isOnline) {
       try {
         const updated = await updateNotes(date, notes);
         setDays(prev => prev.map(d => d.date === date ? { ...d, meal_note: updated } : d));
+        // Update cache with server response
+        const day = daysCache.current.get(date);
+        if (day) {
+          daysCache.current.set(date, { ...day, meal_note: updated });
+        }
+        // Also update local DB with server response
+        if (updated) {
+          await saveLocalNote(date, updated.notes, updated.items);
+        }
       } catch (error) {
         console.error('Failed to save notes:', error);
         await queueChange('notes', date, { notes });
@@ -335,20 +669,38 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
   };
 
   const handleToggleItemized = async (date: string, lineIndex: number, itemized: boolean) => {
+    // Get current day data for updating local DB
+    const currentDay = days.find(d => d.date === date);
+    const currentNotes = currentDay?.meal_note?.notes || '';
+    const currentItems = [...(currentDay?.meal_note?.items || [])];
+
+    // Calculate new items
+    const existingIndex = currentItems.findIndex(i => i.line_index === lineIndex);
+    if (existingIndex >= 0) {
+      currentItems[existingIndex] = { ...currentItems[existingIndex], itemized };
+    } else {
+      currentItems.push({ line_index: lineIndex, itemized });
+    }
+
     // Optimistic update
     setDays(prev => prev.map(d => {
       if (d.date === date && d.meal_note) {
-        const items = [...d.meal_note.items];
-        const existingIndex = items.findIndex(i => i.line_index === lineIndex);
-        if (existingIndex >= 0) {
-          items[existingIndex] = { ...items[existingIndex], itemized };
-        } else {
-          items.push({ line_index: lineIndex, itemized });
-        }
-        return { ...d, meal_note: { ...d.meal_note, items } };
+        return { ...d, meal_note: { ...d.meal_note, items: currentItems } };
       }
       return d;
     }));
+
+    // Update cache
+    const cachedDay = daysCache.current.get(date);
+    if (cachedDay && cachedDay.meal_note) {
+      daysCache.current.set(date, {
+        ...cachedDay,
+        meal_note: { ...cachedDay.meal_note, items: currentItems }
+      });
+    }
+
+    // Save to local DB
+    await saveLocalNote(date, currentNotes, currentItems);
 
     if (isOnline) {
       try {
@@ -362,6 +714,141 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
     }
   };
 
+  // Drag and drop handlers
+  const handleDragStart = useCallback((date: string) => {
+    setIsDragActive(true);
+    setDragSourceDate(date);
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setIsDragActive(false);
+    setDragSourceDate(null);
+  }, []);
+
+  const handleMoveMeal = useCallback(async (targetDate: string, sourceDate: string, lineIndex: number, html: string) => {
+    // Find source and target days
+    const sourceDay = days.find(d => d.date === sourceDate);
+    const targetDay = days.find(d => d.date === targetDate);
+
+    if (!sourceDay) return;
+
+    // Get source notes and split into lines
+    const sourceNotes = sourceDay.meal_note?.notes || '';
+    const sourceLines = splitHtmlLines(sourceNotes);
+
+    // Make sure the line index is valid
+    if (lineIndex < 0 || lineIndex >= sourceLines.length) return;
+
+    // Check if the moved item was itemized
+    const sourceItems = sourceDay.meal_note?.items || [];
+    const movedItemStatus = sourceItems.find(item => item.line_index === lineIndex);
+    const wasItemized = movedItemStatus?.itemized ?? false;
+
+    // Update source items: remove the moved item and reindex remaining items
+    const newSourceItems = sourceItems
+      .filter(item => item.line_index !== lineIndex)
+      .map(item => ({
+        ...item,
+        line_index: item.line_index > lineIndex ? item.line_index - 1 : item.line_index
+      }));
+
+    // Remove line from source
+    const newSourceLines = sourceLines.filter((_, i) => i !== lineIndex);
+    const newSourceNotes = joinHtmlLines(newSourceLines);
+
+    // Add line to target
+    const targetNotes = targetDay?.meal_note?.notes || '';
+    const targetLines = splitHtmlLines(targetNotes);
+    const newTargetLineIndex = targetLines.length; // The new item will be at the end
+    targetLines.push(html);
+    const newTargetNotes = joinHtmlLines(targetLines);
+
+    // Update target items: add the moved item's itemized status if it was itemized
+    const targetItems = targetDay?.meal_note?.items || [];
+    const newTargetItems = wasItemized
+      ? [...targetItems, { line_index: newTargetLineIndex, itemized: true }]
+      : targetItems;
+
+    // Optimistic update for both days
+    setDays(prev => prev.map(d => {
+      if (d.date === sourceDate) {
+        const updated = {
+          ...d,
+          meal_note: d.meal_note
+            ? { ...d.meal_note, notes: newSourceNotes, items: newSourceItems }
+            : null
+        };
+        // Also update cache
+        daysCache.current.set(sourceDate, updated);
+        return updated;
+      }
+      if (d.date === targetDate) {
+        const updated = {
+          ...d,
+          meal_note: d.meal_note
+            ? { ...d.meal_note, notes: newTargetNotes, items: newTargetItems }
+            : { id: '', date: targetDate, notes: newTargetNotes, items: newTargetItems, updated_at: new Date().toISOString() }
+        };
+        // Also update cache
+        daysCache.current.set(targetDate, updated);
+        return updated;
+      }
+      return d;
+    }));
+
+    // Save both updates locally
+    await saveLocalNote(sourceDate, newSourceNotes, newSourceItems);
+    await saveLocalNote(targetDate, newTargetNotes, newTargetItems);
+
+    if (isOnline) {
+      try {
+        // Update notes for both days in parallel
+        const [updatedSource, updatedTarget] = await Promise.all([
+          updateNotes(sourceDate, newSourceNotes),
+          updateNotes(targetDate, newTargetNotes),
+        ]);
+
+        // If the item was itemized, update the itemized status on the target
+        if (wasItemized) {
+          await toggleItemized(targetDate, newTargetLineIndex, true);
+        }
+
+        setDays(prev => prev.map(d => {
+          if (d.date === sourceDate) {
+            const updated = { ...d, meal_note: { ...updatedSource, items: newSourceItems } };
+            daysCache.current.set(sourceDate, updated);
+            return updated;
+          }
+          if (d.date === targetDate) {
+            const updated = { ...d, meal_note: { ...updatedTarget, items: newTargetItems } };
+            daysCache.current.set(targetDate, updated);
+            return updated;
+          }
+          return d;
+        }));
+      } catch (error) {
+        console.error('Failed to move meal:', error);
+        // Queue changes for later sync
+        await queueChange('notes', sourceDate, { notes: newSourceNotes });
+        await queueChange('notes', targetDate, { notes: newTargetNotes });
+        if (wasItemized) {
+          await queueChange('itemized', targetDate, { lineIndex: newTargetLineIndex, itemized: true });
+        }
+      }
+    } else {
+      // Queue for offline sync
+      await queueChange('notes', sourceDate, { notes: newSourceNotes });
+      await queueChange('notes', targetDate, { notes: newTargetNotes });
+      if (wasItemized) {
+        await queueChange('itemized', targetDate, { lineIndex: newTargetLineIndex, itemized: true });
+      }
+    }
+
+    // Clear drag state
+    setIsDragActive(false);
+    setDragSourceDate(null);
+  }, [days, isOnline]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64" data-testid="calendar-loading" aria-label="Loading calendar">
@@ -371,23 +858,26 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
   }
 
   return (
-    <div className="space-y-4">
+    <div className={compactView ? 'space-y-1' : 'space-y-4'}>
       {/* Load Previous Week Button */}
       <button
         onClick={loadPreviousWeek}
         disabled={loadingMore === 'prev'}
-        className="w-full py-3 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors"
+        className={`
+          w-full font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors
+          ${compactView ? 'py-1.5 text-xs' : 'py-3 text-sm'}
+        `}
       >
         {loadingMore === 'prev' ? (
           <span className="flex items-center justify-center gap-2">
-            <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+            <svg className={`animate-spin ${compactView ? 'h-3 w-3' : 'h-4 w-4'}`} fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
             Loading...
           </span>
         ) : (
-          'Load previous week'
+          compactView ? 'Load previous' : 'Load previous week'
         )}
       </button>
 
@@ -401,22 +891,28 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true }: Cal
             onToggleItemized={(lineIndex, itemized) => handleToggleItemized(day.date, lineIndex, itemized)}
             eventsLoading={loadingEvents && day.events.length === 0}
             showItemizedColumn={showItemizedColumn}
+            compactView={compactView}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onDrop={handleMoveMeal}
+            isDragActive={isDragActive}
+            dragSourceDate={dragSourceDate}
           />
         </div>
       ))}
 
       {/* Infinite scroll trigger / loading indicator */}
-      <div ref={bottomRef} className="py-4 flex items-center justify-center">
+      <div ref={bottomRef} className={`flex items-center justify-center ${compactView ? 'py-2' : 'py-4'}`}>
         {loadingMore === 'next' ? (
           <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
-            <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+            <svg className={`animate-spin ${compactView ? 'h-4 w-4' : 'h-5 w-5'}`} fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
             <span className="text-sm">Loading more...</span>
           </div>
         ) : (
-          <div className="h-4" />
+          <div className={compactView ? 'h-2' : 'h-4'} />
         )}
       </div>
     </div>

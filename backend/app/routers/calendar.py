@@ -1,20 +1,25 @@
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+
 from fastapi import APIRouter, Depends, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
+from app.config import get_settings
 from app.database import SessionLocal, get_db
 from app.models import CalendarCacheMetadata
-from app.ical_service import _refresh_db_cache_sync, _get_events_from_db, _get_cache_range
+from app.ical_service import _refresh_db_cache_sync, _get_events_from_db, _get_cache_range, list_available_calendars_sync
 from app.realtime import broadcast_event
 from app.schemas import CalendarEvent
 
 router = APIRouter(prefix="/api/calendar", tags=["calendar"])
+_executor = ThreadPoolExecutor(max_workers=2)
 
 
 class CacheStatusResponse(BaseModel):
-    last_refresh: datetime | None
+    last_refresh: str | None
     cache_start: str | None
     cache_end: str | None
     is_refreshing: bool
@@ -22,6 +27,11 @@ class CacheStatusResponse(BaseModel):
 
 class RefreshResponse(BaseModel):
     message: str
+
+
+class CalendarListResponse(BaseModel):
+    available: list[str]
+    selected: list[str]
 
 
 # Track if a refresh is in progress
@@ -95,8 +105,11 @@ async def get_cache_status(
             is_refreshing=_refresh_in_progress,
         )
 
+    # Add Z suffix to indicate UTC time so frontend parses it correctly
+    last_refresh_str = metadata.last_refresh.isoformat() + "Z" if metadata.last_refresh else None
+
     return CacheStatusResponse(
-        last_refresh=metadata.last_refresh,
+        last_refresh=last_refresh_str,
         cache_start=metadata.cache_start.isoformat() if metadata.cache_start else None,
         cache_end=metadata.cache_end.isoformat() if metadata.cache_end else None,
         is_refreshing=_refresh_in_progress,
@@ -118,3 +131,24 @@ async def refresh_calendar(
     background_tasks.add_task(_do_refresh_and_broadcast)
 
     return RefreshResponse(message="Refresh started")
+
+
+@router.get("/list", response_model=CalendarListResponse)
+async def list_calendars(
+    user: dict = Depends(get_current_user),
+):
+    """List available calendars and which ones are selected."""
+    # Run the sync CalDAV call in a thread pool to get available calendars
+    loop = asyncio.get_event_loop()
+    available = await loop.run_in_executor(_executor, list_available_calendars_sync)
+
+    # Import here to get the selected calendars from the actual ical_service
+    # which determines what calendars are being used for fetching events
+    from app.ical_service import _get_selected_calendars_sync
+    selected_cals = await loop.run_in_executor(_executor, _get_selected_calendars_sync)
+    selected_names = [cal.name for cal in selected_cals]
+
+    return CalendarListResponse(
+        available=available,
+        selected=selected_names,
+    )

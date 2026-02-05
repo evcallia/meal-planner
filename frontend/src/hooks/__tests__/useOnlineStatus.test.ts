@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { renderHook, act, waitFor } from '@testing-library/react'
 import { useOnlineStatus } from '../useOnlineStatus'
 
 // Mock navigator.onLine
@@ -8,31 +8,35 @@ Object.defineProperty(navigator, 'onLine', {
   value: true,
 })
 
+const mockFetch = vi.fn()
+global.fetch = mockFetch
+
 describe('useOnlineStatus', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     navigator.onLine = true
+    mockFetch.mockResolvedValue({ ok: true })
   })
 
-  it('returns initial online status', () => {
+  it('returns initial online status', async () => {
     const { result } = renderHook(() => useOnlineStatus())
     
-    expect(result.current).toBe(true)
+    await waitFor(() => expect(result.current).toBe(true))
   })
 
-  it('returns initial offline status', () => {
+  it('returns initial offline status', async () => {
     navigator.onLine = false
     
     const { result } = renderHook(() => useOnlineStatus())
     
-    expect(result.current).toBe(false)
+    await waitFor(() => expect(result.current).toBe(false))
   })
 
-  it('updates status when going online', () => {
+  it('updates status when going online', async () => {
     navigator.onLine = false
     const { result } = renderHook(() => useOnlineStatus())
     
-    expect(result.current).toBe(false)
+    await waitFor(() => expect(result.current).toBe(false))
     
     // Simulate going online
     navigator.onLine = true
@@ -41,14 +45,14 @@ describe('useOnlineStatus', () => {
       window.dispatchEvent(new Event('online'))
     })
     
-    expect(result.current).toBe(true)
+    await waitFor(() => expect(result.current).toBe(true))
   })
 
-  it('updates status when going offline', () => {
+  it('updates status when going offline', async () => {
     navigator.onLine = true
     const { result } = renderHook(() => useOnlineStatus())
     
-    expect(result.current).toBe(true)
+    await waitFor(() => expect(result.current).toBe(true))
     
     // Simulate going offline
     navigator.onLine = false
@@ -57,7 +61,7 @@ describe('useOnlineStatus', () => {
       window.dispatchEvent(new Event('offline'))
     })
     
-    expect(result.current).toBe(false)
+    await waitFor(() => expect(result.current).toBe(false))
   })
 
   it('adds and removes event listeners properly', () => {
@@ -78,39 +82,39 @@ describe('useOnlineStatus', () => {
     removeEventListenerSpy.mockRestore()
   })
 
-  it('handles rapid online/offline changes', () => {
+  it('handles rapid online/offline changes', async () => {
     const { result } = renderHook(() => useOnlineStatus())
     
     // Start online
-    expect(result.current).toBe(true)
+    await waitFor(() => expect(result.current).toBe(true))
     
     // Go offline
     navigator.onLine = false
     act(() => {
       window.dispatchEvent(new Event('offline'))
     })
-    expect(result.current).toBe(false)
+    await waitFor(() => expect(result.current).toBe(false))
     
     // Go back online quickly
     navigator.onLine = true
     act(() => {
       window.dispatchEvent(new Event('online'))
     })
-    expect(result.current).toBe(true)
+    await waitFor(() => expect(result.current).toBe(true))
     
     // Go offline again
     navigator.onLine = false
     act(() => {
       window.dispatchEvent(new Event('offline'))
     })
-    expect(result.current).toBe(false)
+    await waitFor(() => expect(result.current).toBe(false))
   })
 
-  it('maintains consistent state across multiple instances', () => {
+  it('maintains consistent state across multiple instances', async () => {
     const { result: result1 } = renderHook(() => useOnlineStatus())
     const { result: result2 } = renderHook(() => useOnlineStatus())
     
-    expect(result1.current).toBe(result2.current)
+    await waitFor(() => expect(result1.current).toBe(result2.current))
     
     // Change status
     navigator.onLine = false
@@ -118,8 +122,8 @@ describe('useOnlineStatus', () => {
       window.dispatchEvent(new Event('offline'))
     })
     
-    expect(result1.current).toBe(false)
-    expect(result2.current).toBe(false)
+    await waitFor(() => expect(result1.current).toBe(false))
+    await waitFor(() => expect(result2.current).toBe(false))
     expect(result1.current).toBe(result2.current)
   })
 })

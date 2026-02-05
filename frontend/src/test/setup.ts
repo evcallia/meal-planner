@@ -40,6 +40,12 @@ const localStorageMock = {
 }
 global.localStorage = localStorageMock
 
+// Default fetch mock to prevent real network calls in tests
+global.fetch = vi.fn(() => Promise.resolve({
+  ok: true,
+  json: () => Promise.resolve({}),
+})) as typeof fetch
+
 // Mock document.execCommand
 document.execCommand = vi.fn()
 

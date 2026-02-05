@@ -19,6 +19,21 @@ vi.mock('../components/CalendarView', () => ({
   })
 }));
 
+vi.mock('../components/MealIdeasPanel', () => ({
+  MealIdeasPanel: vi.fn(({ onSchedule }) => (
+    <button
+      data-testid="schedule-meal"
+      onClick={() => onSchedule?.('Pasta Night', '2026-02-05')}
+    >
+      Schedule Meal
+    </button>
+  )),
+}));
+
+vi.mock('../components/PantryPanel', () => ({
+  PantryPanel: vi.fn(() => <div data-testid="pantry-panel" />),
+}));
+
 vi.mock('../components/StatusBar', () => ({
   StatusBar: vi.fn(({ status, pendingCount }) => (
     <div data-testid="status-bar">
@@ -28,8 +43,9 @@ vi.mock('../components/StatusBar', () => ({
 }));
 
 vi.mock('../components/SettingsModal', () => ({
-  SettingsModal: vi.fn(({ onClose }) => (
+  SettingsModal: vi.fn(({ onClose, onToggleDarkMode }) => (
     <div data-testid="settings-modal">
+      <button data-testid="toggle-dark-mode" onClick={onToggleDarkMode}>Toggle Dark Mode</button>
       <button data-testid="close-settings" onClick={onClose}>Close</button>
     </div>
   ))
@@ -45,7 +61,7 @@ vi.mock('../hooks/useDarkMode', () => ({
 
 vi.mock('../hooks/useSettings', () => ({
   useSettings: vi.fn(() => ({ 
-    settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true }, 
+    settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true, compactView: false }, 
     updateSettings: vi.fn() 
   }))
 }));
@@ -54,10 +70,16 @@ vi.mock('../hooks/useRealtime', () => ({
   useRealtime: vi.fn(),
 }));
 
+vi.mock('../hooks/useOnlineStatus', () => ({
+  useOnlineStatus: vi.fn(() => true),
+}));
+
 vi.mock('../api/client', () => ({
   getCurrentUser: vi.fn(),
   logout: vi.fn(),
   getLoginUrl: vi.fn(() => '/api/auth/login'),
+  getDays: vi.fn(),
+  updateNotes: vi.fn(),
   getPantryItems: vi.fn(() => Promise.resolve([])),
   getMealIdeas: vi.fn(() => Promise.resolve([])),
   createPantryItem: vi.fn(),
@@ -66,6 +88,26 @@ vi.mock('../api/client', () => ({
   createMealIdea: vi.fn(),
   updateMealIdea: vi.fn(),
   deleteMealIdea: vi.fn(),
+}));
+
+vi.mock('../db', () => ({
+  generateTempId: vi.fn(() => `temp-${Date.now()}`),
+  isTempId: vi.fn((id: string) => id.startsWith('temp-')),
+  queueChange: vi.fn(),
+  getLocalNote: vi.fn(() => Promise.resolve(null)),
+  saveLocalNote: vi.fn(() => Promise.resolve()),
+  saveLocalPantryItem: vi.fn(() => Promise.resolve()),
+  getLocalPantryItems: vi.fn(() => Promise.resolve([])),
+  deleteLocalPantryItem: vi.fn(() => Promise.resolve()),
+  clearLocalPantryItems: vi.fn(() => Promise.resolve()),
+  saveLocalMealIdea: vi.fn(() => Promise.resolve()),
+  getLocalMealIdeas: vi.fn(() => Promise.resolve([])),
+  deleteLocalMealIdea: vi.fn(() => Promise.resolve()),
+  clearLocalMealIdeas: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock('../utils/scroll', () => ({
+  scrollToElementWithOffset: vi.fn(),
 }));
 
 // Mock intersection observer
@@ -81,6 +123,10 @@ import { useSync } from '../hooks/useSync';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSettings } from '../hooks/useSettings';
 import { getCurrentUser, logout } from '../api/client';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { getDays, updateNotes } from '../api/client';
+import { queueChange, getLocalNote, saveLocalNote } from '../db';
+import { scrollToElementWithOffset } from '../utils/scroll';
 
 describe('App', () => {
   const mockUseSync = vi.mocked(useSync);
@@ -88,6 +134,13 @@ describe('App', () => {
   const mockUseSettings = vi.mocked(useSettings);
   const mockGetCurrentUser = vi.mocked(getCurrentUser);
   const mockLogout = vi.mocked(logout);
+  const mockUseOnlineStatus = vi.mocked(useOnlineStatus);
+  const mockGetDays = vi.mocked(getDays);
+  const mockUpdateNotes = vi.mocked(updateNotes);
+  const mockQueueChange = vi.mocked(queueChange);
+  const mockGetLocalNote = vi.mocked(getLocalNote);
+  const mockSaveLocalNote = vi.mocked(saveLocalNote);
+  const mockScrollToElementWithOffset = vi.mocked(scrollToElementWithOffset);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -99,9 +152,10 @@ describe('App', () => {
     
     const mockUpdateSettings = vi.fn();
     mockUseSettings.mockReturnValue({ 
-      settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true }, 
+      settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true, compactView: false }, 
       updateSettings: mockUpdateSettings 
     });
+    mockUseOnlineStatus.mockReturnValue(true);
   });
 
   it('should render loading state initially', () => {
@@ -276,10 +330,122 @@ describe('App', () => {
       expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
     });
 
-    // Open settings
-    // Toggle dark mode from header button
-    fireEvent.click(screen.getByLabelText('Toggle dark mode'));
+    fireEvent.click(screen.getByLabelText('Settings'));
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-modal')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('toggle-dark-mode'));
 
     expect(mockToggle).toHaveBeenCalled();
+  });
+
+  it('uses cached user when API returns null', async () => {
+    const cachedUser = { id: '999', name: 'Cached User', email: 'cached@example.com' };
+    localStorage.getItem = vi.fn(() => JSON.stringify(cachedUser));
+    mockGetCurrentUser.mockResolvedValue(null);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
+      expect(screen.getByText('Cached User')).toBeInTheDocument();
+    });
+  });
+
+  it('uses cached user when API throws', async () => {
+    const cachedUser = { id: '999', name: 'Cached User', email: 'cached@example.com' };
+    localStorage.getItem = vi.fn(() => JSON.stringify(cachedUser));
+    mockGetCurrentUser.mockRejectedValue(new Error('API down'));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
+      expect(screen.getByText('Cached User')).toBeInTheDocument();
+    });
+  });
+
+  it('schedules a meal online and updates notes', async () => {
+    const mockUser = { id: '123', name: 'Test User', email: 'test@example.com' };
+    mockGetCurrentUser.mockResolvedValue(mockUser);
+    mockUseOnlineStatus.mockReturnValue(true);
+    mockGetDays.mockResolvedValue([
+      {
+        date: '2026-02-05',
+        meal_note: {
+          id: 'note-1',
+          date: '2026-02-05',
+          notes: 'Breakfast',
+          items: [],
+          updated_at: '2026-02-05T00:00:00Z',
+        },
+        events: [],
+      },
+    ]);
+    mockUpdateNotes.mockResolvedValue({
+      id: 'note-1',
+      date: '2026-02-05',
+      notes: 'Breakfast\nPasta Night',
+      items: [],
+      updated_at: '2026-02-05T00:00:00Z',
+    });
+
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('schedule-meal'));
+
+    await waitFor(() => {
+      expect(mockGetDays).toHaveBeenCalledWith('2026-02-05', '2026-02-05');
+      expect(mockUpdateNotes).toHaveBeenCalledWith('2026-02-05', 'Breakfast\nPasta Night');
+      expect(dispatchSpy).toHaveBeenCalled();
+    });
+  });
+
+  it('schedules a meal offline and queues changes', async () => {
+    const mockUser = { id: '123', name: 'Test User', email: 'test@example.com' };
+    mockGetCurrentUser.mockResolvedValue(mockUser);
+    mockUseOnlineStatus.mockReturnValue(false);
+    mockGetLocalNote.mockResolvedValue({
+      id: 'note-2',
+      date: '2026-02-05',
+      notes: 'Lunch',
+      items: [],
+      updated_at: '2026-02-05T00:00:00Z',
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('schedule-meal'));
+
+    await waitFor(() => {
+      expect(mockSaveLocalNote).toHaveBeenCalledWith('2026-02-05', 'Lunch\nPasta Night', []);
+      expect(mockQueueChange).toHaveBeenCalledWith('notes', '2026-02-05', { notes: 'Lunch\nPasta Night' });
+    });
+  });
+
+  it('scrolls to pantry and today when buttons are clicked', async () => {
+    const mockUser = { id: '123', name: 'Test User', email: 'test@example.com' };
+    mockGetCurrentUser.mockResolvedValue(mockUser);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText('Jump to pantry'));
+    fireEvent.click(screen.getByLabelText('Jump to today'));
+
+    expect(mockScrollToElementWithOffset).toHaveBeenCalled();
   });
 });
