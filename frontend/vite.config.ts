@@ -23,12 +23,12 @@ export default defineConfig(({ mode }) => {
       react(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.svg'],
+        includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
         manifest: {
           name: 'Meal Planner',
           short_name: 'Meals',
           description: 'Plan your weekly meals',
-          theme_color: '#3b82f6',
+          theme_color: '#0f766e',
           background_color: '#ffffff',
           display: 'standalone',
           icons: [
@@ -41,11 +41,18 @@ export default defineConfig(({ mode }) => {
               src: 'pwa-512x512.png',
               sizes: '512x512',
               type: 'image/png'
+            },
+            {
+              src: 'pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'maskable'
             }
           ]
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+          navigateFallback: '/index.html',
           navigateFallbackDenylist: [/^\/api/],
           cleanupOutdatedCaches: true,
           clientsClaim: true,
@@ -72,6 +79,11 @@ export default defineConfig(({ mode }) => {
       })
     ],
     server: {
+      // Allow ngrok/tunnel services only when ALLOW_TUNNEL=true
+      // Usage: ALLOW_TUNNEL=true npm run dev
+      allowedHosts: process.env.ALLOW_TUNNEL === 'true'
+        ? ['.ngrok-free.dev', '.ngrok.io']
+        : [],
       proxy: {
         '/api': {
           target: 'http://localhost:8000',

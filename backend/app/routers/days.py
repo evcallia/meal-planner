@@ -124,6 +124,9 @@ async def update_notes(
     # Find or create meal note
     meal_note = db.query(MealNote).filter(MealNote.date == date).first()
 
+    # Capture old notes BEFORE updating for item reindexing
+    old_notes = meal_note.notes if meal_note else ""
+
     if not meal_note:
         meal_note = MealNote(date=date, notes=update.notes)
         db.add(meal_note)
@@ -131,19 +134,30 @@ async def update_notes(
         meal_note.notes = update.notes
 
     # Sync meal items with lines (match frontend HTML line splitting)
-    lines = _split_note_lines(update.notes)
-    existing_items = {item.line_index: item for item in meal_note.items}
+    old_lines = _split_note_lines(old_notes) if old_notes else []
+    new_lines = _split_note_lines(update.notes)
 
-    # Remove items for lines that no longer exist
+    # Build a mapping of old line content to its itemized status
+    old_items = {item.line_index: item for item in meal_note.items}
+    old_line_to_itemized: dict[str, bool] = {}
+    for idx, line in enumerate(old_lines):
+        # Strip HTML and normalize for comparison
+        line_text = re.sub(r"<[^>]*>", "", line).strip().lower()
+        if idx in old_items:
+            old_line_to_itemized[line_text] = old_items[idx].itemized
+
+    # Delete all existing items - we'll recreate with correct indices
     for item in list(meal_note.items):
-        if item.line_index >= len(lines):
-            db.delete(item)
+        db.delete(item)
+    db.flush()
 
-    # Ensure items exist for all lines (preserve itemized state)
-    for i, line in enumerate(lines):
-        if i not in existing_items:
-            new_item = MealItem(meal_note=meal_note, line_index=i, itemized=False)
-            db.add(new_item)
+    # Create new items with correct indices, preserving itemized status by content match
+    for i, line in enumerate(new_lines):
+        line_text = re.sub(r"<[^>]*>", "", line).strip().lower()
+        # Try to find matching content from old lines to preserve itemized status
+        itemized = old_line_to_itemized.get(line_text, False)
+        new_item = MealItem(meal_note=meal_note, line_index=i, itemized=itemized)
+        db.add(new_item)
 
     db.commit()
     db.refresh(meal_note)

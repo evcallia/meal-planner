@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { CalendarView } from '../CalendarView';
 
 vi.mock('../../api/client', () => ({
@@ -13,6 +13,9 @@ vi.mock('../../api/client', () => ({
 vi.mock('../../db', () => ({
   saveLocalNote: vi.fn(),
   queueChange: vi.fn(),
+  getLocalNotesForRange: vi.fn(() => Promise.resolve([])),
+  saveLocalCalendarEvents: vi.fn(),
+  getLocalCalendarEventsForRange: vi.fn(() => Promise.resolve({})),
 }));
 
 vi.mock('../../hooks/useOnlineStatus', () => ({
@@ -46,8 +49,9 @@ vi.mock('../DayCard', () => ({
 }));
 
 import { getDays, getEvents, updateNotes, toggleItemized } from '../../api/client';
-import { saveLocalNote, queueChange } from '../../db';
+import { saveLocalNote, queueChange, getLocalCalendarEventsForRange } from '../../db';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { DayCard } from '../DayCard';
 
 const formatDate = (date: Date): string => date.toISOString().split('T')[0];
 const addDays = (date: Date, days: number): Date => {
@@ -104,7 +108,9 @@ const mockUpdateNotes = vi.mocked(updateNotes);
 const mockToggleItemized = vi.mocked(toggleItemized);
 const mockSaveLocalNote = vi.mocked(saveLocalNote);
 const mockQueueChange = vi.mocked(queueChange);
+const mockGetLocalCalendarEventsForRange = vi.mocked(getLocalCalendarEventsForRange);
 const mockUseOnlineStatus = vi.mocked(useOnlineStatus);
+const mockDayCard = vi.mocked(DayCard);
 
 describe('CalendarView', () => {
   beforeEach(() => {
@@ -123,6 +129,7 @@ describe('CalendarView', () => {
       line_index: 0,
       itemized: true,
     });
+    mockGetLocalCalendarEventsForRange.mockResolvedValue({});
   });
 
   it('should render loading state initially', () => {
@@ -314,7 +321,7 @@ describe('CalendarView', () => {
     render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
 
     await waitFor(() => {
-      expect(consoleSpy).toHaveBeenCalledWith('Failed to load days:', expect.any(Error));
+      expect(consoleSpy).toHaveBeenCalledWith('Failed to load days from API, trying local cache:', expect.any(Error));
     });
 
     consoleSpy.mockRestore();
@@ -327,9 +334,163 @@ describe('CalendarView', () => {
     render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
 
     await waitFor(() => {
-      expect(consoleSpy).toHaveBeenCalledWith('Failed to load events:', expect.any(Error));
+      expect(consoleSpy).toHaveBeenCalledWith('Failed to load events from API, trying local cache:', expect.any(Error));
     });
 
     consoleSpy.mockRestore();
+  });
+
+  it('updates notes when receiving external events', async () => {
+    render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`day-card-${todayStr}`)).toBeInTheDocument();
+    });
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('meal-planner-notes-updated', {
+        detail: { date: todayStr, notes: 'Dinner notes' },
+      }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`meal-notes-${todayStr}`)).toHaveTextContent('Dinner notes');
+    });
+  });
+
+  it('handles realtime updates for notes and events', async () => {
+    render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`day-card-${todayStr}`)).toBeInTheDocument();
+    });
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+        detail: {
+          type: 'notes.updated',
+          payload: {
+            date: todayStr,
+            meal_note: {
+              id: '1',
+              date: todayStr,
+              notes: 'Realtime notes',
+              items: [],
+              updated_at: '2024-01-01T00:00:00Z',
+            },
+          },
+        },
+      }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`meal-notes-${todayStr}`)).toHaveTextContent('Realtime notes');
+    });
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+        detail: {
+          type: 'calendar.refreshed',
+          payload: {
+            events_by_date: {
+              [todayStr]: [
+                { title: 'Event A', start_time: '2024-01-01T10:00:00Z', end_time: '2024-01-01T11:00:00Z', all_day: false },
+                { title: 'Event B', start_time: '2024-01-01T12:00:00Z', end_time: '2024-01-01T13:00:00Z', all_day: false },
+              ],
+            },
+          },
+        },
+      }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`events-count-${todayStr}`)).toHaveTextContent('2 events');
+    });
+  });
+
+  it('updates itemized state from realtime events', async () => {
+    render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`day-card-${todayStr}`)).toBeInTheDocument();
+    });
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+        detail: {
+          type: 'item.updated',
+          payload: { date: todayStr, line_index: 2, itemized: true },
+        },
+      }));
+    });
+
+    await waitFor(() => {
+      const calls = mockDayCard.mock.calls.filter(call => call[0].day.date === todayStr);
+      const latest = calls[calls.length - 1]?.[0].day.meal_note?.items ?? [];
+      expect(latest.some(item => item.line_index === 2 && item.itemized)).toBe(true);
+    });
+  });
+
+  it('moves meals between days and updates itemized status', async () => {
+    const sourceNotes = 'Breakfast<div>Lunch</div>';
+    const customDays = [
+      {
+        date: todayStr,
+        meal_note: {
+          id: '1',
+          date: todayStr,
+          notes: sourceNotes,
+          items: [{ line_index: 0, itemized: true }],
+          updated_at: '2024-01-01T00:00:00Z',
+        },
+        events: [],
+      },
+      {
+        date: day2Str,
+        meal_note: null,
+        events: [],
+      },
+      {
+        date: day3Str,
+        meal_note: null,
+        events: [],
+      },
+    ];
+    mockGetDays.mockResolvedValueOnce(customDays);
+    mockGetEvents.mockResolvedValueOnce({});
+    mockUpdateNotes
+      .mockResolvedValueOnce({
+        id: '1',
+        date: todayStr,
+        notes: 'Lunch',
+        items: [],
+        updated_at: '2024-01-01T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        id: '2',
+        date: day2Str,
+        notes: 'Breakfast',
+        items: [],
+        updated_at: '2024-01-01T00:00:00Z',
+      });
+
+    render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`day-card-${todayStr}`)).toBeInTheDocument();
+    });
+
+    const targetCall = mockDayCard.mock.calls.find(call => call[0].day.date === day2Str);
+    await act(async () => {
+      await targetCall?.[0].onDrop?.(day2Str, todayStr, 0, 'Breakfast');
+    });
+
+    await waitFor(() => {
+      expect(mockUpdateNotes).toHaveBeenCalledWith(todayStr, 'Lunch');
+      expect(mockUpdateNotes).toHaveBeenCalledWith(day2Str, 'Breakfast');
+      expect(mockToggleItemized).toHaveBeenCalledWith(day2Str, 0, true);
+      expect(mockSaveLocalNote).toHaveBeenCalledWith(todayStr, 'Lunch', []);
+      expect(mockSaveLocalNote).toHaveBeenCalledWith(day2Str, 'Breakfast', [{ line_index: 0, itemized: true }]);
+    });
   });
 });

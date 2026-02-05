@@ -7,9 +7,14 @@ A mobile-focused Progressive Web App for meal planning that integrates with Appl
 - Calendar view with Apple Calendar integration (via CalDAV)
 - Meal notes with auto-save
 - Itemization tracking (mark meals as added to your shopping list)
+- Drag and drop meals between days (with touch support on mobile)
+- Pantry management - track ingredients you have on hand
+- Future meal ideas - save meal ideas to schedule later
 - Dark mode
 - PWA support - install on your phone's home screen
 - Offline support - works without internet, syncs when back online
+  - Background caching of 1 week past and 3 weeks future for seamless offline access
+  - Queued changes sync automatically when back online
 - SSO authentication via OIDC (Authentik)
 - Optional frontend performance logging (console-gated)
 
@@ -85,6 +90,28 @@ npm run dev
 ```
 
 The frontend will be available at http://localhost:5173 (proxies API requests to backend)
+
+### Testing with ngrok/tunnels
+
+To test on mobile devices or share your local dev server via ngrok:
+
+**Frontend:**
+```bash
+ALLOW_TUNNEL=true npm run dev
+```
+
+**Backend:**
+```bash
+ALLOW_TUNNEL=true FRONTEND_URL=https://your-ngrok-url.ngrok-free.dev \
+  OIDC_REDIRECT_URI=https://your-ngrok-url.ngrok-free.dev/api/auth/callback \
+  uvicorn backend.app.main:app --reload --port 8000
+```
+
+**Important:** You also need to add the ngrok callback URL to your OIDC provider's allowed redirect URIs.
+
+The `ALLOW_TUNNEL=true` flag:
+- **Frontend**: Allows Vite to accept requests from `.ngrok-free.dev` and `.ngrok.io` domains
+- **Backend**: Relaxes security validation and configures session cookies for cross-site use (ngrok uses HTTPS)
 
 ### Frontend Performance Logging
 

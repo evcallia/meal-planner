@@ -7,12 +7,28 @@
     <meta name="theme-color" content="#0f766e" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="Meals" />
+    <meta name="apple-mobile-web-app-title" content="Meal Planner" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Meal Planner</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Initial loading state shown until React hydrates -->
+      <div id="initial-loader" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #f3f4f6;">
+        <div style="text-align: center;">
+          <div style="width: 32px; height: 32px; border: 3px solid #e5e7eb; border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto;"></div>
+          <p style="margin-top: 12px; color: #6b7280; font-family: system-ui, sans-serif;">Loading...</p>
+        </div>
+      </div>
+      <style>
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (prefers-color-scheme: dark) {
+          #initial-loader { background: #111827 !important; }
+          #initial-loader p { color: #9ca3af !important; }
+          #initial-loader > div > div:first-child { border-color: #374151 !important; border-top-color: #3b82f6 !important; }
+        }
+      </style>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

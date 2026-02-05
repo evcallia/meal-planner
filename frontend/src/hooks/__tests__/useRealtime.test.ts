@@ -2,11 +2,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useRealtime } from '../useRealtime';
 
+vi.mock('../useOnlineStatus', () => ({
+  useOnlineStatus: vi.fn(() => true),
+}));
+
 class MockEventSource {
   public onmessage: ((event: MessageEvent) => void) | null = null;
   public close = vi.fn();
 
-  constructor(public url: string) {}
+  constructor(public url: string, public options?: EventSourceInit) {}
 
   emit(data: unknown) {
     this.onmessage?.({ data: JSON.stringify(data) } as MessageEvent);
@@ -32,7 +36,7 @@ describe('useRealtime', () => {
 
     const { unmount } = renderHook(() => useRealtime());
 
-    expect(eventSourceSpy).toHaveBeenCalledWith('/api/stream');
+    expect(eventSourceSpy).toHaveBeenCalledWith('/api/stream', { withCredentials: true });
 
     if (!source) {
       throw new Error('EventSource was not created');

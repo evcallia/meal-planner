@@ -6,6 +6,8 @@ interface SettingsModalProps {
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => void;
   onClose: () => void;
+  isDark: boolean;
+  onToggleDarkMode: () => void;
 }
 
 function formatRelativeTime(dateString: string | null): string {
@@ -24,7 +26,7 @@ function formatRelativeTime(dateString: string | null): string {
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 }
 
-export function SettingsModal({ settings, onUpdate, onClose }: SettingsModalProps) {
+export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode }: SettingsModalProps) {
   const [cacheStatus, setCacheStatus] = useState<CalendarCacheStatus | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
@@ -127,6 +129,33 @@ export function SettingsModal({ settings, onUpdate, onClose }: SettingsModalProp
             )}
           </div>
 
+          {/* Dark Mode Toggle */}
+          <label className="flex items-center justify-between cursor-pointer">
+            <div>
+              <span className="text-gray-900 dark:text-gray-100 font-medium">Dark Mode</span>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Use dark theme for the interface
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={isDark}
+              onClick={onToggleDarkMode}
+              className={`
+                relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                ${isDark ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
+              `}
+            >
+              <span
+                className={`
+                  inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                  ${isDark ? 'translate-x-6' : 'translate-x-1'}
+                `}
+              />
+            </button>
+          </label>
+
           {/* Meal Ideas Toggle */}
           <label className="flex items-center justify-between cursor-pointer">
             <div>
@@ -203,6 +232,33 @@ export function SettingsModal({ settings, onUpdate, onClose }: SettingsModalProp
                 className={`
                   inline-block h-4 w-4 transform rounded-full bg-white transition-transform
                   ${settings.showItemizedColumn ? 'translate-x-6' : 'translate-x-1'}
+                `}
+              />
+            </button>
+          </label>
+
+          {/* Compact View Toggle */}
+          <label className="flex items-center justify-between cursor-pointer">
+            <div>
+              <span className="text-gray-900 dark:text-gray-100 font-medium">Compact View</span>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Fit a full week on screen with condensed cards
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.compactView}
+              onClick={() => onUpdate({ compactView: !settings.compactView })}
+              className={`
+                relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                ${settings.compactView ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
+              `}
+            >
+              <span
+                className={`
+                  inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                  ${settings.compactView ? 'translate-x-6' : 'translate-x-1'}
                 `}
               />
             </button>

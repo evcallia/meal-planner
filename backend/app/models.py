@@ -76,6 +76,7 @@ class CachedCalendarEvent(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     event_date: Mapped[date] = mapped_column(Date, index=True)
+    calendar_name: Mapped[str] = mapped_column(Text, default="")  # Which calendar this event came from
     title: Mapped[str] = mapped_column(Text)
     start_time: Mapped[datetime] = mapped_column(DateTime)
     end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, act } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { SettingsModal } from '../SettingsModal'
 import type { Settings } from '../../hooks/useSettings'
 
@@ -8,6 +7,8 @@ vi.mock('../../api/client', () => ({
   getCalendarCacheStatus: vi.fn(() => Promise.resolve({ is_refreshing: false, last_refresh: null })),
   refreshCalendarCache: vi.fn(() => Promise.resolve()),
 }))
+
+import { getCalendarCacheStatus, refreshCalendarCache } from '../../api/client'
 
 describe('SettingsModal', () => {
   const defaultSettings: Settings = {
@@ -72,12 +73,11 @@ const renderModal = async (props = defaultProps) => {
   })
 
   it('calls onUpdate when checkbox is toggled', async () => {
-    const user = userEvent.setup()
     await renderModal()
     
     const toggle = screen.getByRole('switch', { name: /show itemized column/i })
     
-    await user.click(toggle)
+    fireEvent.click(toggle)
     
     expect(defaultProps.onUpdate).toHaveBeenCalledWith({
       showItemizedColumn: false,
@@ -85,12 +85,11 @@ const renderModal = async (props = defaultProps) => {
   })
 
   it('updates pantry visibility when toggled', async () => {
-    const user = userEvent.setup()
     await renderModal()
 
     const pantryToggle = screen.getByRole('switch', { name: /show pantry/i })
 
-    await user.click(pantryToggle)
+    fireEvent.click(pantryToggle)
 
     expect(defaultProps.onUpdate).toHaveBeenCalledWith({
       showPantry: false,
@@ -98,12 +97,11 @@ const renderModal = async (props = defaultProps) => {
   })
 
   it('updates future meals visibility when toggled', async () => {
-    const user = userEvent.setup()
     await renderModal()
 
     const ideasToggle = screen.getByRole('switch', { name: /show future meals/i })
 
-    await user.click(ideasToggle)
+    fireEvent.click(ideasToggle)
 
     expect(defaultProps.onUpdate).toHaveBeenCalledWith({
       showMealIdeas: false,
@@ -111,12 +109,11 @@ const renderModal = async (props = defaultProps) => {
   })
 
   it('calls onClose when close button is clicked', async () => {
-    const user = userEvent.setup()
     await renderModal()
     
     const closeButton = screen.getByRole('button', { name: '' }) // The X button has no text
     
-    await user.click(closeButton)
+    fireEvent.click(closeButton)
     
     expect(defaultProps.onClose).toHaveBeenCalled()
   })
@@ -180,5 +177,65 @@ const renderModal = async (props = defaultProps) => {
     
     closeButton.focus()
     expect(document.activeElement).toBe(closeButton)
+  })
+
+  it('renders last updated text from cache status', async () => {
+    const now = new Date('2026-02-05T12:00:00Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    vi.mocked(getCalendarCacheStatus).mockResolvedValueOnce({
+      is_refreshing: false,
+      last_refresh: now.toISOString(),
+    })
+
+    await renderModal()
+
+    expect(screen.getByText(/last updated: just now/i)).toBeInTheDocument()
+
+    vi.useRealTimers()
+  })
+
+  it('refreshes calendar cache and shows success message', async () => {
+    vi.useFakeTimers()
+    vi.mocked(getCalendarCacheStatus)
+      .mockResolvedValueOnce({ is_refreshing: false, last_refresh: null })
+      .mockResolvedValueOnce({ is_refreshing: false, last_refresh: new Date().toISOString() })
+
+    await renderModal()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /refresh now/i }))
+    })
+
+    expect(refreshCalendarCache).toHaveBeenCalled()
+
+    await act(async () => {
+      vi.advanceTimersByTime(2000)
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Calendar refreshed!')).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByText('Calendar refreshed!')).not.toBeInTheDocument()
+
+    vi.useRealTimers()
+  })
+
+  it('shows error message when refresh fails', async () => {
+    vi.mocked(refreshCalendarCache).mockRejectedValueOnce(new Error('Failed'))
+    await renderModal()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /refresh now/i }))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to refresh')).toBeInTheDocument()
+    })
   })
 })

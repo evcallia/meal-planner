@@ -46,4 +46,5 @@ describe('main.tsx', () => {
     // Check that render was called (we can't easily test the exact JSX structure in this context)
     expect(mockRender).toHaveBeenCalledTimes(1);
   });
+
 });
