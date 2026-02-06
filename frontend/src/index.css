@@ -34,3 +34,8 @@ body {
 .dark ::-webkit-scrollbar-thumb {
   background: #4b5563;
 }
+
+/* Utility for overflow-wrap: anywhere (not in Tailwind by default) */
+.overflow-wrap-anywhere {
+  overflow-wrap: anywhere;
+}

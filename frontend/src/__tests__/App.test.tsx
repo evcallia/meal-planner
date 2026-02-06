@@ -61,7 +61,7 @@ vi.mock('../hooks/useDarkMode', () => ({
 
 vi.mock('../hooks/useSettings', () => ({
   useSettings: vi.fn(() => ({ 
-    settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true, compactView: false }, 
+    settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1 }, 
     updateSettings: vi.fn() 
   }))
 }));
@@ -152,7 +152,7 @@ describe('App', () => {
     
     const mockUpdateSettings = vi.fn();
     mockUseSettings.mockReturnValue({ 
-      settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true, compactView: false }, 
+      settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1 }, 
       updateSettings: mockUpdateSettings 
     });
     mockUseOnlineStatus.mockReturnValue(true);

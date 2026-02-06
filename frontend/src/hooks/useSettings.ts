@@ -5,6 +5,9 @@ export interface Settings {
   showPantry: boolean;
   showMealIdeas: boolean;
   compactView: boolean;
+  textScaleStandard: number;
+  textScaleCompact: number;
+  showAllEvents: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -12,6 +15,9 @@ const DEFAULT_SETTINGS: Settings = {
   showPantry: true,
   showMealIdeas: true,
   compactView: false,
+  textScaleStandard: 1,
+  textScaleCompact: 1,
+  showAllEvents: false,
 };
 
 const STORAGE_KEY = 'meal-planner-settings';

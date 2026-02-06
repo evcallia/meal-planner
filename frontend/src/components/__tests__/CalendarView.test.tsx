@@ -8,6 +8,7 @@ vi.mock('../../api/client', () => ({
   getEvents: vi.fn(),
   updateNotes: vi.fn(),
   toggleItemized: vi.fn(),
+  hideCalendarEvent: vi.fn(),
 }));
 
 vi.mock('../../db', () => ({
@@ -16,6 +17,10 @@ vi.mock('../../db', () => ({
   getLocalNotesForRange: vi.fn(() => Promise.resolve([])),
   saveLocalCalendarEvents: vi.fn(),
   getLocalCalendarEventsForRange: vi.fn(() => Promise.resolve({})),
+  getLocalHiddenEvents: vi.fn(() => Promise.resolve([])),
+  saveLocalHiddenEvent: vi.fn(),
+  deleteLocalHiddenEvent: vi.fn(),
+  generateTempId: vi.fn(() => 'temp-hidden'),
 }));
 
 vi.mock('../../hooks/useOnlineStatus', () => ({
@@ -48,8 +53,8 @@ vi.mock('../DayCard', () => ({
   )),
 }));
 
-import { getDays, getEvents, updateNotes, toggleItemized } from '../../api/client';
-import { saveLocalNote, queueChange, getLocalCalendarEventsForRange } from '../../db';
+import { getDays, getEvents, updateNotes, toggleItemized, hideCalendarEvent } from '../../api/client';
+import { saveLocalNote, queueChange, getLocalCalendarEventsForRange, getLocalHiddenEvents } from '../../db';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { DayCard } from '../DayCard';
 
@@ -92,6 +97,9 @@ const mockDays = [
 const mockEventsData = {
   [todayStr]: [
     {
+      id: 'event-1',
+      uid: 'uid-1',
+      calendar_name: 'Primary',
       title: 'Morning Meeting',
       start_time: '2024-01-01T09:00:00Z',
       end_time: '2024-01-01T10:00:00Z',
@@ -106,9 +114,11 @@ const mockGetDays = vi.mocked(getDays);
 const mockGetEvents = vi.mocked(getEvents);
 const mockUpdateNotes = vi.mocked(updateNotes);
 const mockToggleItemized = vi.mocked(toggleItemized);
+const mockHideCalendarEvent = vi.mocked(hideCalendarEvent);
 const mockSaveLocalNote = vi.mocked(saveLocalNote);
 const mockQueueChange = vi.mocked(queueChange);
 const mockGetLocalCalendarEventsForRange = vi.mocked(getLocalCalendarEventsForRange);
+const mockGetLocalHiddenEvents = vi.mocked(getLocalHiddenEvents);
 const mockUseOnlineStatus = vi.mocked(useOnlineStatus);
 const mockDayCard = vi.mocked(DayCard);
 
@@ -129,6 +139,7 @@ describe('CalendarView', () => {
       line_index: 0,
       itemized: true,
     });
+    mockHideCalendarEvent.mockResolvedValue({} as any);
     mockGetLocalCalendarEventsForRange.mockResolvedValue({});
   });
 
@@ -394,8 +405,8 @@ describe('CalendarView', () => {
           payload: {
             events_by_date: {
               [todayStr]: [
-                { title: 'Event A', start_time: '2024-01-01T10:00:00Z', end_time: '2024-01-01T11:00:00Z', all_day: false },
-                { title: 'Event B', start_time: '2024-01-01T12:00:00Z', end_time: '2024-01-01T13:00:00Z', all_day: false },
+                { id: 'event-a', uid: 'uid-a', calendar_name: 'Primary', title: 'Event A', start_time: '2024-01-01T10:00:00Z', end_time: '2024-01-01T11:00:00Z', all_day: false },
+                { id: 'event-b', uid: 'uid-b', calendar_name: 'Primary', title: 'Event B', start_time: '2024-01-01T12:00:00Z', end_time: '2024-01-01T13:00:00Z', all_day: false },
               ],
             },
           },
@@ -491,6 +502,120 @@ describe('CalendarView', () => {
       expect(mockToggleItemized).toHaveBeenCalledWith(day2Str, 0, true);
       expect(mockSaveLocalNote).toHaveBeenCalledWith(todayStr, 'Lunch', []);
       expect(mockSaveLocalNote).toHaveBeenCalledWith(day2Str, 'Breakfast', [{ line_index: 0, itemized: true }]);
+    });
+  });
+
+  it('filters hidden events from the UI', async () => {
+    mockGetLocalHiddenEvents.mockResolvedValue([
+      {
+        id: 'hidden-1',
+        event_uid: 'uid-1',
+        event_date: todayStr,
+        calendar_name: 'Primary',
+        title: 'Morning Meeting',
+        start_time: '2024-01-01T09:00:00Z',
+        end_time: null,
+        all_day: false,
+      },
+    ])
+
+    render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
+
+    await waitFor(() => {
+      expect(mockGetEvents).toHaveBeenCalled();
+    });
+
+    expect(screen.queryByTestId(`events-count-${todayStr}`)).not.toBeInTheDocument();
+  });
+
+  it('loads events from IndexedDB when offline', async () => {
+    mockUseOnlineStatus.mockReturnValue(false);
+    mockGetDays.mockRejectedValue(new Error('offline'));
+    mockGetLocalCalendarEventsForRange.mockResolvedValue({
+      [todayStr]: [
+        {
+          uid: 'offline-uid',
+          calendar_name: 'Primary',
+          title: 'Offline event',
+          start_time: '2024-01-01T09:00:00Z',
+          end_time: null,
+          all_day: false,
+        },
+      ],
+    });
+
+    render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`events-count-${todayStr}`)).toBeInTheDocument();
+    });
+
+    expect(mockGetEvents).not.toHaveBeenCalled();
+  });
+
+  it('moves the last meal to another day and leaves source empty', async () => {
+    const sourceNotes = 'OnlyOne';
+    const customDays = [
+      {
+        date: todayStr,
+        meal_note: {
+          id: '1',
+          date: todayStr,
+          notes: sourceNotes,
+          items: [],
+          updated_at: '2024-01-01T00:00:00Z',
+        },
+        events: [],
+      },
+      {
+        date: day2Str,
+        meal_note: {
+          id: '2',
+          date: day2Str,
+          notes: 'First',
+          items: [],
+          updated_at: '2024-01-01T00:00:00Z',
+        },
+        events: [],
+      },
+      {
+        date: day3Str,
+        meal_note: null,
+        events: [],
+      },
+    ];
+    mockGetDays.mockResolvedValueOnce(customDays);
+    mockGetEvents.mockResolvedValueOnce({});
+    mockUpdateNotes
+      .mockResolvedValueOnce({
+        id: '1',
+        date: todayStr,
+        notes: '',
+        items: [],
+        updated_at: '2024-01-01T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        id: '2',
+        date: day2Str,
+        notes: 'First<div>OnlyOne</div>',
+        items: [],
+        updated_at: '2024-01-01T00:00:00Z',
+      });
+
+    render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`day-card-${todayStr}`)).toBeInTheDocument();
+    });
+
+    const targetCall = mockDayCard.mock.calls.find(call => call[0].day.date === day2Str);
+    await act(async () => {
+      await targetCall?.[0].onDrop?.(day2Str, todayStr, 0, 'OnlyOne');
+    });
+
+    await waitFor(() => {
+      expect(mockUpdateNotes).toHaveBeenCalledWith(todayStr, '');
+      expect(mockUpdateNotes).toHaveBeenCalledWith(day2Str, 'First<div>OnlyOne</div>');
     });
   });
 });

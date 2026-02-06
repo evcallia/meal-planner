@@ -10,6 +10,8 @@ import {
   saveLocalPantryItem,
   deleteLocalMealIdea,
   saveLocalMealIdea,
+  updateLocalHiddenEventId,
+  deleteLocalHiddenEvent,
 } from '../db';
 import {
   updateNotes,
@@ -20,6 +22,8 @@ import {
   createMealIdea,
   updateMealIdea,
   deleteMealIdea,
+  hideCalendarEvent,
+  unhideCalendarEvent,
 } from '../api/client';
 import { ConnectionStatus } from '../types';
 
@@ -139,6 +143,45 @@ export function useSync() {
             }
           }
           await deleteMealIdea(realId);
+        } else if (change.type === 'calendar-hide') {
+          const payload = change.payload as {
+            tempId: string;
+            event_uid: string;
+            calendar_name: string;
+            title: string;
+            start_time: string;
+            end_time: string | null;
+            all_day: boolean;
+          };
+          const created = await hideCalendarEvent({
+            event_uid: payload.event_uid,
+            calendar_name: payload.calendar_name,
+            title: payload.title,
+            start_time: payload.start_time,
+            end_time: payload.end_time,
+            all_day: payload.all_day,
+          });
+          if (isTempId(payload.tempId)) {
+            await saveTempIdMapping(payload.tempId, created.id);
+            await updateLocalHiddenEventId(payload.tempId, { ...created, updatedAt: Date.now() });
+          }
+        } else if (change.type === 'calendar-unhide') {
+          const payload = change.payload as { hiddenId: string };
+          let realId = payload.hiddenId;
+          if (isTempId(payload.hiddenId)) {
+            const mapped = await getTempIdMapping(payload.hiddenId);
+            if (mapped) {
+              realId = mapped;
+            } else {
+              if (change.id) {
+                await removePendingChange(change.id);
+              }
+              setPendingCount(prev => prev - 1);
+              continue;
+            }
+          }
+          await unhideCalendarEvent(realId);
+          await deleteLocalHiddenEvent(realId);
         }
         if (change.id) {
           await removePendingChange(change.id);

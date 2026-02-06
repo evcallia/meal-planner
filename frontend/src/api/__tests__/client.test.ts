@@ -82,6 +82,9 @@ describe('API client', () => {
       const mockEvents = {
         '2024-01-01': [
           {
+            id: 'event-1',
+            uid: 'uid-1',
+            calendar_name: 'Primary',
             title: 'Test Event',
             start_time: '2024-01-01T10:00:00Z',
             end_time: '2024-01-01T11:00:00Z',
@@ -97,7 +100,7 @@ describe('API client', () => {
 
       const result = await getEvents('2024-01-01', '2024-01-07');
 
-      expect(mockFetch).toHaveBeenCalledWith('/api/days/events?start_date=2024-01-01&end_date=2024-01-07', expect.objectContaining({
+      expect(mockFetch).toHaveBeenCalledWith('/api/days/events?start_date=2024-01-01&end_date=2024-01-07&include_hidden=false', expect.objectContaining({
         headers: {
           'Content-Type': 'application/json',
         },

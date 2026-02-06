@@ -1,8 +1,20 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { CalendarEvent, DayData } from '../types';
 import { DayCard } from './DayCard';
-import { getDays, getEvents, updateNotes, toggleItemized } from '../api/client';
-import { saveLocalNote, queueChange, getLocalNotesForRange, LocalMealNote, saveLocalCalendarEvents, getLocalCalendarEventsForRange } from '../db';
+import { getDays, getEvents, updateNotes, toggleItemized, hideCalendarEvent } from '../api/client';
+import {
+  saveLocalNote,
+  queueChange,
+  getLocalNotesForRange,
+  LocalMealNote,
+  saveLocalCalendarEvents,
+  getLocalCalendarEventsForRange,
+  LocalCalendarEvent,
+  getLocalHiddenEvents,
+  saveLocalHiddenEvent,
+  deleteLocalHiddenEvent,
+  generateTempId,
+} from '../db';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { scrollToElementWithOffset } from '../utils/scroll';
 import { isPerfEnabled, logDuration, logRenderDuration, perfNow } from '../utils/perf';
@@ -42,6 +54,44 @@ function joinHtmlLines(lines: string[]): string {
   return lines.map((line, i) => i === 0 ? line : `<div>${line}</div>`).join('');
 }
 
+function ensureCalendarEventId(event: CalendarEvent | LocalCalendarEvent): CalendarEvent {
+  if (event.id) {
+    return event as CalendarEvent;
+  }
+  const fallbackId = `${event.uid ?? event.title}-${event.start_time}`;
+  return { ...event, id: fallbackId };
+}
+
+function normalizeEventsMap(eventsMap: Record<string, LocalCalendarEvent[]>): Record<string, CalendarEvent[]> {
+  const normalized: Record<string, CalendarEvent[]> = {};
+  for (const [date, events] of Object.entries(eventsMap)) {
+    normalized[date] = events.map(ensureCalendarEventId);
+  }
+  return normalized;
+}
+
+function buildHiddenKey(eventUid: string, calendarName: string, startTime: string): string {
+  return `${eventUid}|${calendarName}|${startTime}`;
+}
+
+function getEventHiddenKey(event: CalendarEvent | LocalCalendarEvent): string {
+  const eventUid = event.uid ?? event.id ?? '';
+  const calendarName = event.calendar_name ?? '';
+  return buildHiddenKey(eventUid, calendarName, event.start_time);
+}
+
+function filterEventsMap(
+  eventsMap: Record<string, CalendarEvent[]>,
+  hiddenKeys: Set<string>,
+): Record<string, CalendarEvent[]> {
+  if (hiddenKeys.size === 0) return eventsMap;
+  const filtered: Record<string, CalendarEvent[]> = {};
+  for (const [date, events] of Object.entries(eventsMap)) {
+    filtered[date] = events.filter(event => !hiddenKeys.has(getEventHiddenKey(event)));
+  }
+  return filtered;
+}
+
 // Convert local IndexedDB notes to DayData format
 function localNotesToDayData(localNotes: LocalMealNote[], startDate: string, endDate: string): DayData[] {
   const notesByDate = new Map(localNotes.map(n => [n.date, n]));
@@ -75,12 +125,13 @@ interface CalendarViewProps {
   onTodayRefReady: (ref: HTMLDivElement | null) => void;
   showItemizedColumn?: boolean;
   compactView?: boolean;
+  showAllEvents?: boolean;
 }
 
 // Track which date ranges have finished loading events
 type EventsLoadState = 'loading' | 'loaded' | 'error';
 
-export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false }: CalendarViewProps) {
+export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false, showAllEvents = false }: CalendarViewProps) {
   // days = what's displayed in the UI
   const [days, setDays] = useState<DayData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,6 +150,19 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
   const notifiedTodayRef = useRef<string | null>(null);
   const [, setEventsLoadState] = useState<Record<string, EventsLoadState>>({});
   const pendingRenderLogsRef = useRef<Array<{ label: string; start: number; payload?: Record<string, unknown> }>>([]);
+  const lastHiddenEventRef = useRef<string | null>(null);
+  const hiddenEventKeysRef = useRef<Set<string>>(new Set());
+  const showAllEventsRef = useRef(showAllEvents);
+  // Keep the ref in sync with the prop for use in event handlers
+  useEffect(() => {
+    showAllEventsRef.current = showAllEvents;
+  }, [showAllEvents]);
+  const refreshHiddenKeys = useCallback(async () => {
+    const hidden = await getLocalHiddenEvents();
+    hiddenEventKeysRef.current = new Set(
+      hidden.map(item => buildHiddenKey(item.event_uid, item.calendar_name, item.start_time)),
+    );
+  }, []);
 
   // Drag and drop state
   const [isDragActive, setIsDragActive] = useState(false);
@@ -146,8 +210,9 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
 
     // Helper to apply events to state
     const applyEvents = (eventsMap: Record<string, CalendarEvent[]>) => {
+      const filteredEventsMap = showAllEventsRef.current ? eventsMap : filterEventsMap(eventsMap, hiddenEventKeysRef.current);
       // Update memory cache with events
-      for (const [date, events] of Object.entries(eventsMap)) {
+      for (const [date, events] of Object.entries(filteredEventsMap)) {
         const cached = daysCache.current.get(date);
         if (cached) {
           daysCache.current.set(date, { ...cached, events });
@@ -158,7 +223,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       setDays(prev => prev.map(day => {
         // Only update days within the loaded range
         if (day.date >= startStr && day.date <= endStr) {
-          const dayEvents = eventsMap[day.date] || [];
+          const dayEvents = filteredEventsMap[day.date] || [];
           return { ...day, events: dayEvents };
         }
         // Keep existing events for days outside the range
@@ -171,9 +236,10 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     // Helper to load from IndexedDB
     const loadFromIndexedDB = async () => {
       try {
+        await refreshHiddenKeys();
         const localEvents = await getLocalCalendarEventsForRange(startStr, endStr);
         if (Object.keys(localEvents).length > 0) {
-          applyEvents(localEvents);
+          applyEvents(normalizeEventsMap(localEvents));
         } else {
           setEventsLoadState(prev => ({ ...prev, [rangeKey]: 'error' }));
         }
@@ -192,14 +258,16 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
 
     try {
       const requestStart = perfNow();
-      const eventsMap = await getEvents(startStr, endStr);
+      // Always fetch all events (including hidden) so IndexedDB has complete data for offline
+      const eventsMap = await getEvents(startStr, endStr, true);
       logDuration('calendar.events.request', requestStart, { start: startStr, end: endStr });
 
-      // Save events to IndexedDB for offline access
+      // Save ALL events to IndexedDB for offline access (filtering happens client-side)
       for (const [date, events] of Object.entries(eventsMap)) {
         saveLocalCalendarEvents(date, events);
       }
 
+      // applyEvents handles client-side filtering based on showAllEvents
       applyEvents(eventsMap);
     } catch (error) {
       console.error('Failed to load events from API, trying local cache:', error);
@@ -208,6 +276,33 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       setLoadingEvents(false);
     }
   }, []);
+
+  useEffect(() => {
+    refreshHiddenKeys();
+    const handleHiddenUpdated = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { date?: string } | undefined;
+      refreshHiddenKeys().then(() => {
+        if (detail?.date) {
+          const start = new Date(`${detail.date}T12:00:00`);
+          const end = new Date(`${detail.date}T12:00:00`);
+          loadEventsForRange(start, end, isOnline);
+        }
+      });
+    };
+    window.addEventListener('meal-planner-hidden-updated', handleHiddenUpdated as EventListener);
+    return () => {
+      window.removeEventListener('meal-planner-hidden-updated', handleHiddenUpdated as EventListener);
+    };
+  }, [isOnline, loadEventsForRange, refreshHiddenKeys]);
+
+  // Reload events when showAllEvents setting changes
+  useEffect(() => {
+    if (!initialLoadDone.current) return;
+    // Reset ALL load states to force fresh reload
+    setEventsLoadState({});
+    // Force online fetch if available to get fresh data with correct include_hidden
+    loadEventsForRange(displayStartRef.current, displayEndRef.current, isOnline);
+  }, [showAllEvents, loadEventsForRange, isOnline]);
 
   // Pre-fetch extended cache range in background (for offline support)
   // This caches data but does NOT display it - data is added to UI only when user scrolls
@@ -402,14 +497,74 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
         const payload = detail.payload as { events_by_date?: Record<string, CalendarEvent[]> };
         const eventsByDate = payload?.events_by_date;
         if (!eventsByDate) return;
+        // Save all events to IndexedDB for offline access
+        for (const [date, events] of Object.entries(eventsByDate)) {
+          saveLocalCalendarEvents(date, events);
+        }
+        // Update display with client-side filtering based on showAllEvents
         setDays(prev => prev.map(day => {
           const dayEvents = eventsByDate[day.date];
           if (dayEvents !== undefined) {
-            return { ...day, events: dayEvents };
+            const filtered = showAllEventsRef.current
+              ? dayEvents
+              : dayEvents.filter(event => !hiddenEventKeysRef.current.has(getEventHiddenKey(event)));
+            return { ...day, events: filtered };
           }
           // If not in the refreshed data, keep existing events
           return day;
         }));
+      }
+      if (detail.type === 'calendar.hidden') {
+        const payload = detail.payload as {
+          event_id?: string;
+          hidden_id?: string;
+          event_uid?: string;
+          calendar_name?: string;
+          title?: string;
+          start_time?: string;
+          end_time?: string | null;
+          all_day?: boolean;
+        };
+        if (payload?.hidden_id && payload.start_time && payload.title) {
+          const eventUid = payload.event_uid ?? '';
+          const calendarName = payload.calendar_name ?? '';
+          hiddenEventKeysRef.current.add(buildHiddenKey(eventUid, calendarName, payload.start_time));
+          saveLocalHiddenEvent({
+            id: payload.hidden_id,
+            event_uid: eventUid,
+            event_date: payload.start_time.split('T')[0],
+            calendar_name: calendarName,
+            title: payload.title,
+            start_time: payload.start_time,
+            end_time: payload.end_time ?? null,
+            all_day: Boolean(payload.all_day),
+          });
+        }
+        // Don't remove events from UI when showAllEvents is enabled
+        if (showAllEventsRef.current) return;
+        if (!payload?.event_id) return;
+        removeEventById(payload.event_id, false);
+      }
+      if (detail.type === 'calendar.unhidden') {
+        const payload = detail.payload as {
+          hidden_id?: string;
+          event_uid?: string;
+          calendar_name?: string;
+          start_time?: string;
+        };
+        if (payload?.hidden_id) {
+          deleteLocalHiddenEvent(payload.hidden_id);
+        }
+        if (payload?.event_uid && payload.calendar_name && payload.start_time) {
+          hiddenEventKeysRef.current.delete(
+            buildHiddenKey(payload.event_uid, payload.calendar_name, payload.start_time),
+          );
+        }
+        if (!payload?.start_time) return;
+        const date = payload.start_time.split('T')[0];
+        const start = new Date(`${date}T12:00:00`);
+        const end = new Date(`${date}T12:00:00`);
+        loadEventsForRange(start, end, isOnline);
       }
     };
 
@@ -418,6 +573,70 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       window.removeEventListener('meal-planner-realtime', handleRealtime as EventListener);
     };
   }, []);
+
+  const removeEventById = (eventId: string, persistLocal = true) => {
+    setDays(prev => prev.map(day => {
+      const nextEvents = day.events.filter(event => event.id !== eventId);
+      if (nextEvents.length === day.events.length) return day;
+      const updated = { ...day, events: nextEvents };
+      daysCache.current.set(day.date, updated);
+      if (persistLocal) {
+        saveLocalCalendarEvents(day.date, nextEvents);
+      }
+      return updated;
+    }));
+  };
+
+  const handleHideEvent = async (event: CalendarEvent) => {
+    if (!event.id || !event.start_time) return;
+    if (lastHiddenEventRef.current === event.id) return;
+    lastHiddenEventRef.current = event.id;
+    try {
+      const eventUid = event.uid ?? event.id;
+      const calendarName = event.calendar_name ?? '';
+      const payload = {
+        event_uid: eventUid,
+        calendar_name: calendarName,
+        title: event.title,
+        start_time: event.start_time,
+        end_time: event.end_time,
+        all_day: event.all_day,
+      };
+
+      if (!isOnline) {
+        const tempId = generateTempId();
+        const eventDate = event.start_time.split('T')[0];
+        hiddenEventKeysRef.current.add(buildHiddenKey(eventUid, calendarName, event.start_time));
+        await saveLocalHiddenEvent({
+          id: tempId,
+          event_uid: eventUid,
+          event_date: eventDate,
+          calendar_name: calendarName,
+          title: event.title,
+          start_time: event.start_time,
+          end_time: event.end_time ?? null,
+          all_day: event.all_day,
+        });
+        await queueChange('calendar-hide', eventDate, { tempId, ...payload });
+        removeEventById(event.id, false);
+        window.dispatchEvent(new CustomEvent('meal-planner-hidden-updated', { detail: { date: eventDate } }));
+        return;
+      }
+
+      const hidden = await hideCalendarEvent(payload);
+      hiddenEventKeysRef.current.add(buildHiddenKey(hidden.event_uid, hidden.calendar_name, hidden.start_time));
+      await saveLocalHiddenEvent({ ...hidden, updatedAt: Date.now() });
+      removeEventById(event.id, false);
+    } catch (error) {
+      console.error('Failed to hide event:', error);
+    } finally {
+      setTimeout(() => {
+        if (lastHiddenEventRef.current === event.id) {
+          lastHiddenEventRef.current = null;
+        }
+      }, 300);
+    }
+  };
 
   const loadPreviousWeek = async () => {
     if (loadingMore) return;
@@ -889,9 +1108,11 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             isToday={day.date === today}
             onNotesChange={(notes) => handleNotesChange(day.date, notes)}
             onToggleItemized={(lineIndex, itemized) => handleToggleItemized(day.date, lineIndex, itemized)}
+            onHideEvent={handleHideEvent}
             eventsLoading={loadingEvents && day.events.length === 0}
             showItemizedColumn={showItemizedColumn}
             compactView={compactView}
+            showAllEvents={showAllEvents}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
             onDrop={handleMoveMeal}

@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user
 from app.config import get_settings
 from app.database import SessionLocal, get_db
-from app.models import CalendarCacheMetadata
-from app.ical_service import _refresh_db_cache_sync, _get_events_from_db, _get_cache_range, list_available_calendars_sync
+from app.models import CalendarCacheMetadata, HiddenCalendarEvent
+from app.ical_service import _refresh_db_cache_sync, _get_events_from_db, _get_cache_range, list_available_calendars_sync, _event_key
 from app.realtime import broadcast_event
-from app.schemas import CalendarEvent
+from app.schemas import CalendarEvent, HiddenCalendarEventSchema
 
 router = APIRouter(prefix="/api/calendar", tags=["calendar"])
 _executor = ThreadPoolExecutor(max_workers=2)
@@ -34,6 +34,15 @@ class CalendarListResponse(BaseModel):
     selected: list[str]
 
 
+class HideCalendarEventRequest(BaseModel):
+    event_uid: str
+    calendar_name: str = ""
+    title: str
+    start_time: datetime
+    end_time: datetime | None = None
+    all_day: bool = False
+
+
 # Track if a refresh is in progress
 _refresh_in_progress = False
 
@@ -47,7 +56,7 @@ def _do_refresh_and_broadcast():
         # Refresh the cache
         _refresh_db_cache_sync()
 
-        # Get the refreshed events
+        # Get the refreshed events (include all - clients filter based on their settings)
         start, end = _get_cache_range()
         events = _get_events_from_db(start, end)
 
@@ -58,6 +67,9 @@ def _do_refresh_and_broadcast():
             if date_str not in events_by_date:
                 events_by_date[date_str] = []
             events_by_date[date_str].append({
+                "id": event.id,
+                "uid": event.uid,
+                "calendar_name": event.calendar_name,
                 "title": event.title,
                 "start_time": event.start_time.isoformat(),
                 "end_time": event.end_time.isoformat() if event.end_time else None,
@@ -152,3 +164,83 @@ async def list_calendars(
         available=available,
         selected=selected_names,
     )
+
+
+@router.get("/hidden", response_model=list[HiddenCalendarEventSchema])
+async def list_hidden_events(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """List hidden calendar events."""
+    hidden = db.query(HiddenCalendarEvent).order_by(HiddenCalendarEvent.start_time.desc()).all()
+    return [HiddenCalendarEventSchema.model_validate(item) for item in hidden]
+
+
+@router.post("/hidden", response_model=HiddenCalendarEventSchema)
+async def hide_calendar_event(
+    payload: HideCalendarEventRequest,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Hide a calendar event from the UI."""
+    event_date = payload.start_time.date()
+    existing = db.query(HiddenCalendarEvent).filter(
+        HiddenCalendarEvent.event_uid == payload.event_uid,
+        HiddenCalendarEvent.start_time == payload.start_time,
+        HiddenCalendarEvent.calendar_name == payload.calendar_name,
+    ).first()
+    if existing:
+        return HiddenCalendarEventSchema.model_validate(existing)
+
+    hidden = HiddenCalendarEvent(
+        event_uid=payload.event_uid,
+        event_date=event_date,
+        calendar_name=payload.calendar_name,
+        title=payload.title,
+        start_time=payload.start_time,
+        end_time=payload.end_time,
+        all_day=payload.all_day,
+    )
+    db.add(hidden)
+    db.commit()
+    db.refresh(hidden)
+
+    await broadcast_event("calendar.hidden", {
+        "hidden_id": str(hidden.id),
+        "event_id": _event_key(payload.event_uid, payload.calendar_name, payload.start_time),
+        "event_uid": payload.event_uid,
+        "calendar_name": payload.calendar_name,
+        "start_time": payload.start_time.isoformat(),
+        "end_time": payload.end_time.isoformat() if payload.end_time else None,
+        "all_day": payload.all_day,
+        "title": payload.title,
+    })
+
+    return HiddenCalendarEventSchema.model_validate(hidden)
+
+
+@router.delete("/hidden/{hidden_id}")
+async def unhide_calendar_event(
+    hidden_id: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Unhide a calendar event."""
+    hidden = db.query(HiddenCalendarEvent).filter(HiddenCalendarEvent.id == hidden_id).first()
+    if not hidden:
+        return {"status": "not_found"}
+
+    event_id = _event_key(hidden.event_uid, hidden.calendar_name, hidden.start_time)
+    start_time = hidden.start_time.isoformat()
+    db.delete(hidden)
+    db.commit()
+
+    await broadcast_event("calendar.unhidden", {
+        "hidden_id": hidden_id,
+        "event_id": event_id,
+        "event_uid": hidden.event_uid,
+        "calendar_name": hidden.calendar_name,
+        "start_time": start_time,
+    })
+
+    return {"status": "ok"}

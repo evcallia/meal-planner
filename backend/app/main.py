@@ -76,6 +76,13 @@ def run_migrations():
             conn.commit()
         print("Migration complete: added calendar_name column")
 
+    if "event_uid" not in columns:
+        print("Adding event_uid column to cached_calendar_events...")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE cached_calendar_events ADD COLUMN event_uid TEXT DEFAULT ''"))
+            conn.commit()
+        print("Migration complete: added event_uid column")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

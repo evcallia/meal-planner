@@ -91,13 +91,14 @@ async def get_days(
 async def get_events(
     start_date: date = Query(...),
     end_date: date = Query(...),
+    include_hidden: bool = Query(False),
     user: dict = Depends(get_current_user),
 ):
     """Get calendar events for a date range (separate endpoint for lazy loading)."""
     t1 = time.time()
-    events = await fetch_ical_events(start_date, end_date)
+    events = await fetch_ical_events(start_date, end_date, include_hidden=include_hidden)
     t2 = time.time()
-    _log(f"[CalDAV] fetch_ical_events ({start_date} to {end_date}) completed in {t2-t1:.3f}s")
+    _log(f"[CalDAV] fetch_ical_events ({start_date} to {end_date}, include_hidden={include_hidden}) completed in {t2-t1:.3f}s")
 
     # Group events by date
     events_by_date: dict[str, list[CalendarEvent]] = {}

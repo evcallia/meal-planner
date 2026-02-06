@@ -331,9 +331,9 @@ class TestGetEventsForDate:
     def test_get_events_for_date(self):
         """Test filtering events by specific date."""
         events = [
-            CalendarEvent(title="Event 1", start_time="2024-02-15T10:00:00", all_day=False),
-            CalendarEvent(title="Event 2", start_time="2024-02-16T10:00:00", all_day=False),
-            CalendarEvent(title="Event 3", start_time="2024-02-15T14:00:00", all_day=False),
+            CalendarEvent(id="event-1", title="Event 1", start_time="2024-02-15T10:00:00", all_day=False),
+            CalendarEvent(id="event-2", title="Event 2", start_time="2024-02-16T10:00:00", all_day=False),
+            CalendarEvent(id="event-3", title="Event 3", start_time="2024-02-15T14:00:00", all_day=False),
         ]
 
         target_date = date(2024, 2, 15)
@@ -346,8 +346,8 @@ class TestGetEventsForDate:
     def test_get_events_for_date_all_day(self):
         """Test filtering all-day events."""
         events = [
-            CalendarEvent(title="All Day", start_time="2024-02-15T00:00:00", all_day=True),
-            CalendarEvent(title="Timed", start_time="2024-02-15T10:00:00", all_day=False),
+            CalendarEvent(id="event-4", title="All Day", start_time="2024-02-15T00:00:00", all_day=True),
+            CalendarEvent(id="event-5", title="Timed", start_time="2024-02-15T10:00:00", all_day=False),
         ]
 
         target_date = date(2024, 2, 15)
@@ -360,8 +360,8 @@ class TestGetEventsForDate:
     def test_get_events_for_date_empty(self):
         """Test filtering events when none match."""
         events = [
-            CalendarEvent(title="Event 1", start_time="2024-02-16T10:00:00", all_day=False),
-            CalendarEvent(title="Event 2", start_time="2024-02-17T10:00:00", all_day=False),
+            CalendarEvent(id="event-6", title="Event 1", start_time="2024-02-16T10:00:00", all_day=False),
+            CalendarEvent(id="event-7", title="Event 2", start_time="2024-02-17T10:00:00", all_day=False),
         ]
 
         target_date = date(2024, 2, 15)
@@ -418,6 +418,7 @@ class TestDatabaseCaching:
         from app.models import CachedCalendarEvent, CalendarCacheMetadata
 
         mock_event = CalendarEvent(
+            id="event-8",
             title="Cached Event",
             start_time=datetime(2024, 2, 15, 10, 0, 0),
             end_time=datetime(2024, 2, 15, 11, 0, 0),
@@ -447,6 +448,7 @@ class TestDatabaseCaching:
         from app.models import CachedCalendarEvent
 
         mock_event = CalendarEvent(
+            id="event-9",
             title="New Event",
             start_time=datetime(2024, 3, 1, 10, 0, 0),
             end_time=datetime(2024, 3, 1, 11, 0, 0),
@@ -523,6 +525,7 @@ class TestFetchICalEvents:
 
         mock_events = [
             CalendarEvent(
+                id="event-10",
                 title="Future Event",
                 start_time=datetime.combine(far_future, datetime.min.time().replace(hour=10)),
                 all_day=False
@@ -541,6 +544,7 @@ class TestFetchICalEvents:
         """Test fetching events when no cache exists."""
         mock_events = [
             CalendarEvent(
+                id="event-11",
                 title="New Event",
                 start_time=datetime(2024, 2, 15, 10, 0, 0),
                 all_day=False
@@ -694,6 +698,7 @@ class TestCalendarEventWithSource:
     def test_calendar_event_with_source_creation(self):
         """Test creating CalendarEventWithSource objects."""
         event = CalendarEvent(
+            id="event-12",
             title="Test Event",
             start_time=datetime(2024, 2, 15, 10, 0, 0),
             all_day=False
@@ -781,6 +786,7 @@ class TestFetchEventsPartialCache:
 
         mock_events = [
             CalendarEvent(
+                id="event-13",
                 title="Past Event",
                 start_time=datetime.combine(request_start, datetime.min.time().replace(hour=10)),
                 all_day=False
@@ -817,6 +823,7 @@ class TestFetchEventsPartialCache:
 
         mock_events = [
             CalendarEvent(
+                id="event-14",
                 title="Future Event",
                 start_time=datetime.combine(request_start, datetime.min.time().replace(hour=10)),
                 all_day=False
@@ -962,6 +969,7 @@ class TestRefreshDbCacheError:
         mock_events_with_source = [
             CalendarEventWithSource(
                 CalendarEvent(
+                    id="event-15",
                     title="Event",
                     start_time=datetime(2024, 2, 15, 10, 0, 0),
                     all_day=False
@@ -996,6 +1004,7 @@ class TestFetchAndCacheEventsError:
         mock_events_with_source = [
             CalendarEventWithSource(
                 CalendarEvent(
+                    id="event-16",
                     title="Event",
                     start_time=datetime(2024, 2, 15, 10, 0, 0),
                     all_day=False

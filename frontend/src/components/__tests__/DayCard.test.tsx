@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DayCard } from '../DayCard'
 import type { DayData } from '../../types'
@@ -22,7 +22,7 @@ describe('DayCard', () => {
   const mockDayData: DayData = {
     date: '2024-02-15',
     meal_note: {
-      id: 1,
+      id: 'note-1',
       date: '2024-02-15',
       notes: '<p>Breakfast: Oatmeal</p><p>Lunch: Sandwich</p>',
       items: [
@@ -32,8 +32,12 @@ describe('DayCard', () => {
     },
     events: [
       {
+        id: 'event-1',
+        uid: 'uid-1',
+        calendar_name: 'Personal',
         title: 'Dinner with friends',
         start_time: '2024-02-15T19:00:00Z',
+        end_time: '2024-02-15T20:00:00Z',
         all_day: false,
       },
     ],
@@ -50,6 +54,12 @@ describe('DayCard', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('renders day card with date information', () => {
@@ -82,6 +92,153 @@ describe('DayCard', () => {
 
     expect(screen.getByText('Dinner with friends')).toBeInTheDocument()
     expect(screen.getByText(expectedTime)).toBeInTheDocument()
+  })
+
+  it('opens context menu from event options button and highlights selection', async () => {
+    const user = userEvent.setup()
+    render(<DayCard {...defaultProps} onHideEvent={vi.fn()} />)
+
+    const optionsButton = screen.getByLabelText('Event options')
+    await user.click(optionsButton)
+
+    expect(screen.getByText('Hide event')).toBeInTheDocument()
+    const eventRow = screen.getByText('Dinner with friends').closest('[aria-selected]')
+    expect(eventRow).toHaveAttribute('aria-selected', 'true')
+    expect(eventRow).toHaveClass('opacity-60')
+  })
+
+  it('opens context menu on double tap', async () => {
+    vi.useFakeTimers()
+
+    render(<DayCard {...defaultProps} onHideEvent={vi.fn()} />)
+
+    const eventRow = screen.getByText('Dinner with friends').closest('[aria-selected]')
+    expect(eventRow).toBeTruthy()
+
+    fireEvent.touchStart(eventRow as Element, { touches: [{ clientX: 120, clientY: 140 }] })
+    fireEvent.touchEnd(eventRow as Element, { changedTouches: [{ clientX: 120, clientY: 140 }] })
+
+    vi.advanceTimersByTime(200)
+
+    fireEvent.touchStart(eventRow as Element, { touches: [{ clientX: 120, clientY: 140 }] })
+    fireEvent.touchEnd(eventRow as Element, { changedTouches: [{ clientX: 120, clientY: 140 }] })
+
+    expect(screen.getByText('Hide event')).toBeInTheDocument()
+  })
+
+  it('opens context menu on long press and closes on outside click', async () => {
+    vi.useFakeTimers()
+    render(<DayCard {...defaultProps} onHideEvent={vi.fn()} />)
+
+    const eventRow = screen.getByText('Dinner with friends').closest('[aria-selected]')
+    expect(eventRow).toBeTruthy()
+
+    fireEvent.pointerDown(eventRow as Element, { pointerType: 'touch', clientX: 40, clientY: 50 })
+
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(screen.getByText('Hide event')).toBeInTheDocument()
+
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByText('Hide event')).not.toBeInTheDocument()
+  })
+
+  it('closes context menu on Escape key', async () => {
+    vi.useFakeTimers()
+    render(<DayCard {...defaultProps} onHideEvent={vi.fn()} />)
+
+    const eventRow = screen.getByText('Dinner with friends').closest('[aria-selected]')
+    expect(eventRow).toBeTruthy()
+
+    fireEvent.pointerDown(eventRow as Element, { pointerType: 'touch', clientX: 40, clientY: 50 })
+
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(screen.getByText('Hide event')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByText('Hide event')).not.toBeInTheDocument()
+  })
+
+  it('cancels long press when touch moves too far', async () => {
+    vi.useFakeTimers()
+    render(<DayCard {...defaultProps} onHideEvent={vi.fn()} />)
+
+    const eventRow = screen.getByText('Dinner with friends').closest('[aria-selected]')
+    expect(eventRow).toBeTruthy()
+
+    fireEvent.touchStart(eventRow as Element, { touches: [{ clientX: 10, clientY: 10 }] })
+    fireEvent.touchMove(eventRow as Element, { touches: [{ clientX: 80, clientY: 80 }] })
+
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(screen.queryByText('Hide event')).not.toBeInTheDocument()
+  })
+
+  it('renders compact view events and hides via menu', async () => {
+    const onHideEvent = vi.fn()
+    render(<DayCard {...defaultProps} compactView={true} onHideEvent={onHideEvent} />)
+
+    const optionsButton = screen.getByLabelText('Event options')
+    fireEvent.click(optionsButton)
+
+    fireEvent.click(screen.getByText('Hide event'))
+    expect(onHideEvent).toHaveBeenCalledWith(mockDayData.events[0])
+  })
+
+  it('handles drag and drop interactions', async () => {
+    const onDrop = vi.fn()
+    render(
+      <DayCard
+        {...defaultProps}
+        onDrop={onDrop}
+        dragSourceDate="2024-02-14"
+      />
+    )
+
+    const card = document.querySelector('.bg-white.dark\\:bg-gray-800.rounded-lg.shadow-sm.border') as HTMLElement
+    expect(card).toBeTruthy()
+
+    const dataTransfer = {
+      dropEffect: '',
+      getData: vi.fn(() => JSON.stringify({ date: '2024-02-14', lineIndex: 0, html: 'Breakfast' })),
+    }
+
+    fireEvent.dragOver(card, { dataTransfer })
+    await waitFor(() => {
+      expect(screen.getByText('Drop here')).toBeInTheDocument()
+    })
+
+    fireEvent.dragLeave(card, { relatedTarget: document.body })
+    await waitFor(() => {
+      expect(screen.queryByText('Drop here')).not.toBeInTheDocument()
+    })
+
+    fireEvent.dragOver(card, { dataTransfer })
+
+    fireEvent.drop(card, { dataTransfer })
+    expect(onDrop).toHaveBeenCalledWith('2024-02-15', '2024-02-14', 0, 'Breakfast')
+  })
+
+  it('logs when drop data cannot be parsed', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<DayCard {...defaultProps} onDrop={vi.fn()} />)
+
+    const card = document.querySelector('.bg-white.dark\\:bg-gray-800.rounded-lg.shadow-sm.border') as HTMLElement
+    const dataTransfer = {
+      dropEffect: '',
+      getData: vi.fn(() => 'not-json'),
+    }
+
+    fireEvent.drop(card, { dataTransfer })
+    expect(consoleSpy).toHaveBeenCalledWith('Failed to parse drop data:', expect.any(Error))
+    consoleSpy.mockRestore()
   })
 
   it('shows events loading skeleton when eventsLoading is true', () => {
@@ -258,8 +415,12 @@ describe('DayCard', () => {
       ...mockDayData,
       events: [
         {
+          id: 'event-2',
+          uid: 'uid-2',
+          calendar_name: 'Personal',
           title: 'All Day Event',
           start_time: '2024-02-15T00:00:00Z',
+          end_time: null,
           all_day: true,
         },
       ],

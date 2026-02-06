@@ -30,6 +30,9 @@ describe('useSettings', () => {
       showPantry: true,
       showMealIdeas: true,
       compactView: false,
+      textScaleStandard: 1,
+      textScaleCompact: 1,
+      showAllEvents: false,
     })
     expect(mockLocalStorage.getItem).toHaveBeenCalledWith('meal-planner-settings')
   })
@@ -40,6 +43,8 @@ describe('useSettings', () => {
       showPantry: false,
       showMealIdeas: false,
       compactView: true,
+      textScaleStandard: 1.1,
+      textScaleCompact: 0.9,
     })
     mockLocalStorage.getItem.mockReturnValue(storedSettings)
 
@@ -50,6 +55,9 @@ describe('useSettings', () => {
       showPantry: false,
       showMealIdeas: false,
       compactView: true,
+      textScaleStandard: 1.1,
+      textScaleCompact: 0.9,
+      showAllEvents: false,
     })
   })
 
@@ -66,6 +74,9 @@ describe('useSettings', () => {
       showPantry: true,
       showMealIdeas: true,
       compactView: false,
+      textScaleStandard: 1,
+      textScaleCompact: 1,
+      showAllEvents: false,
       someOldSetting: true, // Merged from storage
     })
   })
@@ -80,6 +91,9 @@ describe('useSettings', () => {
       showPantry: true,
       showMealIdeas: true,
       compactView: false,
+      textScaleStandard: 1,
+      textScaleCompact: 1,
+      showAllEvents: false,
     })
   })
 
@@ -95,7 +109,15 @@ describe('useSettings', () => {
     expect(result.current.settings.showItemizedColumn).toBe(false)
     expect(mockLocalStorage.setItem).toHaveBeenCalledWith(
       'meal-planner-settings',
-      JSON.stringify({ showItemizedColumn: false, showPantry: true, showMealIdeas: true, compactView: false })
+      JSON.stringify({
+        showItemizedColumn: false,
+        showPantry: true,
+        showMealIdeas: true,
+        compactView: false,
+        textScaleStandard: 1,
+        textScaleCompact: 1,
+        showAllEvents: false,
+      })
     )
   })
 
@@ -105,6 +127,8 @@ describe('useSettings', () => {
       showPantry: false,
       showMealIdeas: false,
       compactView: false,
+      textScaleStandard: 1,
+      textScaleCompact: 1,
     })
     mockLocalStorage.getItem.mockReturnValue(initialSettings)
 

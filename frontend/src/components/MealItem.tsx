@@ -151,11 +151,11 @@ export function MealItem({
       )}
       <span
         onClick={onTextClick}
-        className={`text-gray-800 dark:text-gray-200 leading-snug cursor-text flex-1 ${showHeader && showItemizedColumn ? 'mt-4' : ''} [&_a]:text-blue-600 [&_a]:dark:text-blue-400 [&_a]:underline`}
+        className={`text-gray-800 dark:text-gray-200 leading-snug cursor-text flex-1 min-w-0 break-words overflow-wrap-anywhere ${showHeader && showItemizedColumn ? 'mt-4' : ''} [&_a]:text-blue-600 [&_a]:dark:text-blue-400 [&_a]:underline [&_a]:break-all`}
         dangerouslySetInnerHTML={{ __html: linkedHtml }}
       />
       {/* Drag handle indicator */}
-      <div className={`flex-shrink-0 flex items-center opacity-30 hover:opacity-60 transition-opacity ${showHeader && showItemizedColumn ? 'mt-4' : ''}`}>
+      <div className={`flex-shrink-0 flex items-center opacity-30 hover:opacity-60 transition-opacity ml-1 ${showHeader && showItemizedColumn ? 'mt-4' : ''}`}>
         <svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
           <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
         </svg>

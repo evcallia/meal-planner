@@ -1,6 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Settings } from '../hooks/useSettings';
-import { getCalendarCacheStatus, refreshCalendarCache, CalendarCacheStatus } from '../api/client';
+import { getCalendarCacheStatus, refreshCalendarCache, CalendarCacheStatus, getHiddenCalendarEvents, unhideCalendarEvent, HiddenCalendarEvent } from '../api/client';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import {
+  getLocalHiddenEvents,
+  saveLocalHiddenEvent,
+  saveLocalHiddenEvents,
+  clearLocalHiddenEvents,
+  deleteLocalHiddenEvent,
+  queueChange,
+  getPendingChanges,
+  removePendingChange,
+  getCalendarCacheTimestamp,
+} from '../db';
 
 interface SettingsModalProps {
   settings: Settings;
@@ -30,13 +42,133 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
   const [cacheStatus, setCacheStatus] = useState<CalendarCacheStatus | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
+  const [hiddenEvents, setHiddenEvents] = useState<HiddenCalendarEvent[]>([]);
+  const [hiddenLoading, setHiddenLoading] = useState(false);
+  const [hiddenError, setHiddenError] = useState<string | null>(null);
+  const isOnline = useOnlineStatus();
 
   // Load cache status on mount
   useEffect(() => {
-    getCalendarCacheStatus()
-      .then(setCacheStatus)
-      .catch(console.error);
+    const loadCacheStatus = async () => {
+      if (isOnline) {
+        try {
+          const status = await getCalendarCacheStatus();
+          setCacheStatus(status);
+        } catch (error) {
+          console.error('Failed to load cache status:', error);
+        }
+      } else {
+        // When offline, get the timestamp from local IndexedDB cache
+        try {
+          const timestamp = await getCalendarCacheTimestamp();
+          if (timestamp) {
+            setCacheStatus({
+              last_refresh: new Date(timestamp).toISOString(),
+              cache_start: null,
+              cache_end: null,
+              is_refreshing: false,
+            });
+          }
+        } catch (error) {
+          console.error('Failed to load local cache timestamp:', error);
+        }
+      }
+    };
+    loadCacheStatus();
+  }, [isOnline]);
+
+  const loadHiddenEvents = useCallback(async () => {
+    setHiddenLoading(true);
+    try {
+      if (!isOnline) {
+        const localHidden = await getLocalHiddenEvents();
+        setHiddenEvents(localHidden);
+        return;
+      }
+      const remoteHidden = await getHiddenCalendarEvents();
+      setHiddenEvents(remoteHidden);
+      await clearLocalHiddenEvents();
+      await saveLocalHiddenEvents(remoteHidden);
+    } catch (error) {
+      console.error('Failed to load hidden events:', error);
+      setHiddenError('Failed to load hidden events');
+    } finally {
+      setHiddenLoading(false);
+    }
+  }, [isOnline]);
+
+  useEffect(() => {
+    loadHiddenEvents();
+  }, [loadHiddenEvents]);
+
+  useEffect(() => {
+    const handleRealtime = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { type?: string; payload?: any } | undefined;
+      if (!detail?.type) return;
+      if (detail.type === 'calendar.hidden') {
+        const payload = detail.payload as {
+          hidden_id?: string;
+          event_uid?: string;
+          calendar_name?: string;
+          title?: string;
+          start_time?: string;
+          end_time?: string | null;
+          all_day?: boolean;
+        };
+        const hiddenId = payload?.hidden_id;
+        const title = payload?.title;
+        const startTime = payload?.start_time;
+        if (!hiddenId || !startTime || !title) return;
+        setHiddenEvents(prev => {
+          if (prev.some(event => event.id === hiddenId)) return prev;
+          return [
+            {
+              id: hiddenId,
+              event_uid: payload.event_uid || '',
+              event_date: startTime.split('T')[0],
+              calendar_name: payload.calendar_name || '',
+              title,
+              start_time: startTime,
+              end_time: payload.end_time ?? null,
+              all_day: Boolean(payload.all_day),
+            },
+            ...prev,
+          ];
+        });
+        saveLocalHiddenEvent({
+          id: hiddenId,
+          event_uid: payload.event_uid || '',
+          event_date: startTime.split('T')[0],
+          calendar_name: payload.calendar_name || '',
+          title,
+          start_time: startTime,
+          end_time: payload.end_time ?? null,
+          all_day: Boolean(payload.all_day),
+        });
+      }
+      if (detail.type === 'calendar.unhidden') {
+        const payload = detail.payload as { hidden_id?: string };
+        if (!payload?.hidden_id) return;
+        setHiddenEvents(prev => prev.filter(event => event.id !== payload.hidden_id));
+        deleteLocalHiddenEvent(payload.hidden_id);
+      }
+    };
+
+    window.addEventListener('meal-planner-realtime', handleRealtime as EventListener);
+    return () => {
+      window.removeEventListener('meal-planner-realtime', handleRealtime as EventListener);
+    };
   }, []);
+
+  useEffect(() => {
+    const handleHiddenUpdated = () => {
+      loadHiddenEvents();
+    };
+    window.addEventListener('meal-planner-hidden-updated', handleHiddenUpdated as EventListener);
+    return () => {
+      window.removeEventListener('meal-planner-hidden-updated', handleHiddenUpdated as EventListener);
+    };
+  }, [loadHiddenEvents]);
 
   // Poll for status while refreshing
   useEffect(() => {
@@ -70,6 +202,40 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
       setRefreshMessage('Failed to refresh');
     }
   };
+
+  const handleUnhide = async (hiddenId: string) => {
+    try {
+      if (!isOnline) {
+        const hiddenEvent = hiddenEvents.find(event => event.id === hiddenId);
+        const eventDate = hiddenEvent?.event_date || new Date().toISOString().split('T')[0];
+        setHiddenEvents(prev => prev.filter(event => event.id !== hiddenId));
+        await deleteLocalHiddenEvent(hiddenId);
+        const pending = await getPendingChanges();
+        const pendingHide = pending.find(change =>
+          change.type === 'calendar-hide'
+          && (change.payload as { tempId?: string }).tempId === hiddenId
+        );
+        if (pendingHide?.id) {
+          await removePendingChange(pendingHide.id);
+        } else {
+          await queueChange('calendar-unhide', eventDate, { hiddenId });
+        }
+        window.dispatchEvent(new CustomEvent('meal-planner-hidden-updated', { detail: { date: eventDate } }));
+        return;
+      }
+      await unhideCalendarEvent(hiddenId);
+      setHiddenEvents(prev => prev.filter(event => event.id !== hiddenId));
+      await deleteLocalHiddenEvent(hiddenId);
+      const hiddenEvent = hiddenEvents.find(event => event.id === hiddenId);
+      const eventDate = hiddenEvent?.event_date;
+      window.dispatchEvent(new CustomEvent('meal-planner-hidden-updated', { detail: { date: eventDate } }));
+    } catch (error) {
+      console.error('Failed to unhide event:', error);
+      setHiddenError('Failed to unhide event');
+    }
+  };
+
+  const clampScale = (value: number) => Math.min(1.5, Math.max(0.75, value));
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -130,8 +296,8 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
           </div>
 
           {/* Dark Mode Toggle */}
-          <label className="flex items-center justify-between cursor-pointer">
-            <div>
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <div className="flex-1 min-w-0">
               <span className="text-gray-900 dark:text-gray-100 font-medium">Dark Mode</span>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Use dark theme for the interface
@@ -143,7 +309,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               aria-checked={isDark}
               onClick={onToggleDarkMode}
               className={`
-                relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
                 ${isDark ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
               `}
             >
@@ -157,8 +323,8 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
           </label>
 
           {/* Meal Ideas Toggle */}
-          <label className="flex items-center justify-between cursor-pointer">
-            <div>
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <div className="flex-1 min-w-0">
               <span className="text-gray-900 dark:text-gray-100 font-medium">Show Future Meals</span>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Keep a list of meals to schedule later
@@ -170,7 +336,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               aria-checked={settings.showMealIdeas}
               onClick={() => onUpdate({ showMealIdeas: !settings.showMealIdeas })}
               className={`
-                relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
                 ${settings.showMealIdeas ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
               `}
             >
@@ -184,8 +350,8 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
           </label>
 
           {/* Pantry Toggle */}
-          <label className="flex items-center justify-between cursor-pointer">
-            <div>
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <div className="flex-1 min-w-0">
               <span className="text-gray-900 dark:text-gray-100 font-medium">Show Pantry</span>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Keep pantry inventory visible below the calendar
@@ -197,7 +363,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               aria-checked={settings.showPantry}
               onClick={() => onUpdate({ showPantry: !settings.showPantry })}
               className={`
-                relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
                 ${settings.showPantry ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
               `}
             >
@@ -211,8 +377,8 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
           </label>
 
           {/* Itemized Column Toggle */}
-          <label className="flex items-center justify-between cursor-pointer">
-            <div>
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <div className="flex-1 min-w-0">
               <span className="text-gray-900 dark:text-gray-100 font-medium">Show Itemized Column</span>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Show checkboxes to mark meals as added to shopping list
@@ -224,7 +390,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               aria-checked={settings.showItemizedColumn}
               onClick={() => onUpdate({ showItemizedColumn: !settings.showItemizedColumn })}
               className={`
-                relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
                 ${settings.showItemizedColumn ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
               `}
             >
@@ -238,8 +404,8 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
           </label>
 
           {/* Compact View Toggle */}
-          <label className="flex items-center justify-between cursor-pointer">
-            <div>
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <div className="flex-1 min-w-0">
               <span className="text-gray-900 dark:text-gray-100 font-medium">Compact View</span>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Fit a full week on screen with condensed cards
@@ -251,7 +417,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               aria-checked={settings.compactView}
               onClick={() => onUpdate({ compactView: !settings.compactView })}
               className={`
-                relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
                 ${settings.compactView ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
               `}
             >
@@ -263,6 +429,103 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               />
             </button>
           </label>
+
+          {/* Text Scaling */}
+          <div className="pt-2 border-t border-gray-200 dark:border-gray-700 space-y-3">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-900 dark:text-gray-100 font-medium">Text size (standard view)</span>
+                <span className="text-sm text-gray-500 dark:text-gray-400">{Math.round(settings.textScaleStandard * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0.85"
+                max="1.3"
+                step="0.05"
+                value={settings.textScaleStandard}
+                onChange={(e) => onUpdate({ textScaleStandard: clampScale(Number(e.target.value)) })}
+                className="mt-2 w-full"
+              />
+            </div>
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-900 dark:text-gray-100 font-medium">Text size (compact view)</span>
+                <span className="text-sm text-gray-500 dark:text-gray-400">{Math.round(settings.textScaleCompact * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0.85"
+                max="1.3"
+                step="0.05"
+                value={settings.textScaleCompact}
+                onChange={(e) => onUpdate({ textScaleCompact: clampScale(Number(e.target.value)) })}
+                className="mt-2 w-full"
+              />
+            </div>
+          </div>
+
+          {/* Hidden Events */}
+          <div className="pt-2 border-t border-gray-200 dark:border-gray-700 space-y-3">
+            {/* Show All Events Toggle */}
+            <label className="flex items-center justify-between gap-3 cursor-pointer">
+              <div className="flex-1 min-w-0">
+                <span className="text-gray-900 dark:text-gray-100 font-medium">Show All Events</span>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Show hidden events on the calendar
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={settings.showAllEvents}
+                onClick={() => onUpdate({ showAllEvents: !settings.showAllEvents })}
+                className={`
+                  flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                  ${settings.showAllEvents ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
+                `}
+              >
+                <span
+                  className={`
+                    inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                    ${settings.showAllEvents ? 'translate-x-6' : 'translate-x-1'}
+                  `}
+                />
+              </button>
+            </label>
+
+            <div className="flex items-center justify-between">
+              <span className="text-gray-900 dark:text-gray-100 font-medium">Hidden events</span>
+              <span className="text-sm text-gray-500 dark:text-gray-400">{hiddenEvents.length}</span>
+            </div>
+            {hiddenLoading ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400">Loading hidden events…</p>
+            ) : hiddenEvents.length === 0 ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400">No hidden events.</p>
+            ) : (
+              <div className="space-y-2">
+                {hiddenEvents.map(event => (
+                  <div key={event.id} className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm text-gray-900 dark:text-gray-100 truncate">{event.title}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {new Date(event.start_time).toLocaleString()}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleUnhide(event.id)}
+                      className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700"
+                    >
+                      Unhide
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {hiddenError && (
+              <p className="text-sm text-red-500">{hiddenError}</p>
+            )}
+          </div>
         </div>
 
         {/* Footer */}
