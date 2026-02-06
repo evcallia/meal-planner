@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RichTextEditor } from '../RichTextEditor'
 
@@ -70,6 +70,35 @@ describe('RichTextEditor', () => {
     expect(editor).toHaveAttribute('contenteditable', 'true')
   })
 
+  it('moves cursor to end when autoFocus is enabled', () => {
+    const range = {
+      selectNodeContents: vi.fn(),
+      collapse: vi.fn(),
+    } as unknown as Range
+    const selection = {
+      removeAllRanges: vi.fn(),
+      addRange: vi.fn(),
+    } as unknown as Selection
+
+    const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0)
+      return 0
+    })
+    const rangeSpy = vi.spyOn(document, 'createRange').mockReturnValue(range)
+    const selectionSpy = vi.spyOn(window, 'getSelection').mockReturnValue(selection)
+
+    render(<RichTextEditor {...defaultProps} autoFocus={true} value="Hello" />)
+
+    expect(range.selectNodeContents).toHaveBeenCalled()
+    expect(range.collapse).toHaveBeenCalledWith(false)
+    expect(selection.removeAllRanges).toHaveBeenCalled()
+    expect(selection.addRange).toHaveBeenCalledWith(range)
+
+    rafSpy.mockRestore()
+    rangeSpy.mockRestore()
+    selectionSpy.mockRestore()
+  })
+
   it('renders bold button in toolbar', () => {
     render(<RichTextEditor {...defaultProps} />)
     
@@ -126,6 +155,49 @@ describe('RichTextEditor', () => {
     })
   })
 
+  it('cleans pasted HTML and restores selection even when range restore fails', async () => {
+    const { fireEvent } = await import('@testing-library/react')
+    vi.useFakeTimers()
+    const onChange = vi.fn()
+    render(<RichTextEditor {...defaultProps} onChange={onChange} />)
+
+    const editor = document.querySelector('[contenteditable="true"]') as HTMLElement
+    editor.innerHTML = '<span style="color:red;">Hello</span><font>World</font>'
+
+    const range = {
+      selectNodeContents: vi.fn(),
+      collapse: vi.fn(),
+    } as unknown as Range
+    let addCalls = 0
+    const selection = {
+      rangeCount: 1,
+      getRangeAt: vi.fn(() => range),
+      removeAllRanges: vi.fn(),
+      addRange: vi.fn(() => {
+        addCalls += 1
+        if (addCalls == 1) {
+          throw new Error('fail')
+        }
+      }),
+    } as unknown as Selection
+
+    const rangeSpy = vi.spyOn(document, 'createRange').mockReturnValue(range)
+    const selectionSpy = vi.spyOn(window, 'getSelection').mockReturnValue(selection)
+
+    fireEvent.paste(editor)
+
+    await act(async () => {
+      vi.runAllTimers()
+    })
+
+    expect(onChange).toHaveBeenCalledWith('<span>Hello</span>World')
+    expect(selection.addRange).toHaveBeenCalledTimes(2)
+
+    rangeSpy.mockRestore()
+    selectionSpy.mockRestore()
+    vi.useRealTimers()
+  })
+
   it('handles composition events properly', () => {
     render(<RichTextEditor {...defaultProps} />)
     
@@ -143,6 +215,22 @@ describe('RichTextEditor', () => {
     // Verify that the editor is still functional after composition events
     expect(editor).toBeInTheDocument()
     expect(editor).toHaveAttribute('contenteditable', 'true')
+  })
+
+  it('skips input while composing and updates on composition end', async () => {
+    const { fireEvent } = await import('@testing-library/react')
+    const onChange = vi.fn()
+    render(<RichTextEditor {...defaultProps} onChange={onChange} />)
+
+    const editor = document.querySelector('[contenteditable="true"]') as HTMLElement
+    editor.innerHTML = 'Draft'
+
+    fireEvent.compositionStart(editor)
+    fireEvent.input(editor)
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.compositionEnd(editor)
+    expect(onChange).toHaveBeenCalledWith('Draft')
   })
 
   it('prevents content updates when user is actively editing', () => {

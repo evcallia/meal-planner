@@ -16,7 +16,9 @@ export type ChangeType =
   | 'pantry-delete'
   | 'meal-idea-add'
   | 'meal-idea-update'
-  | 'meal-idea-delete';
+  | 'meal-idea-delete'
+  | 'calendar-hide'
+  | 'calendar-unhide';
 
 export interface PendingChange {
   id?: number;
@@ -40,10 +42,25 @@ export interface LocalMealIdea {
 }
 
 export interface LocalCalendarEvent {
+  id?: string;
+  uid?: string | null;
+  calendar_name?: string | null;
   title: string;
   start_time: string;
   end_time: string | null;
   all_day: boolean;
+}
+
+export interface LocalHiddenCalendarEvent {
+  id: string;
+  event_uid: string;
+  event_date: string;
+  calendar_name: string;
+  title: string;
+  start_time: string;
+  end_time: string | null;
+  all_day: boolean;
+  updatedAt: number;
 }
 
 export interface LocalCalendarDay {
@@ -59,6 +76,7 @@ class MealPlannerDB extends Dexie {
   mealIdeas!: Table<LocalMealIdea, string>;
   tempIdMap!: Table<{ tempId: string; realId: string }, string>;
   calendarDays!: Table<LocalCalendarDay, string>;
+  hiddenCalendarEvents!: Table<LocalHiddenCalendarEvent, string>;
 
   constructor() {
     super('MealPlannerDB');
@@ -81,6 +99,15 @@ class MealPlannerDB extends Dexie {
       tempIdMap: 'tempId',
       calendarDays: 'date'
     });
+    this.version(4).stores({
+      mealNotes: 'date',
+      pendingChanges: '++id, date, type',
+      pantryItems: 'id',
+      mealIdeas: 'id',
+      tempIdMap: 'tempId',
+      calendarDays: 'date',
+      hiddenCalendarEvents: 'id'
+    });
     // Ensure table properties are initialized for both runtime and tests.
     this.mealNotes = this.table('mealNotes');
     this.pendingChanges = this.table('pendingChanges');
@@ -88,6 +115,7 @@ class MealPlannerDB extends Dexie {
     this.mealIdeas = this.table('mealIdeas');
     this.tempIdMap = this.table('tempIdMap');
     this.calendarDays = this.table('calendarDays');
+    this.hiddenCalendarEvents = this.table('hiddenCalendarEvents');
   }
 }
 
@@ -246,4 +274,47 @@ export async function getLocalCalendarEventsForRange(startDate: string, endDate:
     result[day.date] = day.events;
   }
   return result;
+}
+
+// Get the most recent calendar cache timestamp
+export async function getCalendarCacheTimestamp(): Promise<number | null> {
+  const days = await db.calendarDays.toArray();
+  if (days.length === 0) return null;
+  return Math.max(...days.map(d => d.updatedAt));
+}
+
+// Hidden calendar events local storage
+export async function saveLocalHiddenEvent(event: Omit<LocalHiddenCalendarEvent, 'updatedAt'> & { updatedAt?: number }) {
+  await db.hiddenCalendarEvents.put({
+    ...event,
+    updatedAt: event.updatedAt ?? Date.now(),
+  });
+}
+
+export async function saveLocalHiddenEvents(events: Array<Omit<LocalHiddenCalendarEvent, 'updatedAt'> & { updatedAt?: number }>) {
+  const records = events.map(event => ({
+    ...event,
+    updatedAt: event.updatedAt ?? Date.now(),
+  }));
+  await db.hiddenCalendarEvents.bulkPut(records);
+}
+
+export async function getLocalHiddenEvents(): Promise<LocalHiddenCalendarEvent[]> {
+  return db.hiddenCalendarEvents.toArray();
+}
+
+export async function deleteLocalHiddenEvent(id: string) {
+  await db.hiddenCalendarEvents.delete(id);
+}
+
+export async function clearLocalHiddenEvents() {
+  await db.hiddenCalendarEvents.clear();
+}
+
+export async function updateLocalHiddenEventId(
+  tempId: string,
+  event: Omit<LocalHiddenCalendarEvent, 'updatedAt'> & { updatedAt?: number },
+) {
+  await db.hiddenCalendarEvents.delete(tempId);
+  await saveLocalHiddenEvent(event);
 }

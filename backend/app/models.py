@@ -76,6 +76,7 @@ class CachedCalendarEvent(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     event_date: Mapped[date] = mapped_column(Date, index=True)
+    event_uid: Mapped[str] = mapped_column(Text, default="")
     calendar_name: Mapped[str] = mapped_column(Text, default="")  # Which calendar this event came from
     title: Mapped[str] = mapped_column(Text)
     start_time: Mapped[datetime] = mapped_column(DateTime)
@@ -92,3 +93,20 @@ class CalendarCacheMetadata(Base):
     last_refresh: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     cache_start: Mapped[date | None] = mapped_column(Date, nullable=True)
     cache_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class HiddenCalendarEvent(Base):
+    """Calendar events hidden from the UI."""
+    __tablename__ = "hidden_calendar_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    event_uid: Mapped[str] = mapped_column(Text)
+    event_date: Mapped[date] = mapped_column(Date, index=True)
+    calendar_name: Mapped[str] = mapped_column(Text, default="")
+    title: Mapped[str] = mapped_column(Text)
+    start_time: Mapped[datetime] = mapped_column(DateTime)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    all_day: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

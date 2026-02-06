@@ -75,6 +75,7 @@ class TestDaysAPI:
         # Mock calendar events
         mock_events = [
             CalendarEvent(
+                id="event-1",
                 title="Dinner with friends",
                 start_time="2024-02-15T19:00:00Z",
                 all_day=False
@@ -251,6 +252,7 @@ class TestDaysAPI:
         with patch("app.routers.days.fetch_ical_events") as mock_fetch:
             mock_fetch.return_value = [
                 CalendarEvent(
+                    id="event-2",
                     title="Test Event",
                     start_time="2024-02-15T10:00:00Z",
                     all_day=False

@@ -1,4 +1,7 @@
 export interface CalendarEvent {
+  id: string;
+  uid?: string | null;
+  calendar_name?: string | null;
   title: string;
   start_time: string;
   end_time: string | null;

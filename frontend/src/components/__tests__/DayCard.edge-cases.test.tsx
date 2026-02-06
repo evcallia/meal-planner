@@ -44,7 +44,7 @@ describe('DayCard - Edge Cases', () => {
     const dayWithoutEvents: DayData = {
       date: '2024-02-15',
       meal_note: {
-        id: 1,
+        id: 'note-1',
         date: '2024-02-15',
         notes: 'Some notes',
         items: [],
@@ -70,13 +70,21 @@ describe('DayCard - Edge Cases', () => {
       meal_note: null,
       events: [
         {
+          id: 'event-1',
+          uid: 'uid-1',
+          calendar_name: 'Primary',
           title: 'Event with bad time',
           start_time: 'not-a-date',
+          end_time: null,
           all_day: false,
         },
         {
+          id: 'event-2',
+          uid: 'uid-2',
+          calendar_name: 'Primary',
           title: 'Event without title',
           start_time: '2024-02-15T19:00:00Z',
+          end_time: '2024-02-15T20:00:00Z',
           all_day: false,
         } as any,
       ],
@@ -98,7 +106,7 @@ describe('DayCard - Edge Cases', () => {
     const dayWithLongNotes: DayData = {
       date: '2024-02-15',
       meal_note: {
-        id: 1,
+        id: 'note-2',
         date: '2024-02-15',
         notes: longNotes,
         items: [],
@@ -123,7 +131,7 @@ describe('DayCard - Edge Cases', () => {
     const dayWithMaliciousNotes: DayData = {
       date: '2024-02-15',
       meal_note: {
-        id: 1,
+        id: 'note-3',
         date: '2024-02-15',
         notes: maliciousNotes,
         items: [],
@@ -149,7 +157,7 @@ describe('DayCard - Edge Cases', () => {
     const dayWithBadItems: DayData = {
       date: '2024-02-15',
       meal_note: {
-        id: 1,
+        id: 'note-4',
         date: '2024-02-15',
         notes: '<p>Line 1</p><p>Line 2</p>',
         items: [
@@ -177,7 +185,7 @@ describe('DayCard - Edge Cases', () => {
     const dayData: DayData = {
       date: '2024-02-15',
       meal_note: {
-        id: 1,
+        id: 'note-5',
         date: '2024-02-15',
         notes: '<p>Test content</p>',
         items: [{ line_index: 0, itemized: false }],

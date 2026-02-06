@@ -27,6 +27,12 @@ import {
   saveLocalCalendarEvents,
   getLocalCalendarEvents,
   getLocalCalendarEventsForRange,
+  saveLocalHiddenEvent,
+  saveLocalHiddenEvents,
+  getLocalHiddenEvents,
+  deleteLocalHiddenEvent,
+  clearLocalHiddenEvents,
+  updateLocalHiddenEventId,
   db
 } from '../db';
 
@@ -35,6 +41,7 @@ vi.mock('dexie', () => {
   const createMockTable = () => {
     const table = {
       put: vi.fn(),
+      bulkPut: vi.fn(),
       get: vi.fn(),
       add: vi.fn(),
       toArray: vi.fn(),
@@ -336,6 +343,80 @@ describe('db utilities', () => {
       expect(db.calendarDays.where).toHaveBeenCalledWith('date');
       expect(result['2026-01-01']).toHaveLength(1);
       expect(result['2026-01-02']).toHaveLength(0);
+    });
+  });
+
+  describe('hidden calendar events', () => {
+    it('saves and lists hidden events', async () => {
+      const event = {
+        id: 'hidden-1',
+        event_uid: 'uid-1',
+        event_date: '2026-01-01',
+        calendar_name: 'Personal',
+        title: 'Event',
+        start_time: '2026-01-01T10:00:00Z',
+        end_time: null,
+        all_day: false,
+      };
+
+      await saveLocalHiddenEvent(event);
+      expect(db.hiddenCalendarEvents.put).toHaveBeenCalledWith({
+        ...event,
+        updatedAt: expect.any(Number),
+      });
+
+      vi.mocked(db.hiddenCalendarEvents.toArray).mockResolvedValue([{ ...event, updatedAt: Date.now() }]);
+      const result = await getLocalHiddenEvents();
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('hidden-1');
+    });
+
+    it('bulk saves hidden events', async () => {
+      const events = [
+        {
+          id: 'hidden-1',
+          event_uid: 'uid-1',
+          event_date: '2026-01-01',
+          calendar_name: 'Personal',
+          title: 'Event',
+          start_time: '2026-01-01T10:00:00Z',
+          end_time: null,
+          all_day: false,
+        },
+      ];
+
+      await saveLocalHiddenEvents(events);
+      expect(db.hiddenCalendarEvents.bulkPut).toHaveBeenCalledWith([
+        { ...events[0], updatedAt: expect.any(Number) },
+      ]);
+    });
+
+    it('deletes and clears hidden events', async () => {
+      await deleteLocalHiddenEvent('hidden-2');
+      expect(db.hiddenCalendarEvents.delete).toHaveBeenCalledWith('hidden-2');
+
+      await clearLocalHiddenEvents();
+      expect(db.hiddenCalendarEvents.clear).toHaveBeenCalled();
+    });
+
+    it('updates hidden event ids', async () => {
+      const event = {
+        id: 'hidden-3',
+        event_uid: 'uid-3',
+        event_date: '2026-01-03',
+        calendar_name: 'Work',
+        title: 'Event',
+        start_time: '2026-01-03T10:00:00Z',
+        end_time: null,
+        all_day: false,
+      };
+
+      await updateLocalHiddenEventId('temp-hidden', event);
+      expect(db.hiddenCalendarEvents.delete).toHaveBeenCalledWith('temp-hidden');
+      expect(db.hiddenCalendarEvents.put).toHaveBeenCalledWith({
+        ...event,
+        updatedAt: expect.any(Number),
+      });
     });
   });
 });

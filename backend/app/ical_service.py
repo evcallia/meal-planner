@@ -1,5 +1,6 @@
 import caldav
 from datetime import datetime, date, timedelta
+import hashlib
 from icalendar import Calendar
 import time
 import asyncio
@@ -9,7 +10,7 @@ from typing import Optional
 from app.config import get_settings
 from app.schemas import CalendarEvent
 from app.database import SessionLocal
-from app.models import CachedCalendarEvent, CalendarCacheMetadata
+from app.models import CachedCalendarEvent, CalendarCacheMetadata, HiddenCalendarEvent
 
 # Clear settings cache to ensure fresh values are loaded after restart
 get_settings.cache_clear()
@@ -166,6 +167,47 @@ class CalendarEventWithSource:
         self.calendar_name = calendar_name
 
 
+def _normalize_uid(raw_uid: str | None, calendar_name: str, event_start: datetime, title: str) -> str:
+    if raw_uid:
+        return str(raw_uid)
+    base = f"{calendar_name}|{title}|{event_start.isoformat()}"
+    digest = hashlib.sha1(base.encode("utf-8")).hexdigest()
+    return f"fallback-{digest}"
+
+
+def _event_key(event_uid: str, calendar_name: str, event_start: datetime) -> str:
+    return f"{event_uid}|{calendar_name}|{event_start.isoformat()}"
+
+
+def _prune_hidden_events(
+    db,
+    start_date: date,
+    end_date: date,
+    events_with_source: list[CalendarEventWithSource],
+) -> None:
+    """Remove hidden events that no longer exist in the refreshed cache range."""
+    hidden = db.query(HiddenCalendarEvent).filter(
+        HiddenCalendarEvent.event_date >= start_date,
+        HiddenCalendarEvent.event_date <= end_date,
+    ).all()
+    if not hidden:
+        return
+
+    valid_keys = {
+        _event_key(e.event.uid or "", e.calendar_name, e.event.start_time)
+        for e in events_with_source
+    }
+
+    for hidden_event in hidden:
+        hidden_key = _event_key(
+            hidden_event.event_uid,
+            hidden_event.calendar_name,
+            hidden_event.start_time,
+        )
+        if hidden_key not in valid_keys:
+            db.delete(hidden_event)
+
+
 def _fetch_events_from_caldav(start_date: date, end_date: date) -> list[CalendarEventWithSource]:
     """Fetch events from all selected CalDAV calendars (slow network call)."""
     t_start = time.time()
@@ -206,6 +248,7 @@ def _fetch_events_from_caldav(start_date: date, end_date: date) -> list[Calendar
                             dtstart = component.get("dtstart")
                             dtend = component.get("dtend")
                             summary = str(component.get("summary", ""))
+                            uid = component.get("uid")
 
                             if not dtstart:
                                 continue
@@ -213,11 +256,15 @@ def _fetch_events_from_caldav(start_date: date, end_date: date) -> list[Calendar
                             event_start = _parse_ical_date(dtstart)
                             event_end = _parse_ical_date(dtend) if dtend else None
                             event_date = event_start.date()
+                            event_uid = _normalize_uid(str(uid) if uid is not None else None, calendar_name, event_start, summary)
 
                             if event_date < start_date or event_date > end_date:
                                 continue
 
                             event = CalendarEvent(
+                                id=_event_key(event_uid, calendar_name, event_start),
+                                uid=event_uid,
+                                calendar_name=calendar_name,
                                 title=summary,
                                 start_time=event_start,
                                 end_time=event_end,
@@ -275,6 +322,7 @@ def _refresh_db_cache_sync() -> None:
             event = event_with_source.event
             cached_event = CachedCalendarEvent(
                 event_date=event.start_time.date(),
+                event_uid=event.uid or "",
                 calendar_name=event_with_source.calendar_name,
                 title=event.title,
                 start_time=event.start_time,
@@ -282,6 +330,8 @@ def _refresh_db_cache_sync() -> None:
                 all_day=event.all_day,
             )
             db.add(cached_event)
+
+        _prune_hidden_events(db, start, end, events_with_source)
 
         # Update metadata
         metadata = db.query(CalendarCacheMetadata).first()
@@ -380,6 +430,9 @@ def _get_events_from_db(start_date: date, end_date: date) -> list[CalendarEvent]
 
         return [
             CalendarEvent(
+                id=_event_key(e.event_uid, e.calendar_name, e.start_time),
+                uid=e.event_uid,
+                calendar_name=e.calendar_name,
                 title=e.title,
                 start_time=e.start_time,
                 end_time=e.end_time,
@@ -424,6 +477,7 @@ def _fetch_and_cache_events_sync(start_date: date, end_date: date) -> list[Calen
             event = event_with_source.event
             cached_event = CachedCalendarEvent(
                 event_date=event.start_time.date(),
+                event_uid=event.uid or "",
                 calendar_name=event_with_source.calendar_name,
                 title=event.title,
                 start_time=event.start_time,
@@ -431,6 +485,8 @@ def _fetch_and_cache_events_sync(start_date: date, end_date: date) -> list[Calen
                 all_day=event.all_day,
             )
             db.add(cached_event)
+
+        _prune_hidden_events(db, start_date, end_date, events_with_source)
 
         db.commit()
         _log(f"[CalDAV Cache] Added {len(events_with_source)} events to cache for {start_date} to {end_date}")
@@ -445,19 +501,47 @@ def _fetch_and_cache_events_sync(start_date: date, end_date: date) -> list[Calen
     return [e.event for e in events_with_source]
 
 
-async def fetch_ical_events(start_date: date, end_date: date) -> list[CalendarEvent]:
+def _filter_hidden_events(events: list[CalendarEvent], start_date: date, end_date: date) -> list[CalendarEvent]:
+    """Filter out events hidden by the user."""
+    if not events:
+        return events
+
+    db = SessionLocal()
+    try:
+        hidden = db.query(HiddenCalendarEvent).filter(
+            HiddenCalendarEvent.event_date >= start_date,
+            HiddenCalendarEvent.event_date <= end_date,
+        ).all()
+        if not hidden:
+            return events
+        hidden_keys = {
+            _event_key(h.event_uid, h.calendar_name, h.start_time)
+            for h in hidden
+        }
+        return [event for event in events if event.id not in hidden_keys]
+    finally:
+        db.close()
+
+
+async def fetch_ical_events(start_date: date, end_date: date, include_hidden: bool = False) -> list[CalendarEvent]:
     """
     Fetch events for a date range.
 
     - If fully within cache range: serve from DB instantly
     - If outside cache range: fetch from CalDAV and add to cache
+    - If include_hidden is True, hidden events are included in results
     """
     cache_start, cache_end = _get_cache_metadata()
+
+    def maybe_filter(events: list[CalendarEvent]) -> list[CalendarEvent]:
+        if include_hidden:
+            return events
+        return _filter_hidden_events(events, start_date, end_date)
 
     # Check if requested range is fully within cache
     if cache_start and cache_end and start_date >= cache_start and end_date <= cache_end:
         _log(f"[CalDAV Cache] Serving {start_date} to {end_date} from DB cache")
-        return _get_events_from_db(start_date, end_date)
+        return maybe_filter(_get_events_from_db(start_date, end_date))
 
     # Check if there's partial overlap - serve what we have from cache, fetch the rest
     if cache_start and cache_end:
@@ -496,14 +580,15 @@ async def fetch_ical_events(start_date: date, end_date: date) -> list[CalendarEv
 
         # Sort combined events
         events.sort(key=lambda e: e.start_time)
-        return events
+        return maybe_filter(events)
 
     # No cache at all - fetch everything
     _log(f"[CalDAV Cache] No cache, fetching {start_date} to {end_date} from CalDAV")
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
+    events = await loop.run_in_executor(
         _executor, _fetch_and_cache_events_sync, start_date, end_date
     )
+    return maybe_filter(events)
 
 
 def get_events_for_date(events: list[CalendarEvent], target_date: date) -> list[CalendarEvent]:

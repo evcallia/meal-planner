@@ -6,15 +6,46 @@ import type { Settings } from '../../hooks/useSettings'
 vi.mock('../../api/client', () => ({
   getCalendarCacheStatus: vi.fn(() => Promise.resolve({ is_refreshing: false, last_refresh: null })),
   refreshCalendarCache: vi.fn(() => Promise.resolve()),
+  getHiddenCalendarEvents: vi.fn(() => Promise.resolve([])),
+  unhideCalendarEvent: vi.fn(() => Promise.resolve({ status: 'ok' })),
 }))
 
-import { getCalendarCacheStatus, refreshCalendarCache } from '../../api/client'
+vi.mock('../../hooks/useOnlineStatus', () => ({
+  useOnlineStatus: vi.fn(() => true),
+}))
+
+vi.mock('../../db', () => ({
+  getLocalHiddenEvents: vi.fn(() => Promise.resolve([])),
+  saveLocalHiddenEvent: vi.fn(),
+  saveLocalHiddenEvents: vi.fn(),
+  clearLocalHiddenEvents: vi.fn(),
+  deleteLocalHiddenEvent: vi.fn(),
+  queueChange: vi.fn(),
+  getPendingChanges: vi.fn(() => Promise.resolve([])),
+  removePendingChange: vi.fn(),
+  getCalendarCacheTimestamp: vi.fn(() => Promise.resolve(null)),
+}))
+
+import { getCalendarCacheStatus, refreshCalendarCache, getHiddenCalendarEvents, unhideCalendarEvent } from '../../api/client'
+import { useOnlineStatus } from '../../hooks/useOnlineStatus'
+import {
+  getLocalHiddenEvents,
+  saveLocalHiddenEvent,
+  deleteLocalHiddenEvent,
+  queueChange,
+  getPendingChanges,
+  removePendingChange,
+} from '../../db'
 
 describe('SettingsModal', () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>
   const defaultSettings: Settings = {
     showItemizedColumn: true,
     showPantry: true,
     showMealIdeas: true,
+    compactView: false,
+    textScaleStandard: 1,
+    textScaleCompact: 1,
   }
 
 const defaultProps = {
@@ -30,8 +61,26 @@ const renderModal = async (props = defaultProps) => {
   })
 }
 
+const mockGetCalendarCacheStatus = vi.mocked(getCalendarCacheStatus)
+const mockGetHiddenCalendarEvents = vi.mocked(getHiddenCalendarEvents)
+const mockUnhideCalendarEvent = vi.mocked(unhideCalendarEvent)
+const mockUseOnlineStatus = vi.mocked(useOnlineStatus)
+const mockGetLocalHiddenEvents = vi.mocked(getLocalHiddenEvents)
+const mockSaveLocalHiddenEvent = vi.mocked(saveLocalHiddenEvent)
+const mockDeleteLocalHiddenEvent = vi.mocked(deleteLocalHiddenEvent)
+const mockQueueChange = vi.mocked(queueChange)
+const mockGetPendingChanges = vi.mocked(getPendingChanges)
+const mockRemovePendingChange = vi.mocked(removePendingChange)
+
   beforeEach(() => {
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.clearAllMocks()
+    mockUseOnlineStatus.mockReturnValue(true)
+    mockGetHiddenCalendarEvents.mockResolvedValue([])
+    mockGetLocalHiddenEvents.mockResolvedValue([])
+  })
+  afterEach(() => {
+    consoleErrorSpy.mockRestore()
   })
 
   it('renders the modal with correct title', async () => {
@@ -58,6 +107,9 @@ const renderModal = async (props = defaultProps) => {
       showItemizedColumn: false,
       showPantry: false,
       showMealIdeas: false,
+      compactView: false,
+      textScaleStandard: 1,
+      textScaleCompact: 1,
     }
     
     await renderModal({ ...defaultProps, settings })
@@ -236,6 +288,179 @@ const renderModal = async (props = defaultProps) => {
 
     await waitFor(() => {
       expect(screen.getByText('Failed to refresh')).toBeInTheDocument()
+    })
+  })
+
+  it('shows last updated time in minutes, hours, and days', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-02-05T12:00:00Z'))
+
+    mockGetCalendarCacheStatus.mockResolvedValueOnce({
+      is_refreshing: false,
+      last_refresh: new Date('2026-02-05T11:50:00Z').toISOString(),
+    })
+    await renderModal()
+    expect(screen.getByText(/last updated: 10 minutes ago/i)).toBeInTheDocument()
+
+    mockGetCalendarCacheStatus.mockResolvedValueOnce({
+      is_refreshing: false,
+      last_refresh: new Date('2026-02-05T10:00:00Z').toISOString(),
+    })
+    await renderModal()
+    expect(screen.getByText(/last updated: 2 hours ago/i)).toBeInTheDocument()
+
+    mockGetCalendarCacheStatus.mockResolvedValueOnce({
+      is_refreshing: false,
+      last_refresh: new Date('2026-02-03T12:00:00Z').toISOString(),
+    })
+    await renderModal()
+    expect(screen.getByText(/last updated: 2 days ago/i)).toBeInTheDocument()
+
+    vi.useRealTimers()
+  })
+
+  it('loads hidden events from local cache when offline', async () => {
+    mockUseOnlineStatus.mockReturnValue(false)
+    mockGetLocalHiddenEvents.mockResolvedValueOnce([
+      {
+        id: 'hidden-1',
+        event_uid: 'uid-1',
+        event_date: '2024-01-01',
+        calendar_name: 'Primary',
+        title: 'Hidden event',
+        start_time: '2024-01-01T10:00:00Z',
+        end_time: null,
+        all_day: false,
+      },
+    ])
+
+    await renderModal()
+
+    expect(screen.getByText('Hidden event')).toBeInTheDocument()
+    expect(mockGetHiddenCalendarEvents).not.toHaveBeenCalled()
+  })
+
+  it('shows error when hidden events fail to load', async () => {
+    mockGetHiddenCalendarEvents.mockRejectedValueOnce(new Error('Boom'))
+    await renderModal()
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load hidden events')).toBeInTheDocument()
+    })
+  })
+
+  it('updates hidden events list from realtime events', async () => {
+    await renderModal()
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+        detail: {
+          type: 'calendar.hidden',
+          payload: {
+            hidden_id: 'hidden-2',
+            event_uid: 'uid-2',
+            calendar_name: 'Primary',
+            title: 'Realtime hidden',
+            start_time: '2024-01-02T12:00:00Z',
+            end_time: null,
+            all_day: false,
+          },
+        },
+      }))
+    })
+
+    expect(screen.getByText('Realtime hidden')).toBeInTheDocument()
+    expect(mockSaveLocalHiddenEvent).toHaveBeenCalled()
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+        detail: {
+          type: 'calendar.unhidden',
+          payload: { hidden_id: 'hidden-2' },
+        },
+      }))
+    })
+
+    expect(screen.queryByText('Realtime hidden')).not.toBeInTheDocument()
+    expect(mockDeleteLocalHiddenEvent).toHaveBeenCalledWith('hidden-2')
+  })
+
+  it('queues unhide when offline and removes pending hide when present', async () => {
+    mockUseOnlineStatus.mockReturnValue(false)
+    mockGetLocalHiddenEvents.mockResolvedValueOnce([
+      {
+        id: 'hidden-3',
+        event_uid: 'uid-3',
+        event_date: '2024-01-03',
+        calendar_name: 'Primary',
+        title: 'Offline hidden',
+        start_time: '2024-01-03T12:00:00Z',
+        end_time: null,
+        all_day: false,
+      },
+    ])
+    mockGetPendingChanges.mockResolvedValueOnce([
+      { id: 'pending-1', type: 'calendar-hide', payload: { tempId: 'hidden-3' } },
+    ])
+
+    await renderModal()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unhide' }))
+
+    await waitFor(() => {
+      expect(mockRemovePendingChange).toHaveBeenCalledWith('pending-1')
+    })
+    expect(mockQueueChange).not.toHaveBeenCalled()
+  })
+
+  it('queues unhide when offline and no pending hide exists', async () => {
+    mockUseOnlineStatus.mockReturnValue(false)
+    mockGetLocalHiddenEvents.mockResolvedValueOnce([
+      {
+        id: 'hidden-4',
+        event_uid: 'uid-4',
+        event_date: '2024-01-04',
+        calendar_name: 'Primary',
+        title: 'Offline hidden 2',
+        start_time: '2024-01-04T12:00:00Z',
+        end_time: null,
+        all_day: false,
+      },
+    ])
+    mockGetPendingChanges.mockResolvedValueOnce([])
+
+    await renderModal()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unhide' }))
+
+    await waitFor(() => {
+      expect(mockQueueChange).toHaveBeenCalledWith('calendar-unhide', '2024-01-04', { hiddenId: 'hidden-4' })
+    })
+  })
+
+  it('unhides events online and removes from list', async () => {
+    mockGetHiddenCalendarEvents.mockResolvedValueOnce([
+      {
+        id: 'hidden-5',
+        event_uid: 'uid-5',
+        event_date: '2024-01-05',
+        calendar_name: 'Primary',
+        title: 'Online hidden',
+        start_time: '2024-01-05T12:00:00Z',
+        end_time: null,
+        all_day: false,
+      },
+    ])
+
+    await renderModal()
+    fireEvent.click(screen.getByRole('button', { name: 'Unhide' }))
+
+    await waitFor(() => {
+      expect(mockUnhideCalendarEvent).toHaveBeenCalledWith('hidden-5')
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText('Online hidden')).not.toBeInTheDocument()
     })
   })
 })

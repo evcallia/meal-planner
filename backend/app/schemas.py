@@ -68,10 +68,27 @@ class MealIdeaUpdate(BaseModel):
 
 
 class CalendarEvent(BaseModel):
+    id: str
+    uid: str | None = None
+    calendar_name: str | None = None
     title: str
     start_time: datetime
     end_time: datetime | None = None
     all_day: bool = False
+
+
+class HiddenCalendarEventSchema(BaseModel):
+    id: UUID
+    event_uid: str
+    event_date: date
+    calendar_name: str
+    title: str
+    start_time: datetime
+    end_time: datetime | None = None
+    all_day: bool = False
+
+    class Config:
+        from_attributes = True
 
 
 class DayData(BaseModel):

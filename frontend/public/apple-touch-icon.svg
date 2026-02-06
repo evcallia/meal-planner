@@ -1,16 +1,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
   <rect width="180" height="180" rx="40" fill="#0f766e"/>
-  <!-- Fork -->
-  <g transform="translate(27, 27)">
-    <path d="M36 14 L36 50" stroke="#f8fafc" stroke-width="7" stroke-linecap="round" fill="none"/>
-    <path d="M22 14 L22 36 Q22 47 36 47" stroke="#f8fafc" stroke-width="5" stroke-linecap="round" fill="none"/>
-    <path d="M36 14 L36 36" stroke="#f8fafc" stroke-width="5" stroke-linecap="round" fill="none"/>
-    <path d="M50 14 L50 36 Q50 47 36 47" stroke="#f8fafc" stroke-width="5" stroke-linecap="round" fill="none"/>
-    <path d="M36 47 L36 112" stroke="#f8fafc" stroke-width="9" stroke-linecap="round" fill="none"/>
+  <!-- Fork with 4 prongs -->
+  <g transform="translate(22, 22)">
+    <!-- Prong 1 (leftmost) -->
+    <path d="M18 14 L18 40" stroke="#f8fafc" stroke-width="5" stroke-linecap="round"/>
+    <!-- Prong 2 -->
+    <path d="M31 14 L31 40" stroke="#f8fafc" stroke-width="5" stroke-linecap="round"/>
+    <!-- Prong 3 -->
+    <path d="M44 14 L44 40" stroke="#f8fafc" stroke-width="5" stroke-linecap="round"/>
+    <!-- Prong 4 (rightmost) -->
+    <path d="M57 14 L57 40" stroke="#f8fafc" stroke-width="5" stroke-linecap="round"/>
+    <!-- Fork neck connecting prongs -->
+    <path d="M18 40 Q18 54 37.5 54 Q57 54 57 40" stroke="#f8fafc" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <!-- Fork handle -->
+    <path d="M37.5 54 L37.5 122" stroke="#f8fafc" stroke-width="9" stroke-linecap="round"/>
   </g>
-  <!-- Spoon -->
-  <g transform="translate(90, 27)">
-    <ellipse cx="36" cy="32" rx="25" ry="29" fill="#f8fafc"/>
-    <path d="M36 61 L36 112" stroke="#f8fafc" stroke-width="9" stroke-linecap="round"/>
+  <!-- Oval Spoon -->
+  <g transform="translate(94, 22)">
+    <!-- Spoon bowl (oval) -->
+    <ellipse cx="32" cy="32" rx="22" ry="29" fill="#f8fafc"/>
+    <!-- Spoon handle -->
+    <path d="M32 61 L32 122" stroke="#f8fafc" stroke-width="9" stroke-linecap="round"/>
   </g>
 </svg>

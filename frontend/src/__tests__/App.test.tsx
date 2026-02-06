@@ -61,7 +61,7 @@ vi.mock('../hooks/useDarkMode', () => ({
 
 vi.mock('../hooks/useSettings', () => ({
   useSettings: vi.fn(() => ({ 
-    settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true, compactView: false }, 
+    settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1 }, 
     updateSettings: vi.fn() 
   }))
 }));
@@ -152,7 +152,7 @@ describe('App', () => {
     
     const mockUpdateSettings = vi.fn();
     mockUseSettings.mockReturnValue({ 
-      settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true, compactView: false }, 
+      settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1 }, 
       updateSettings: mockUpdateSettings 
     });
     mockUseOnlineStatus.mockReturnValue(true);
@@ -353,6 +353,7 @@ describe('App', () => {
   });
 
   it('uses cached user when API throws', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const cachedUser = { id: '999', name: 'Cached User', email: 'cached@example.com' };
     localStorage.getItem = vi.fn(() => JSON.stringify(cachedUser));
     mockGetCurrentUser.mockRejectedValue(new Error('API down'));
@@ -363,6 +364,7 @@ describe('App', () => {
       expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
       expect(screen.getByText('Cached User')).toBeInTheDocument();
     });
+    consoleSpy.mockRestore();
   });
 
   it('schedules a meal online and updates notes', async () => {

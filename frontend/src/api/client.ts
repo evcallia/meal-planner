@@ -51,8 +51,13 @@ export async function getDays(startDate: string, endDate: string): Promise<DayDa
   return fetchAPI<DayData[]>(`/days?start_date=${startDate}&end_date=${endDate}`);
 }
 
-export async function getEvents(startDate: string, endDate: string): Promise<Record<string, CalendarEvent[]>> {
-  return fetchAPI<Record<string, CalendarEvent[]>>(`/days/events?start_date=${startDate}&end_date=${endDate}`);
+export async function getEvents(startDate: string, endDate: string, includeHidden: boolean = false): Promise<Record<string, CalendarEvent[]>> {
+  const params = new URLSearchParams({
+    start_date: startDate,
+    end_date: endDate,
+    include_hidden: String(includeHidden),
+  });
+  return fetchAPI<Record<string, CalendarEvent[]>>(`/days/events?${params}`);
 }
 
 export async function updateNotes(date: string, notes: string): Promise<MealNote> {
@@ -171,4 +176,39 @@ export interface CalendarListResponse {
 
 export async function getCalendarList(): Promise<CalendarListResponse> {
   return fetchAPI<CalendarListResponse>('/calendar/list');
+}
+
+export interface HiddenCalendarEvent {
+  id: string;
+  event_uid: string;
+  event_date: string;
+  calendar_name: string;
+  title: string;
+  start_time: string;
+  end_time: string | null;
+  all_day: boolean;
+}
+
+export async function getHiddenCalendarEvents(): Promise<HiddenCalendarEvent[]> {
+  return fetchAPI<HiddenCalendarEvent[]>('/calendar/hidden');
+}
+
+export async function hideCalendarEvent(payload: {
+  event_uid: string;
+  calendar_name: string;
+  title: string;
+  start_time: string;
+  end_time: string | null;
+  all_day: boolean;
+}): Promise<HiddenCalendarEvent> {
+  return fetchAPI<HiddenCalendarEvent>('/calendar/hidden', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function unhideCalendarEvent(hiddenId: string): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/calendar/hidden/${hiddenId}`, {
+    method: 'DELETE',
+  });
 }

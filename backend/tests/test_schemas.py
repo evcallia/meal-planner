@@ -119,6 +119,7 @@ class TestSchemas:
     def test_calendar_event_schema_valid(self):
         """Test CalendarEvent schema with valid data."""
         data = {
+            "id": "event-1",
             "title": "Dinner with friends",
             "start_time": "2024-02-15T19:00:00Z",
             "all_day": False
@@ -132,6 +133,7 @@ class TestSchemas:
     def test_calendar_event_all_day(self):
         """Test CalendarEvent with all-day event."""
         data = {
+            "id": "event-2",
             "title": "Birthday",
             "start_time": "2024-02-15T00:00:00Z",
             "all_day": True
@@ -144,6 +146,7 @@ class TestSchemas:
     def test_calendar_event_missing_title(self):
         """Test CalendarEvent with missing title."""
         data = {
+            "id": "event-3",
             "start_time": "2024-02-15T19:00:00Z",
             "all_day": False
         }
@@ -164,6 +167,7 @@ class TestSchemas:
             },
             "events": [
                 {
+                    "id": "event-4",
                     "title": "Meeting",
                     "start_time": "2024-02-15T10:00:00Z",
                     "all_day": False
@@ -209,6 +213,7 @@ class TestSchemas:
             meal_note=None,
             events=[
                 CalendarEvent(
+                    id="event-5",
                     title="Test Event",
                     start_time="2024-02-15T10:00:00Z",
                     all_day=False

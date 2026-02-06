@@ -69,6 +69,16 @@ function App() {
     checkAuth();
   }, []);
 
+  useEffect(() => {
+    const scale = settings.compactView ? settings.textScaleCompact : settings.textScaleStandard;
+    const root = document.documentElement;
+    const baseSize = 16;
+    root.style.fontSize = `${baseSize * scale}px`;
+    return () => {
+      root.style.fontSize = '';
+    };
+  }, [settings.compactView, settings.textScaleCompact, settings.textScaleStandard]);
+
   const handleLogout = async () => {
     await logout();
     localStorage.removeItem('meal-planner-user');
@@ -203,6 +213,7 @@ function App() {
           onTodayRefReady={handleTodayRefReady}
           showItemizedColumn={settings.showItemizedColumn}
           compactView={settings.compactView}
+          showAllEvents={settings.showAllEvents}
         />
       </main>
 
@@ -218,14 +229,14 @@ function App() {
       )}
 
       {/* Floating Action Buttons */}
-      <div className="fixed bottom-6 right-6 z-20 flex flex-col gap-3">
+      <div className="fixed bottom-4 right-4 z-20 flex flex-col gap-2">
         {(settings.showPantry || settings.showMealIdeas) && (
           <button
             onClick={scrollToTopSection}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-full px-4 py-3 shadow-lg transition-all duration-200 hover:scale-105 flex items-center gap-2"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-full px-3 py-1.5 shadow-lg transition-all duration-200 hover:scale-105 flex items-center gap-1.5 text-sm"
             aria-label="Jump to pantry"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
             </svg>
             <span className="font-medium">Pantry</span>
@@ -233,10 +244,10 @@ function App() {
         )}
         <button
           onClick={scrollToToday}
-          className="bg-blue-500 hover:bg-blue-600 text-white rounded-full px-4 py-3 shadow-lg transition-all duration-200 hover:scale-105 flex items-center gap-2"
+          className="bg-blue-500 hover:bg-blue-600 text-white rounded-full px-3 py-1.5 shadow-lg transition-all duration-200 hover:scale-105 flex items-center gap-1.5 text-sm"
           aria-label="Jump to today"
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
           </svg>
           <span className="font-medium">Today</span>
