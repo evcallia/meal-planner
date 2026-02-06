@@ -332,6 +332,7 @@ describe('useSync', () => {
   });
 
   it('skips pantry updates for unresolved temp ids', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockUseOnlineStatus.mockReturnValue(true);
     mockIsTempId.mockReturnValue(true);
     mockGetTempIdMapping.mockResolvedValue(undefined);
@@ -354,6 +355,7 @@ describe('useSync', () => {
       expect(mockUpdatePantryItem).not.toHaveBeenCalled();
       expect(mockRemovePendingChange).toHaveBeenCalledWith(11);
     });
+    warnSpy.mockRestore();
   });
 
   it('syncs pantry deletes with mapped temp ids', async () => {
@@ -388,6 +390,7 @@ describe('useSync', () => {
   });
 
   it('skips pantry deletes for unresolved temp ids', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockUseOnlineStatus.mockReturnValue(true);
     mockIsTempId.mockReturnValue(true);
     mockGetTempIdMapping.mockResolvedValue(undefined);
@@ -415,6 +418,7 @@ describe('useSync', () => {
       expect(mockRemovePendingChange).toHaveBeenCalledWith(23);
       expect(result.current.status).toBe('online');
     });
+    warnSpy.mockRestore();
   });
 
   it('syncs meal idea adds and maps temp ids', async () => {
@@ -476,6 +480,7 @@ describe('useSync', () => {
   });
 
   it('skips meal idea updates for unresolved temp ids', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockUseOnlineStatus.mockReturnValue(true);
     mockIsTempId.mockReturnValue(true);
     mockGetTempIdMapping.mockResolvedValue(undefined);
@@ -503,9 +508,11 @@ describe('useSync', () => {
       expect(mockRemovePendingChange).toHaveBeenCalledWith(25);
       expect(result.current.status).toBe('online');
     });
+    warnSpy.mockRestore();
   });
 
   it('skips meal idea deletes for unresolved temp ids', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockUseOnlineStatus.mockReturnValue(true);
     mockIsTempId.mockReturnValue(true);
     mockGetTempIdMapping.mockResolvedValue(undefined);
@@ -528,6 +535,7 @@ describe('useSync', () => {
       expect(mockDeleteMealIdea).not.toHaveBeenCalled();
       expect(mockRemovePendingChange).toHaveBeenCalledWith(13);
     });
+    warnSpy.mockRestore();
   });
 
   it('syncs meal idea deletes with mapped temp ids', async () => {

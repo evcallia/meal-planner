@@ -58,9 +58,6 @@ describe('DayCard', () => {
   afterEach(() => {
     vi.useRealTimers()
   })
-  afterEach(() => {
-    vi.useRealTimers()
-  })
 
   it('renders day card with date information', () => {
     render(<DayCard {...defaultProps} />)
@@ -99,7 +96,9 @@ describe('DayCard', () => {
     render(<DayCard {...defaultProps} onHideEvent={vi.fn()} />)
 
     const optionsButton = screen.getByLabelText('Event options')
-    await user.click(optionsButton)
+    await act(async () => {
+      await user.click(optionsButton)
+    })
 
     expect(screen.getByText('Hide event')).toBeInTheDocument()
     const eventRow = screen.getByText('Dinner with friends').closest('[aria-selected]')

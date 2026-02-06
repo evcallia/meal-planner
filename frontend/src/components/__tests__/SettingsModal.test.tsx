@@ -23,6 +23,7 @@ vi.mock('../../db', () => ({
   queueChange: vi.fn(),
   getPendingChanges: vi.fn(() => Promise.resolve([])),
   removePendingChange: vi.fn(),
+  getCalendarCacheTimestamp: vi.fn(() => Promise.resolve(null)),
 }))
 
 import { getCalendarCacheStatus, refreshCalendarCache, getHiddenCalendarEvents, unhideCalendarEvent } from '../../api/client'
@@ -37,6 +38,7 @@ import {
 } from '../../db'
 
 describe('SettingsModal', () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>
   const defaultSettings: Settings = {
     showItemizedColumn: true,
     showPantry: true,
@@ -71,10 +73,14 @@ const mockGetPendingChanges = vi.mocked(getPendingChanges)
 const mockRemovePendingChange = vi.mocked(removePendingChange)
 
   beforeEach(() => {
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.clearAllMocks()
     mockUseOnlineStatus.mockReturnValue(true)
     mockGetHiddenCalendarEvents.mockResolvedValue([])
     mockGetLocalHiddenEvents.mockResolvedValue([])
+  })
+  afterEach(() => {
+    consoleErrorSpy.mockRestore()
   })
 
   it('renders the modal with correct title', async () => {
@@ -453,6 +459,8 @@ const mockRemovePendingChange = vi.mocked(removePendingChange)
       expect(mockUnhideCalendarEvent).toHaveBeenCalledWith('hidden-5')
     })
 
-    expect(screen.queryByText('Online hidden')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByText('Online hidden')).not.toBeInTheDocument()
+    })
   })
 })

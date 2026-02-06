@@ -529,6 +529,7 @@ describe('CalendarView', () => {
   });
 
   it('loads events from IndexedDB when offline', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     mockUseOnlineStatus.mockReturnValue(false);
     mockGetDays.mockRejectedValue(new Error('offline'));
     mockGetLocalCalendarEventsForRange.mockResolvedValue({
@@ -551,6 +552,7 @@ describe('CalendarView', () => {
     });
 
     expect(mockGetEvents).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
   });
 
   it('moves the last meal to another day and leaves source empty', async () => {
