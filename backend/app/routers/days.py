@@ -33,6 +33,9 @@ def _split_note_lines(notes: str) -> list[str]:
     normalized = re.sub(r"</div>\s*<div>", "\n", normalized, flags=re.IGNORECASE)
     normalized = re.sub(r"<div>", "\n", normalized, flags=re.IGNORECASE)
     normalized = re.sub(r"</div>", "", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"</p>\s*<p[^>]*>", "\n", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"<p[^>]*>", "\n", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"</p>", "", normalized, flags=re.IGNORECASE)
     lines = normalized.split("\n")
     filtered: list[str] = []
     for line in lines:

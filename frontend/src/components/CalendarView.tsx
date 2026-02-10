@@ -37,9 +37,12 @@ function addDays(date: Date, days: number): Date {
 function splitHtmlLines(html: string): string[] {
   const normalized = html
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/div><div>/gi, '\n')
+    .replace(/<\/div>\s*<div>/gi, '\n')
     .replace(/<div>/gi, '\n')
-    .replace(/<\/div>/gi, '');
+    .replace(/<\/div>/gi, '')
+    .replace(/<\/p>\s*<p[^>]*>/gi, '\n')
+    .replace(/<p[^>]*>/gi, '\n')
+    .replace(/<\/p>/gi, '');
 
   return normalized.split('\n').filter(line => {
     const textContent = line.replace(/<[^>]*>/g, '').trim();
