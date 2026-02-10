@@ -317,7 +317,7 @@ describe('DayCard', () => {
     const mealItemButtons = checkboxes.filter(button => 
       button.closest('[class*="w-5 h-5"]')
     )
-    expect(mealItemButtons).toHaveLength(1) // Only one checkbox is rendered
+    expect(mealItemButtons).toHaveLength(2) // One checkbox per meal line
   })
 
   it('hides itemized checkboxes when showItemizedColumn is false', () => {

@@ -43,12 +43,15 @@ function formatDate(dateString: string, compact = false): { dayName: string; dat
 // Split HTML content into lines, preserving HTML tags within each line
 function splitHtmlLines(html: string): string[] {
   // Replace <br>, <br/>, <br /> with newlines, then split
-  // Also handle <div> blocks which browsers sometimes use for new lines
+  // Also handle <div> and <p> blocks which browsers sometimes use for new lines
   const normalized = html
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/div><div>/gi, '\n')
+    .replace(/<\/div>\s*<div>/gi, '\n')
     .replace(/<div>/gi, '\n')
-    .replace(/<\/div>/gi, '');
+    .replace(/<\/div>/gi, '')
+    .replace(/<\/p>\s*<p[^>]*>/gi, '\n')
+    .replace(/<p[^>]*>/gi, '\n')
+    .replace(/<\/p>/gi, '');
 
   return normalized.split('\n').filter(line => {
     // Check if line has actual content (not just empty tags)
@@ -89,6 +92,7 @@ export function DayCard({
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const lastTapRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const longPressTriggeredRef = useRef(false);
+  const focusProxyRef = useRef<HTMLTextAreaElement>(null);
 
   const { dayName, dateDisplay, isWeekend } = formatDate(day.date, compactView);
 
@@ -136,6 +140,9 @@ export function DayCard({
   };
 
   const enterEditMode = () => {
+    // Focus proxy textarea synchronously within the tap/click handler so
+    // mobile browsers open the virtual keyboard immediately.
+    focusProxyRef.current?.focus();
     setIsEditing(true);
   };
 
@@ -420,6 +427,14 @@ export function DayCard({
                 </div>
               )}
 
+            {/* Hidden proxy that receives focus synchronously on tap so mobile keyboards open */}
+            <textarea
+              ref={focusProxyRef}
+              aria-hidden
+              tabIndex={-1}
+              className="absolute opacity-0 w-0 h-0 p-0 m-0 border-0 overflow-hidden"
+              style={{ pointerEvents: 'none' }}
+            />
             {isEditing ? (
               <div>
                 <RichTextEditor
@@ -613,6 +628,14 @@ export function DayCard({
 
         {/* Meal Notes */}
         <div className="p-4">
+          {/* Hidden proxy that receives focus synchronously on tap so mobile keyboards open */}
+          <textarea
+            ref={focusProxyRef}
+            aria-hidden
+            tabIndex={-1}
+            className="absolute opacity-0 w-0 h-0 p-0 m-0 border-0 overflow-hidden"
+            style={{ pointerEvents: 'none' }}
+          />
           {isEditing ? (
             <div>
               <RichTextEditor

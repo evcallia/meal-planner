@@ -31,20 +31,17 @@ export function RichTextEditor({ value, onChange, onBlur, placeholder, autoFocus
       
       // Auto-focus if requested (only on initial mount)
       if (autoFocus && initialMount.current) {
-        // Use requestAnimationFrame to ensure the DOM is ready
-        requestAnimationFrame(() => {
-          if (editorRef.current) {
-            editorRef.current.focus();
-            
-            // Move cursor to end of content
-            const range = document.createRange();
-            const selection = window.getSelection();
-            range.selectNodeContents(editorRef.current);
-            range.collapse(false); // Collapse to end
-            selection?.removeAllRanges();
-            selection?.addRange(range);
-          }
-        });
+        // Focus immediately to transfer focus from any proxy element,
+        // keeping the mobile keyboard open.
+        editorRef.current.focus();
+
+        // Move cursor to end of content
+        const range = document.createRange();
+        const selection = window.getSelection();
+        range.selectNodeContents(editorRef.current);
+        range.collapse(false); // Collapse to end
+        selection?.removeAllRanges();
+        selection?.addRange(range);
       }
       
       initialMount.current = false;
