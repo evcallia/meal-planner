@@ -2,6 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useOnlineStatus } from '../useOnlineStatus'
 
+vi.mock('../../authEvents', () => ({
+  emitAuthFailure: vi.fn(),
+  onAuthFailure: vi.fn(() => vi.fn()),
+  AUTH_FAILURE_EVENT: 'meal-planner-auth-failure',
+}))
+
 // Mock navigator.onLine
 Object.defineProperty(navigator, 'onLine', {
   writable: true,

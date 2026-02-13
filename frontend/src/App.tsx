@@ -13,6 +13,7 @@ import { UserInfo } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { getLocalNote, queueChange, saveLocalNote } from './db';
+import { onAuthFailure } from './authEvents';
 
 function App() {
   const [user, setUser] = useState<UserInfo | null>(null);
@@ -29,30 +30,17 @@ function App() {
   useEffect(() => {
     const checkAuth = async () => {
       const cached = localStorage.getItem('meal-planner-user');
+      const result = await getCurrentUser();
 
-      try {
-        const currentUser = await getCurrentUser();
-        if (currentUser) {
-          // Cache user info for offline use
-          localStorage.setItem('meal-planner-user', JSON.stringify(currentUser));
-          setUser(currentUser);
-        } else {
-          // API returned null - either not logged in, or request failed/timed out
-          // If we have cached user, use it (likely offline or timeout)
-          if (cached) {
-            try {
-              setUser(JSON.parse(cached));
-            } catch {
-              setUser(null);
-            }
-          } else {
-            setUser(null);
-          }
-        }
-      } catch (error) {
-        console.error('Auth check failed:', error);
-        // Request threw an error (network error, timeout, etc)
-        // Use cached user if available
+      if (result.status === 'authenticated') {
+        localStorage.setItem('meal-planner-user', JSON.stringify(result.user));
+        setUser(result.user);
+      } else if (result.status === 'auth-failed') {
+        // Session or CF access expired — clear cache and force re-login
+        localStorage.removeItem('meal-planner-user');
+        setUser(null);
+      } else {
+        // Network error — use cached user for offline access
         if (cached) {
           try {
             setUser(JSON.parse(cached));
@@ -62,11 +50,19 @@ function App() {
         } else {
           setUser(null);
         }
-      } finally {
-        setLoading(false);
       }
+
+      setLoading(false);
     };
     checkAuth();
+  }, []);
+
+  // Listen for auth failures from any part of the app (API calls, health checks, SSE)
+  useEffect(() => {
+    return onAuthFailure(() => {
+      localStorage.removeItem('meal-planner-user');
+      setUser(null);
+    });
   }, []);
 
   useEffect(() => {
@@ -182,6 +178,16 @@ function App() {
         <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
           <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Meal Planner</h1>
           <div className="flex items-center gap-3">
+            {/* Refresh button */}
+            <button
+              onClick={() => window.location.reload()}
+              className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              aria-label="Refresh"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
             {/* Settings button */}
             <button
               onClick={() => setShowSettings(true)}

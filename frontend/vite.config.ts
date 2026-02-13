@@ -71,7 +71,24 @@ export default defineConfig(({ mode }) => {
                   maxEntries: 100,
                   maxAgeSeconds: 60 * 60 * 24 // 24 hours
                 },
-                networkTimeoutSeconds: 10
+                networkTimeoutSeconds: 10,
+                plugins: [
+                  {
+                    // Reject HTML responses (e.g. Cloudflare challenge pages) from
+                    // being cached as API responses. Without this, a CF challenge
+                    // page could be cached and served as stale "API data" indefinitely.
+                    cacheWillUpdate: async ({ response }: { response: Response }) => {
+                      const ct = response.headers.get('content-type') || '';
+                      if (ct.includes('text/html')) {
+                        return null; // Don't cache HTML
+                      }
+                      if (!response.ok) {
+                        return null; // Don't cache error responses (401, 403, etc)
+                      }
+                      return response;
+                    },
+                  },
+                ],
               }
             }
           ]

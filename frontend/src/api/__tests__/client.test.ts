@@ -1,4 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('../../authEvents', () => ({
+  emitAuthFailure: vi.fn(),
+  onAuthFailure: vi.fn(() => vi.fn()),
+  AUTH_FAILURE_EVENT: 'meal-planner-auth-failure',
+}));
+
 import {
   getDays,
   getEvents,
@@ -24,6 +31,21 @@ import {
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
+// Helper: create a mock Response with headers
+function mockResponse(init: { ok: boolean; status?: number; json?: () => Promise<unknown>; contentType?: string }) {
+  return {
+    ok: init.ok,
+    status: init.status ?? (init.ok ? 200 : 500),
+    json: init.json ?? (() => Promise.resolve({})),
+    headers: {
+      get: (name: string) => {
+        if (name.toLowerCase() === 'content-type') return init.contentType ?? 'application/json';
+        return null;
+      },
+    },
+  };
+}
+
 describe('API client', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -31,19 +53,13 @@ describe('API client', () => {
 
   describe('fetchAPI error handling', () => {
     it('should handle 401 unauthorized errors', async () => {
-      mockFetch.mockResolvedValue({
-        ok: false,
-        status: 401,
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: false, status: 401 }));
 
       await expect(getDays('2024-01-01', '2024-01-07')).rejects.toThrow('Unauthorized');
     });
 
     it('should handle other API errors', async () => {
-      mockFetch.mockResolvedValue({
-        ok: false,
-        status: 500,
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: false, status: 500 }));
 
       await expect(getDays('2024-01-01', '2024-01-07')).rejects.toThrow('API error: 500');
     });
@@ -59,10 +75,7 @@ describe('API client', () => {
         }
       ];
 
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockDays),
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: true, json: () => Promise.resolve(mockDays) }));
 
       const result = await getDays('2024-01-01', '2024-01-07');
 
@@ -93,10 +106,7 @@ describe('API client', () => {
         ]
       };
 
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockEvents),
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: true, json: () => Promise.resolve(mockEvents) }));
 
       const result = await getEvents('2024-01-01', '2024-01-07');
 
@@ -119,10 +129,7 @@ describe('API client', () => {
         notes: 'Updated notes'
       };
 
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockNote),
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: true, json: () => Promise.resolve(mockNote) }));
 
       const result = await updateNotes('2024-01-01', 'Updated notes');
 
@@ -147,10 +154,7 @@ describe('API client', () => {
         itemized: true
       };
 
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockItem),
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: true, json: () => Promise.resolve(mockItem) }));
 
       const result = await toggleItemized('2024-01-01', 0, true);
 
@@ -175,10 +179,7 @@ describe('API client', () => {
         email: 'test@example.com'
       };
 
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockUser),
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: true, json: () => Promise.resolve(mockUser) }));
 
       const result = await getCurrentUser();
 
@@ -186,26 +187,23 @@ describe('API client', () => {
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
-      expect(result).toEqual(mockUser);
+      expect(result).toEqual({ status: 'authenticated', user: mockUser });
     });
 
-    it('should return null when not authenticated', async () => {
-      mockFetch.mockResolvedValue({
-        ok: false,
-        status: 401,
-      });
+    it('should return auth-failed when not authenticated', async () => {
+      mockFetch.mockResolvedValue(mockResponse({ ok: false, status: 401 }));
 
       const result = await getCurrentUser();
 
-      expect(result).toBeNull();
+      expect(result).toEqual({ status: 'auth-failed' });
     });
 
-    it('should return null when fetch fails', async () => {
+    it('should return network-error when fetch fails', async () => {
       mockFetch.mockRejectedValue(new Error('Network error'));
 
       const result = await getCurrentUser();
 
-      expect(result).toBeNull();
+      expect(result).toEqual({ status: 'network-error' });
     });
   });
 
@@ -234,10 +232,7 @@ describe('API client', () => {
   describe('pantry endpoints', () => {
     it('should fetch pantry items', async () => {
       const mockItems = [{ id: '1', name: 'Rice', quantity: 2, updated_at: '2026-01-01T00:00:00Z' }];
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockItems),
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: true, json: () => Promise.resolve(mockItems) }));
 
       const result = await getPantryItems();
 
@@ -251,10 +246,7 @@ describe('API client', () => {
 
     it('should create, update, and delete pantry items', async () => {
       const mockItem = { id: '1', name: 'Rice', quantity: 2, updated_at: '2026-01-01T00:00:00Z' };
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockItem),
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: true, json: () => Promise.resolve(mockItem) }));
 
       await createPantryItem({ name: 'Rice', quantity: 2 });
       expect(mockFetch).toHaveBeenCalledWith('/api/pantry', expect.objectContaining({
@@ -287,10 +279,7 @@ describe('API client', () => {
   describe('meal ideas endpoints', () => {
     it('should fetch meal ideas', async () => {
       const mockIdeas = [{ id: '1', title: 'Pasta', updated_at: '2026-01-01T00:00:00Z' }];
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockIdeas),
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: true, json: () => Promise.resolve(mockIdeas) }));
 
       const result = await getMealIdeas();
 
@@ -304,10 +293,7 @@ describe('API client', () => {
 
     it('should create, update, and delete meal ideas', async () => {
       const mockIdea = { id: '1', title: 'Pasta', updated_at: '2026-01-01T00:00:00Z' };
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockIdea),
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: true, json: () => Promise.resolve(mockIdea) }));
 
       await createMealIdea({ title: 'Pasta' });
       expect(mockFetch).toHaveBeenCalledWith('/api/meal-ideas', expect.objectContaining({
@@ -340,10 +326,7 @@ describe('API client', () => {
   describe('calendar cache endpoints', () => {
     it('should fetch and refresh calendar cache status', async () => {
       const mockStatus = { last_refresh: null, cache_start: null, cache_end: null, is_refreshing: false };
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockStatus),
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: true, json: () => Promise.resolve(mockStatus) }));
 
       const status = await getCalendarCacheStatus();
       expect(status).toEqual(mockStatus);
@@ -359,10 +342,7 @@ describe('API client', () => {
 
     it('should fetch calendar list', async () => {
       const mockList = { available: ['A'], selected: ['B'] };
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockList),
-      });
+      mockFetch.mockResolvedValue(mockResponse({ ok: true, json: () => Promise.resolve(mockList) }));
 
       const result = await getCalendarList();
 

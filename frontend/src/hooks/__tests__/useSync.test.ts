@@ -7,6 +7,12 @@ vi.mock('../useOnlineStatus', () => ({
   useOnlineStatus: vi.fn()
 }));
 
+vi.mock('../../authEvents', () => ({
+  emitAuthFailure: vi.fn(),
+  onAuthFailure: vi.fn(() => vi.fn()),
+  AUTH_FAILURE_EVENT: 'meal-planner-auth-failure',
+}));
+
 vi.mock('../../db', () => ({
   getPendingChanges: vi.fn(),
   removePendingChange: vi.fn(),
@@ -21,18 +27,22 @@ vi.mock('../../db', () => ({
   deleteLocalHiddenEvent: vi.fn(),
 }));
 
-vi.mock('../../api/client', () => ({
-  updateNotes: vi.fn(),
-  toggleItemized: vi.fn(),
-  createPantryItem: vi.fn(),
-  updatePantryItem: vi.fn(),
-  deletePantryItem: vi.fn(),
-  createMealIdea: vi.fn(),
-  updateMealIdea: vi.fn(),
-  deleteMealIdea: vi.fn(),
-  hideCalendarEvent: vi.fn(),
-  unhideCalendarEvent: vi.fn(),
-}));
+vi.mock('../../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api/client')>();
+  return {
+    ...actual,
+    updateNotes: vi.fn(),
+    toggleItemized: vi.fn(),
+    createPantryItem: vi.fn(),
+    updatePantryItem: vi.fn(),
+    deletePantryItem: vi.fn(),
+    createMealIdea: vi.fn(),
+    updateMealIdea: vi.fn(),
+    deleteMealIdea: vi.fn(),
+    hideCalendarEvent: vi.fn(),
+    unhideCalendarEvent: vi.fn(),
+  };
+});
 
 import { useOnlineStatus } from '../useOnlineStatus';
 import {

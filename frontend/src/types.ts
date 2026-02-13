@@ -33,7 +33,7 @@ export interface UserInfo {
   name: string | null;
 }
 
-export type ConnectionStatus = 'online' | 'offline' | 'syncing';
+export type ConnectionStatus = 'online' | 'offline' | 'syncing' | 'auth-required';
 
 export interface PantryItem {
   id: string;

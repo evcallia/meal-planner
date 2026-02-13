@@ -124,12 +124,14 @@ app.add_middleware(TimingMiddleware)
 
 # Session middleware for auth
 # When using tunnels (ngrok), use same_site="none" to allow cross-site cookies
+# max_age=7 days — after that the session cookie expires and user must re-login
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.secret_key,
     same_site="none" if settings.allow_tunnel else "lax",
     https_only=settings.secure_cookies or settings.allow_tunnel,  # ngrok uses HTTPS
     session_cookie="meal_planner_session",
+    max_age=60 * 60 * 24 * 7,  # 7 days
 )
 
 # API routes

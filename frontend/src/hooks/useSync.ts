@@ -24,6 +24,7 @@ import {
   deleteMealIdea,
   hideCalendarEvent,
   unhideCalendarEvent,
+  AuthError,
 } from '../api/client';
 import { ConnectionStatus } from '../types';
 
@@ -189,7 +190,13 @@ export function useSync() {
         setPendingCount(prev => prev - 1);
       } catch (error) {
         console.error('Failed to sync change:', error);
-        // Stop syncing on error, will retry on next online event
+        if (error instanceof AuthError) {
+          // Auth/CF failure — stop syncing, App will handle re-login.
+          // Pending changes stay queued and will sync after re-auth.
+          setStatus('auth-required');
+          return;
+        }
+        // Network or other error — stop and retry on next online event
         break;
       }
     }

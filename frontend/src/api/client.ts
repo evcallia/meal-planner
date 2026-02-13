@@ -1,8 +1,22 @@
 import { DayData, MealNote, MealItem, UserInfo, CalendarEvent, PantryItem, MealIdea } from '../types';
 import { logDuration, logPerf, perfNow } from '../utils/perf';
+import { emitAuthFailure } from '../authEvents';
 
 const API_BASE = '/api';
 const API_TIMEOUT = 5000; // 5 second timeout for API requests
+
+/** Check if a response is an HTML page (e.g. Cloudflare challenge) instead of JSON API */
+function isHtmlResponse(response: Response): boolean {
+  const contentType = response.headers.get('content-type') || '';
+  return contentType.includes('text/html');
+}
+
+export class AuthError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = 'AuthError';
+  }
+}
 
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   const method = options?.method ?? 'GET';
@@ -34,10 +48,21 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   logDuration('api.request', requestStart, { path, method, status: response.status });
 
   if (!response.ok) {
-    if (response.status === 401) {
-      throw new Error('Unauthorized');
+    if (response.status === 401 || response.status === 403) {
+      const reason = isHtmlResponse(response) ? 'cf-challenge' : 'session-expired';
+      emitAuthFailure(reason);
+      throw new AuthError(
+        reason === 'cf-challenge' ? 'Access challenge required' : 'Unauthorized',
+        response.status
+      );
     }
     throw new Error(`API error: ${response.status}`);
+  }
+
+  // Guard against Cloudflare challenge pages that return 200 with HTML
+  if (isHtmlResponse(response)) {
+    emitAuthFailure('cf-challenge');
+    throw new AuthError('Access challenge required', 403);
   }
 
   const parseStart = perfNow();
@@ -74,7 +99,12 @@ export async function toggleItemized(date: string, lineIndex: number, itemized: 
   });
 }
 
-export async function getCurrentUser(): Promise<UserInfo | null> {
+export type AuthCheckResult =
+  | { status: 'authenticated'; user: UserInfo }
+  | { status: 'auth-failed' }   // 401/403 — session or CF expired
+  | { status: 'network-error' }; // fetch threw — truly offline
+
+export async function getCurrentUser(): Promise<AuthCheckResult> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT);
@@ -86,10 +116,26 @@ export async function getCurrentUser(): Promise<UserInfo | null> {
 
     clearTimeout(timeoutId);
 
-    if (!response.ok) return null;
-    return response.json();
+    if (response.ok && !isHtmlResponse(response)) {
+      const user: UserInfo | null = await response.json();
+      // /api/auth/me returns 200 with null body when session is expired
+      if (!user) {
+        return { status: 'auth-failed' };
+      }
+      return { status: 'authenticated', user };
+    }
+
+    // Got a response but not authenticated — emit so other listeners know
+    if (response.status === 401 || response.status === 403 || isHtmlResponse(response)) {
+      const reason = isHtmlResponse(response) ? 'cf-challenge' : 'session-expired';
+      emitAuthFailure(reason);
+      return { status: 'auth-failed' };
+    }
+
+    // Other error (500, etc) — treat as network-level issue
+    return { status: 'network-error' };
   } catch {
-    return null;
+    return { status: 'network-error' };
   }
 }
 
