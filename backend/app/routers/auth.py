@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 
 from app.auth import login, callback, logout, get_current_user, get_optional_user
@@ -25,9 +25,10 @@ async def auth_logout(request: Request):
     return await logout(request)
 
 
-@router.get("/me", response_model=UserInfo | None)
-async def get_me(user: dict | None = Depends(get_optional_user)):
-    """Get current user info."""
+@router.get("/me")
+async def get_me(request: Request):
+    """Get current user info, or 401 if not authenticated."""
+    user = await get_optional_user(request)
     if user:
         return UserInfo(**user)
-    return None
+    raise HTTPException(status_code=401, detail="Not authenticated")

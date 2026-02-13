@@ -7,6 +7,12 @@ vi.mock('../useOnlineStatus', () => ({
   useOnlineStatus: vi.fn(() => true),
 }));
 
+vi.mock('../../authEvents', () => ({
+  emitAuthFailure: vi.fn(),
+  onAuthFailure: vi.fn(() => vi.fn()),
+  AUTH_FAILURE_EVENT: 'meal-planner-auth-failure',
+}));
+
 class MockEventSource {
   public onopen: (() => void) | null = null;
   public onmessage: ((event: MessageEvent) => void) | null = null;
