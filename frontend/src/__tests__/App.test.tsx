@@ -74,12 +74,6 @@ vi.mock('../hooks/useOnlineStatus', () => ({
   useOnlineStatus: vi.fn(() => true),
 }));
 
-vi.mock('../authEvents', () => ({
-  onAuthFailure: vi.fn(() => vi.fn()), // returns cleanup function
-  emitAuthFailure: vi.fn(),
-  AUTH_FAILURE_EVENT: 'meal-planner-auth-failure',
-}));
-
 vi.mock('../api/client', () => ({
   getCurrentUser: vi.fn(),
   logout: vi.fn(),
@@ -173,7 +167,7 @@ describe('App', () => {
   });
 
   it('should render login screen when not authenticated', async () => {
-    mockGetCurrentUser.mockResolvedValue({ status: 'auth-failed' });
+    mockGetCurrentUser.mockResolvedValue(null);
 
     render(<App />);
 
@@ -190,7 +184,7 @@ describe('App', () => {
       email: 'test@example.com'
     };
 
-    mockGetCurrentUser.mockResolvedValue({ status: 'authenticated', user: mockUser });
+    mockGetCurrentUser.mockResolvedValue(mockUser);
 
     render(<App />);
 
@@ -207,7 +201,7 @@ describe('App', () => {
       email: 'test@example.com'
     };
 
-    mockGetCurrentUser.mockResolvedValue({ status: 'authenticated', user: mockUser });
+    mockGetCurrentUser.mockResolvedValue(mockUser);
     mockLogout.mockResolvedValue(undefined);
 
     render(<App />);
@@ -233,7 +227,7 @@ describe('App', () => {
       email: 'test@example.com'
     };
 
-    mockGetCurrentUser.mockResolvedValue({ status: 'authenticated', user: mockUser });
+    mockGetCurrentUser.mockResolvedValue(mockUser);
 
     render(<App />);
 
@@ -262,7 +256,7 @@ describe('App', () => {
       email: 'test@example.com'
     };
 
-    mockGetCurrentUser.mockResolvedValue({ status: 'authenticated', user: mockUser });
+    mockGetCurrentUser.mockResolvedValue(mockUser);
 
     // Mock intersection observer to report today as not intersecting
     mockIntersectionObserver.mockImplementation((callback) => ({
@@ -288,14 +282,17 @@ describe('App', () => {
   });
 
   it('should handle auth check errors gracefully', async () => {
-    // Network error with no cached user — shows login
-    mockGetCurrentUser.mockResolvedValue({ status: 'network-error' });
+    mockGetCurrentUser.mockRejectedValue(new Error('Auth check failed'));
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     render(<App />);
 
     await waitFor(() => {
       expect(screen.getByText(/sign in/i)).toBeInTheDocument();
+      expect(consoleSpy).toHaveBeenCalledWith('Auth check failed:', expect.any(Error));
     });
+
+    consoleSpy.mockRestore();
   });
 
   it('should pass correct props to child components', async () => {
@@ -305,7 +302,7 @@ describe('App', () => {
       email: 'test@example.com'
     };
 
-    mockGetCurrentUser.mockResolvedValue({ status: 'authenticated', user: mockUser });
+    mockGetCurrentUser.mockResolvedValue(mockUser);
     
     mockUseSync.mockReturnValue({ status: 'syncing', pendingCount: 5 });
 
@@ -319,13 +316,13 @@ describe('App', () => {
   it('should toggle dark mode from settings', async () => {
     const mockUser = {
       id: '123',
-      name: 'Test User',
+      name: 'Test User',  
       email: 'test@example.com'
     };
 
     const mockToggle = vi.fn();
     mockUseDarkMode.mockReturnValue({ isDark: false, toggle: mockToggle });
-    mockGetCurrentUser.mockResolvedValue({ status: 'authenticated', user: mockUser });
+    mockGetCurrentUser.mockResolvedValue(mockUser);
 
     render(<App />);
 
@@ -342,10 +339,10 @@ describe('App', () => {
     expect(mockToggle).toHaveBeenCalled();
   });
 
-  it('uses cached user when network error', async () => {
+  it('uses cached user when API returns null', async () => {
     const cachedUser = { id: '999', name: 'Cached User', email: 'cached@example.com' };
     localStorage.getItem = vi.fn(() => JSON.stringify(cachedUser));
-    mockGetCurrentUser.mockResolvedValue({ status: 'network-error' });
+    mockGetCurrentUser.mockResolvedValue(null);
 
     render(<App />);
 
@@ -355,24 +352,24 @@ describe('App', () => {
     });
   });
 
-  it('shows login when auth failed even with cached user', async () => {
-    // Previously this would use the cached user and show the app.
-    // Now auth-failed should force re-login regardless of cache.
-    localStorage.setItem('meal-planner-user', JSON.stringify({ id: '999', name: 'Cached User', email: 'cached@example.com' }));
-    mockGetCurrentUser.mockResolvedValue({ status: 'auth-failed' });
+  it('uses cached user when API throws', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const cachedUser = { id: '999', name: 'Cached User', email: 'cached@example.com' };
+    localStorage.getItem = vi.fn(() => JSON.stringify(cachedUser));
+    mockGetCurrentUser.mockRejectedValue(new Error('API down'));
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText(/sign in/i)).toBeInTheDocument();
+      expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
+      expect(screen.getByText('Cached User')).toBeInTheDocument();
     });
-    // Should NOT show the cached user's name — login screen instead
-    expect(screen.queryByText('Cached User')).not.toBeInTheDocument();
+    consoleSpy.mockRestore();
   });
 
   it('schedules a meal online and updates notes', async () => {
     const mockUser = { id: '123', name: 'Test User', email: 'test@example.com' };
-    mockGetCurrentUser.mockResolvedValue({ status: 'authenticated', user: mockUser });
+    mockGetCurrentUser.mockResolvedValue(mockUser);
     mockUseOnlineStatus.mockReturnValue(true);
     mockGetDays.mockResolvedValue([
       {
@@ -414,7 +411,7 @@ describe('App', () => {
 
   it('schedules a meal offline and queues changes', async () => {
     const mockUser = { id: '123', name: 'Test User', email: 'test@example.com' };
-    mockGetCurrentUser.mockResolvedValue({ status: 'authenticated', user: mockUser });
+    mockGetCurrentUser.mockResolvedValue(mockUser);
     mockUseOnlineStatus.mockReturnValue(false);
     mockGetLocalNote.mockResolvedValue({
       id: 'note-2',
@@ -440,7 +437,7 @@ describe('App', () => {
 
   it('scrolls to pantry and today when buttons are clicked', async () => {
     const mockUser = { id: '123', name: 'Test User', email: 'test@example.com' };
-    mockGetCurrentUser.mockResolvedValue({ status: 'authenticated', user: mockUser });
+    mockGetCurrentUser.mockResolvedValue(mockUser);
 
     render(<App />);
 
