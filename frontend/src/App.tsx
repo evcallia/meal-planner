@@ -197,7 +197,7 @@ function AppContent() {
       <StatusBar status={status} pendingCount={pendingCount} />
 
       {/* Header */}
-      <header className="bg-white dark:bg-gray-800 shadow-sm sticky top-0 z-10">
+      <header className={`bg-white dark:bg-gray-800 shadow-sm sticky z-10 ${status !== 'online' ? 'top-10' : 'top-0'}`}>
         <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
           <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Meal Planner</h1>
           <div className="flex items-center gap-3">

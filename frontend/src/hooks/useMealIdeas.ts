@@ -10,6 +10,7 @@ import {
   getLocalMealIdeas,
   deleteLocalMealIdea,
   clearLocalMealIdeas,
+  removePendingChangesForTempId,
 } from '../db';
 
 interface MealIdeaInput {
@@ -271,9 +272,10 @@ export function useMealIdeas() {
       } else if (!isTempId(id)) {
         // Queue for later sync (offline, but not a temp ID)
         await queueChange('meal-idea-delete', '', { id });
+      } else {
+        // Temp ID: remove its pending add from the sync queue to prevent duplicates
+        await removePendingChangesForTempId(id);
       }
-      // If it's a temp ID, we just need to remove it from the add queue
-      // which will happen during sync when the temp ID isn't found
     };
     void run();
   }, [isOnline, refreshIdeas]);

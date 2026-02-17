@@ -178,6 +178,17 @@ export async function markNoteSynced(date: string) {
   }
 }
 
+// Remove pending changes that reference a specific temp ID in their payload
+export async function removePendingChangesForTempId(tempId: string) {
+  const all = await db.pendingChanges.toArray();
+  for (const change of all) {
+    const payload = change.payload as Record<string, unknown> | undefined;
+    if (payload && payload.id === tempId && change.id) {
+      await db.pendingChanges.delete(change.id);
+    }
+  }
+}
+
 // Clear all pending changes (after full sync)
 export async function clearPendingChanges() {
   await db.pendingChanges.clear();
