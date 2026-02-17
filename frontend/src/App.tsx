@@ -13,8 +13,9 @@ import { UserInfo } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { getLocalNote, queueChange, saveLocalNote } from './db';
+import { UndoProvider, useUndo } from './contexts/UndoContext';
 
-function App() {
+function AppContent() {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
@@ -23,6 +24,7 @@ function App() {
   const { settings, updateSettings } = useSettings();
   useRealtime();
   const isOnline = useOnlineStatus();
+  const { canUndo, canRedo, undo, redo } = useUndo();
   const todayRefElement = useRef<HTMLDivElement | null>(null);
   const topSectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -118,8 +120,8 @@ function App() {
     window.dispatchEvent(new CustomEvent('meal-planner-notes-updated', { detail: { date, notes } }));
   };
 
-  const handleScheduleMeal = async (title: string, date: string) => {
-    if (!date) return;
+  const handleScheduleMeal = async (title: string, date: string): Promise<string> => {
+    if (!date) return '';
     let existingNotes = '';
 
     if (isOnline) {
@@ -129,7 +131,7 @@ function App() {
         const nextNotes = appendMealLine(existingNotes, title);
         const updated = await updateNotes(date, nextNotes);
         notifyNotesUpdate(date, updated.notes ?? nextNotes);
-        return;
+        return existingNotes;
       } catch (error) {
         console.error('Failed to schedule meal online:', error);
       }
@@ -141,6 +143,23 @@ function App() {
     await saveLocalNote(date, nextNotes, local?.items ?? []);
     await queueChange('notes', date, { notes: nextNotes });
     notifyNotesUpdate(date, nextNotes);
+    return existingNotes;
+  };
+
+  const handleUnscheduleMeal = async (date: string, prevNotes: string) => {
+    if (isOnline) {
+      try {
+        const updated = await updateNotes(date, prevNotes);
+        notifyNotesUpdate(date, updated.notes ?? prevNotes);
+        return;
+      } catch (error) {
+        console.error('Failed to unschedule meal:', error);
+      }
+    }
+    const local = await getLocalNote(date);
+    await saveLocalNote(date, prevNotes, local?.items ?? []);
+    await queueChange('notes', date, { notes: prevNotes });
+    notifyNotesUpdate(date, prevNotes);
   };
 
   if (loading) {
@@ -182,6 +201,39 @@ function App() {
         <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
           <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Meal Planner</h1>
           <div className="flex items-center gap-3">
+            {/* Refresh button */}
+            <button
+              onClick={() => window.location.reload()}
+              className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              aria-label="Refresh"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h5M20 20v-5h-5" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7.05 9.1A7.002 7.002 0 0119.79 10M16.95 14.9A7.002 7.002 0 014.21 14" />
+              </svg>
+            </button>
+            {/* Undo button */}
+            <button
+              onClick={undo}
+              disabled={!canUndo}
+              className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              aria-label="Undo"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a5 5 0 015 5v2M3 10l4-4M3 10l4 4" />
+              </svg>
+            </button>
+            {/* Redo button */}
+            <button
+              onClick={redo}
+              disabled={!canRedo}
+              className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              aria-label="Redo"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4M21 10l-4 4" />
+              </svg>
+            </button>
             {/* Settings button */}
             <button
               onClick={() => setShowSettings(true)}
@@ -207,7 +259,7 @@ function App() {
       {/* Main Content */}
       <main className="flex-1 max-w-lg mx-auto w-full px-4 py-4 space-y-6">
         <div ref={topSectionRef} />
-        {settings.showMealIdeas && <MealIdeasPanel onSchedule={handleScheduleMeal} compactView={settings.compactView} />}
+        {settings.showMealIdeas && <MealIdeasPanel onSchedule={handleScheduleMeal} onUnschedule={handleUnscheduleMeal} compactView={settings.compactView} />}
         {settings.showPantry && <PantryPanel compactView={settings.compactView} />}
         <CalendarView
           onTodayRefReady={handleTodayRefReady}
@@ -254,6 +306,14 @@ function App() {
         </button>
       </div>
     </div>
+  );
+}
+
+function App() {
+  return (
+    <UndoProvider>
+      <AppContent />
+    </UndoProvider>
   );
 }
 

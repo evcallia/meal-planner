@@ -16,6 +16,7 @@ import {
   generateTempId,
 } from '../db';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { useUndo } from '../contexts/UndoContext';
 import { scrollToElementWithOffset } from '../utils/scroll';
 import { isPerfEnabled, logDuration, logRenderDuration, perfNow } from '../utils/perf';
 
@@ -149,6 +150,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
   const todayRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const isOnline = useOnlineStatus();
+  const { pushAction } = useUndo();
   const initialLoadDone = useRef(false);
   const notifiedTodayRef = useRef<string | null>(null);
   const [, setEventsLoadState] = useState<Record<string, EventsLoadState>>({});
@@ -836,10 +838,76 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     return () => observer.disconnect();
   }, [loadNextWeek, loadingMore, loading]);
 
+  // Internal helper: restore notes+items for a date (used by undo/redo callbacks)
+  const restoreNotesAndItems = async (date: string, notes: string, items: { line_index: number; itemized: boolean }[]) => {
+    setDays(prev => prev.map(d => {
+      if (d.date === date) {
+        const updated = {
+          ...d,
+          meal_note: d.meal_note
+            ? { ...d.meal_note, notes, items }
+            : { id: '', date, notes, items, updated_at: new Date().toISOString() },
+        };
+        daysCache.current.set(date, updated);
+        return updated;
+      }
+      return d;
+    }));
+    await saveLocalNote(date, notes, items);
+    if (isOnline) {
+      try {
+        await updateNotes(date, notes);
+        // Sync itemized states — don't queue failures since notes are the source of truth
+        // and items are already saved locally. Stale line indices would just clog the sync queue.
+        await Promise.all(items.map(item =>
+          toggleItemized(date, item.line_index, item.itemized).catch(err =>
+            console.warn(`Failed to sync itemized state for ${date} line ${item.line_index}:`, err)
+          )
+        ));
+      } catch {
+        await queueChange('notes', date, { notes });
+      }
+    } else {
+      await queueChange('notes', date, { notes });
+    }
+  };
+
+  // Track per-date "before edit" snapshots for undo
+  const notesBeforeEditRef = useRef<Map<string, { notes: string; items: { line_index: number; itemized: boolean }[] }>>(new Map());
+  const notesUndoTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
   const handleNotesChange = async (date: string, notes: string) => {
     // Get existing items BEFORE updating state
     const existing = days.find(d => d.date === date);
     const existingItems = existing?.meal_note?.items || [];
+
+    // Capture "before edit" snapshot on first change for this date
+    if (!notesBeforeEditRef.current.has(date)) {
+      notesBeforeEditRef.current.set(date, {
+        notes: existing?.meal_note?.notes || '',
+        items: [...existingItems],
+      });
+    }
+
+    // Debounce the undo action - push after 2s of no changes
+    const existingTimer = notesUndoTimerRef.current.get(date);
+    if (existingTimer) clearTimeout(existingTimer);
+    notesUndoTimerRef.current.set(date, setTimeout(() => {
+      const before = notesBeforeEditRef.current.get(date);
+      if (before && before.notes !== notes) {
+        const prevNotes = before.notes;
+        const prevItems = before.items;
+        const newNotes = notes;
+        const newItems = existingItems;
+        pushAction({
+          type: 'edit-notes',
+          undo: async () => { await restoreNotesAndItems(date, prevNotes, prevItems); },
+          redo: async () => { await restoreNotesAndItems(date, newNotes, newItems); },
+        });
+      }
+      notesBeforeEditRef.current.delete(date);
+      notesUndoTimerRef.current.delete(date);
+    }, 2000));
 
     // Optimistic update
     setDays(prev => prev.map(d => {
@@ -894,7 +962,8 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     // Get current day data for updating local DB
     const currentDay = days.find(d => d.date === date);
     const currentNotes = currentDay?.meal_note?.notes || '';
-    const currentItems = [...(currentDay?.meal_note?.items || [])];
+    const prevItems = [...(currentDay?.meal_note?.items || [])];
+    const currentItems = [...prevItems];
 
     // Calculate new items
     const existingIndex = currentItems.findIndex(i => i.line_index === lineIndex);
@@ -903,6 +972,13 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     } else {
       currentItems.push({ line_index: lineIndex, itemized });
     }
+
+    // Push undo action
+    pushAction({
+      type: 'toggle-itemized',
+      undo: async () => { await restoreNotesAndItems(date, currentNotes, prevItems); },
+      redo: async () => { await restoreNotesAndItems(date, currentNotes, currentItems); },
+    });
 
     // Optimistic update
     setDays(prev => prev.map(d => {
@@ -961,6 +1037,12 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     // Make sure the line index is valid
     if (lineIndex < 0 || lineIndex >= sourceLines.length) return;
 
+    // Capture before state for undo
+    const prevSourceNotes = sourceNotes;
+    const prevSourceItems = [...(sourceDay.meal_note?.items || [])];
+    const prevTargetNotes = targetDay?.meal_note?.notes || '';
+    const prevTargetItems = [...(targetDay?.meal_note?.items || [])];
+
     // Check if the moved item was itemized
     const sourceItems = sourceDay.meal_note?.items || [];
     const movedItemStatus = sourceItems.find(item => item.line_index === lineIndex);
@@ -990,6 +1072,19 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     const newTargetItems = wasItemized
       ? [...targetItems, { line_index: newTargetLineIndex, itemized: true }]
       : targetItems;
+
+    // Push undo action
+    pushAction({
+      type: 'move-meal',
+      undo: async () => {
+        await restoreNotesAndItems(sourceDate, prevSourceNotes, prevSourceItems);
+        await restoreNotesAndItems(targetDate, prevTargetNotes, prevTargetItems);
+      },
+      redo: async () => {
+        await restoreNotesAndItems(sourceDate, newSourceNotes, newSourceItems);
+        await restoreNotesAndItems(targetDate, newTargetNotes, newTargetItems);
+      },
+    });
 
     // Optimistic update for both days
     setDays(prev => prev.map(d => {
@@ -1069,7 +1164,76 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     // Clear drag state
     setIsDragActive(false);
     setDragSourceDate(null);
-  }, [days, isOnline]);
+  }, [days, isOnline, pushAction]);
+
+  const handleDeleteMeal = useCallback(async (date: string, lineIndex: number) => {
+    const day = days.find(d => d.date === date);
+    if (!day) return;
+
+    const currentNotes = day.meal_note?.notes || '';
+    const lines = splitHtmlLines(currentNotes);
+    if (lineIndex < 0 || lineIndex >= lines.length) return;
+
+    const currentItems = [...(day.meal_note?.items || [])];
+
+    // Capture before state for undo
+    const prevNotes = currentNotes;
+    const prevItems = currentItems;
+
+    // Remove line and reindex items
+    const newLines = lines.filter((_, i) => i !== lineIndex);
+    const newNotes = joinHtmlLines(newLines);
+    const newItems = currentItems
+      .filter(item => item.line_index !== lineIndex)
+      .map(item => ({
+        ...item,
+        line_index: item.line_index > lineIndex ? item.line_index - 1 : item.line_index,
+      }));
+
+    // Push undo action
+    pushAction({
+      type: 'delete-meal',
+      undo: async () => { await restoreNotesAndItems(date, prevNotes, prevItems); },
+      redo: async () => { await restoreNotesAndItems(date, newNotes, newItems); },
+    });
+
+    // Optimistic update
+    setDays(prev => prev.map(d => {
+      if (d.date === date) {
+        const updated = {
+          ...d,
+          meal_note: d.meal_note
+            ? { ...d.meal_note, notes: newNotes, items: newItems }
+            : null,
+        };
+        daysCache.current.set(date, updated);
+        return updated;
+      }
+      return d;
+    }));
+
+    // Save locally
+    await saveLocalNote(date, newNotes, newItems);
+
+    if (isOnline) {
+      try {
+        const updated = await updateNotes(date, newNotes);
+        setDays(prev => prev.map(d => {
+          if (d.date === date) {
+            const result = { ...d, meal_note: { ...updated, items: newItems } };
+            daysCache.current.set(date, result);
+            return result;
+          }
+          return d;
+        }));
+      } catch (error) {
+        console.error('Failed to delete meal:', error);
+        await queueChange('notes', date, { notes: newNotes });
+      }
+    } else {
+      await queueChange('notes', date, { notes: newNotes });
+    }
+  }, [days, isOnline, pushAction]);
 
   if (loading) {
     return (
@@ -1121,6 +1285,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             onDrop={handleMoveMeal}
             isDragActive={isDragActive}
             dragSourceDate={dragSourceDate}
+            onDeleteMeal={(lineIndex) => handleDeleteMeal(day.date, lineIndex)}
           />
         </div>
       ))}

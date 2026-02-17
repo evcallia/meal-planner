@@ -8,6 +8,10 @@ vi.mock('../../hooks/usePantry', () => ({
   usePantry: vi.fn(),
 }));
 
+vi.mock('../../contexts/UndoContext', () => ({
+  useUndo: () => ({ canUndo: false, canRedo: false, pushAction: vi.fn(), undo: vi.fn(), redo: vi.fn() }),
+}));
+
 describe('PantryPanel', () => {
   const mockUsePantry = vi.mocked(usePantry);
   const addItem = vi.fn();

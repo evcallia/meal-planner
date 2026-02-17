@@ -77,10 +77,10 @@ describe('MealItem', () => {
 
   it('calls onTextClick when text is clicked', async () => {
     render(<MealItem {...defaultProps} />)
-    
+
     const textElement = screen.getByText('Test meal item')
     fireEvent.click(textElement)
-    
+
     expect(defaultProps.onTextClick).toHaveBeenCalled()
   })
 
@@ -138,9 +138,9 @@ describe('MealItem', () => {
 
   it('applies correct CSS classes for layout without itemized column', () => {
     const { container } = render(<MealItem {...defaultProps} showItemizedColumn={false} />)
-    
-    const mainDiv = container.firstChild
-    expect(mainDiv).not.toHaveClass('gap-3')
+
+    const draggable = container.querySelector('[draggable]')
+    expect(draggable).not.toHaveClass('gap-3')
   })
 
   it('applies margin-top to text when header is shown and itemized column is visible', () => {
@@ -183,7 +183,7 @@ describe('MealItem', () => {
       />
     )
 
-    const draggable = container.firstChild as HTMLElement
+    const draggable = container.querySelector('[draggable]') as HTMLElement
     fireEvent.dragStart(draggable, { dataTransfer })
 
     expect(dataTransfer.setData).toHaveBeenCalledWith(
@@ -212,7 +212,7 @@ describe('MealItem', () => {
       />
     )
 
-    const draggable = container.firstChild as HTMLElement
+    const draggable = container.querySelector('[draggable]') as HTMLElement
     fireEvent.touchStart(draggable, { touches: [{ clientX: 10, clientY: 10 }] })
 
     vi.runAllTimers()
@@ -236,7 +236,7 @@ describe('MealItem', () => {
       />
     )
 
-    const draggable = container.firstChild as HTMLElement
+    const draggable = container.querySelector('[draggable]') as HTMLElement
     fireEvent.touchStart(draggable, { touches: [{ clientX: 10, clientY: 10 }] })
     fireEvent.touchMove(draggable, { touches: [{ clientX: 40, clientY: 40 }] })
 

@@ -27,6 +27,10 @@ vi.mock('../../hooks/useOnlineStatus', () => ({
   useOnlineStatus: vi.fn(() => true),
 }));
 
+vi.mock('../../contexts/UndoContext', () => ({
+  useUndo: () => ({ canUndo: false, canRedo: false, pushAction: vi.fn(), undo: vi.fn(), redo: vi.fn() }),
+}));
+
 vi.mock('../DayCard', () => ({
   DayCard: vi.fn(({ day, onNotesChange, onToggleItemized }) => (
     <div data-testid={`day-card-${day.date}`} data-date={day.date}>

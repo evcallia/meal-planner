@@ -19,6 +19,7 @@ interface DayCardProps {
   onDrop?: (targetDate: string, sourceDate: string, lineIndex: number, html: string) => void;
   isDragActive?: boolean;
   dragSourceDate?: string | null;
+  onDeleteMeal?: (lineIndex: number) => void;
 }
 
 function formatTime(isoString: string): string {
@@ -64,6 +65,28 @@ const LONG_PRESS_MS = 350;
 const DOUBLE_TAP_MS = 250;
 const MOVE_THRESHOLD = 12;
 
+// Module-level state for cross-card editor switching.
+// Set by a global touchstart/mousedown listener that fires before blur.
+let pendingEditDate: string | null = null;
+
+// Detect taps on meal click-targets early (before blur can fire) by using
+// a capturing listener on the document.  Works on iOS Safari where
+// component-level onPointerDown may not fire before blur.
+if (typeof window !== 'undefined') {
+  const handler = (e: Event) => {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    // Walk up from the touch target to find a meal click-target marker
+    const mealTarget = target.closest('[data-meal-target]') as HTMLElement | null;
+    if (mealTarget) {
+      pendingEditDate = mealTarget.getAttribute('data-meal-target');
+    }
+  };
+  // Capture phase ensures this runs before any blur handler.
+  document.addEventListener('touchstart', handler, { capture: true, passive: true });
+  document.addEventListener('mousedown', handler, { capture: true });
+}
+
 export function DayCard({
   day,
   isToday,
@@ -79,10 +102,15 @@ export function DayCard({
   onDrop,
   isDragActive,
   dragSourceDate,
+  onDeleteMeal,
 }: DayCardProps) {
   const normalizeNotes = (value?: string | null) => decodeHtmlEntities(value ?? '');
   const [notes, setNotes] = useState(() => normalizeNotes(day.meal_note?.notes));
   const [isEditing, setIsEditing] = useState(false);
+  // Height of the editor when it was open, used to hold a spacer during
+  // collapse so cards below don't shift and swallow the pending click.
+  const [collapseHeight, setCollapseHeight] = useState<number | null>(null);
+  const editorWrapperRef = useRef<HTMLDivElement>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [isDragOver, setIsDragOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ event: DayData['events'][number]; x: number; y: number } | null>(null);
@@ -136,7 +164,21 @@ export function DayCard({
   };
 
   const handleBlur = () => {
-    setIsEditing(false);
+    // If the user tapped another card's meal area, hold a spacer at the
+    // editor's current height so cards below don't shift and swallow the
+    // pending click event.  The spacer is removed once the target card's
+    // enterEditMode clears it, or after a safety timeout.
+    if (pendingEditDate && pendingEditDate !== day.date) {
+      const h = editorWrapperRef.current?.offsetHeight ?? null;
+      setIsEditing(false);
+      if (h) {
+        setCollapseHeight(h);
+        // Safety: clear the spacer after 300ms in case the click never fires.
+        setTimeout(() => setCollapseHeight(null), 300);
+      }
+    } else {
+      setIsEditing(false);
+    }
   };
 
   const enterEditMode = () => {
@@ -144,7 +186,26 @@ export function DayCard({
     // mobile browsers open the virtual keyboard immediately.
     focusProxyRef.current?.focus();
     setIsEditing(true);
+    // Clear any spacer held by the previously-editing card.
+    pendingEditDate = null;
+    window.dispatchEvent(new CustomEvent('meal-planner-clear-spacer'));
   };
+
+  // Listen for spacer-clear requests from the card that just entered edit mode.
+  useEffect(() => {
+    const handleClearSpacer = () => {
+      setCollapseHeight(null);
+    };
+    window.addEventListener('meal-planner-clear-spacer', handleClearSpacer);
+    return () => {
+      window.removeEventListener('meal-planner-clear-spacer', handleClearSpacer);
+    };
+  }, []);
+
+  // data-meal-target attribute value for click targets in this card.
+  // A global touchstart/mousedown listener reads this to set pendingEditDate
+  // before blur fires (see module-level code above).
+  const mealTargetAttr = day.date;
 
   const isSameEvent = (a: DayData['events'][number], b: DayData['events'][number]) => {
     if (a.id && b.id) return a.id === b.id;
@@ -375,7 +436,6 @@ export function DayCard({
           {/* Compact Header - inline with content */}
           <div className={`
             px-2 py-1.5 flex items-start gap-2
-            ${isToday ? 'bg-blue-50 dark:bg-blue-900/30' : ''}
             ${isDragOver ? 'bg-blue-100 dark:bg-blue-900/40' : ''}
           `}>
             {/* Date column */}
@@ -421,6 +481,9 @@ export function DayCard({
                       <div className="flex-1 min-w-0">
                         <span className="block truncate">{event.title}</span>
                       </div>
+                      {!event.all_day && (
+                        <span className="flex-shrink-0 text-amber-600 dark:text-amber-400">{formatTime(event.start_time)}</span>
+                      )}
                     </div>
                   );
                   })}
@@ -436,7 +499,7 @@ export function DayCard({
               style={{ pointerEvents: 'none' }}
             />
             {isEditing ? (
-              <div>
+              <div ref={editorWrapperRef}>
                 <RichTextEditor
                   value={notes}
                   onChange={handleNotesChange}
@@ -445,6 +508,8 @@ export function DayCard({
                   autoFocus={true}
                 />
               </div>
+            ) : collapseHeight !== null ? (
+              <div style={{ height: collapseHeight }} />
             ) : (
               <div>
                 {/* Meals - each on its own line, with checkbox inline */}
@@ -483,6 +548,8 @@ export function DayCard({
                               itemized={isItemized}
                               onToggle={() => onToggleItemized(i, !isItemized)}
                               onTextClick={enterEditMode}
+                              onDelete={onDeleteMeal ? () => onDeleteMeal(i) : undefined}
+                              mealTargetDate={mealTargetAttr}
                               showHeader={false}
                               showItemizedColumn={false}
                               compact={true}
@@ -499,6 +566,7 @@ export function DayCard({
                 ) : (
                   <div
                     onClick={enterEditMode}
+                    data-meal-target={mealTargetAttr}
                     className={`text-xs italic cursor-pointer ${isDragOver ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'}`}
                   >
                     {isDragOver ? 'Drop here' : 'Tap to add...'}
@@ -637,7 +705,7 @@ export function DayCard({
             style={{ pointerEvents: 'none' }}
           />
           {isEditing ? (
-            <div>
+            <div ref={editorWrapperRef}>
               <RichTextEditor
                 value={notes}
                 onChange={handleNotesChange}
@@ -651,6 +719,8 @@ export function DayCard({
                 </div>
               )}
             </div>
+          ) : collapseHeight !== null ? (
+            <div style={{ height: collapseHeight }} />
           ) : (
             <div className="min-h-[60px]">
               {lines.length > 0 ? (
@@ -665,6 +735,8 @@ export function DayCard({
                         onToggleItemized(i, !current);
                       }}
                       onTextClick={enterEditMode}
+                      onDelete={onDeleteMeal ? () => onDeleteMeal(i) : undefined}
+                      mealTargetDate={mealTargetAttr}
                       showHeader={i === 0}
                       showItemizedColumn={showItemizedColumn}
                       lineIndex={i}
@@ -677,6 +749,7 @@ export function DayCard({
               ) : (
                 <p
                   onClick={enterEditMode}
+                  data-meal-target={mealTargetAttr}
                   className={`text-gray-400 dark:text-gray-500 italic cursor-text ${isDragOver ? 'text-blue-500' : ''}`}
                 >
                   {isDragOver ? 'Drop meal here' : 'Tap to add meals...'}

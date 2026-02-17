@@ -1,13 +1,18 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useMemo, useRef, useState } from 'react';
 import { useMealIdeas } from '../hooks/useMealIdeas';
+import { useUndo } from '../contexts/UndoContext';
 
 interface MealIdeasPanelProps {
-  onSchedule?: (title: string, date: string) => Promise<void> | void;
+  onSchedule?: (title: string, date: string) => Promise<string> | string;
+  onUnschedule?: (date: string, prevNotes: string) => Promise<void> | void;
   compactView?: boolean;
 }
 
-export function MealIdeasPanel({ onSchedule, compactView = false }: MealIdeasPanelProps) {
+export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }: MealIdeasPanelProps) {
   const { ideas, addIdea, updateIdea, removeIdea } = useMealIdeas();
+  const { pushAction } = useUndo();
+  const ideasRef = useRef(ideas);
+  ideasRef.current = ideas;
   const [title, setTitle] = useState('');
   const [scheduleDates, setScheduleDates] = useState<Record<string, string>>({});
   const [schedulingId, setSchedulingId] = useState<string | null>(null);
@@ -32,10 +37,35 @@ export function MealIdeasPanel({ onSchedule, compactView = false }: MealIdeasPan
     return days;
   }, []);
 
+  const handleRemoveIdea = (ideaId: string) => {
+    const idea = ideas.find(i => i.id === ideaId);
+    if (!idea) return;
+    const ideaTitle = idea.title;
+    removeIdea(ideaId);
+    pushAction({
+      type: 'remove-idea',
+      undo: async () => { addIdea({ title: ideaTitle }); },
+      redo: async () => {
+        // After undo re-adds the idea, it gets a new ID, so find by title
+        const match = ideasRef.current.find(i => i.title === ideaTitle);
+        if (match) removeIdea(match.id);
+      },
+    });
+  };
+
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
-    addIdea({ title });
+    const ideaTitle = title;
+    addIdea({ title: ideaTitle });
     setTitle('');
+    pushAction({
+      type: 'add-idea',
+      undo: async () => {
+        const match = ideasRef.current.find(i => i.title === ideaTitle);
+        if (match) removeIdea(match.id);
+      },
+      redo: async () => { addIdea({ title: ideaTitle }); },
+    });
   };
 
   const handleSchedule = async (ideaId: string, ideaTitle: string) => {
@@ -43,8 +73,25 @@ export function MealIdeasPanel({ onSchedule, compactView = false }: MealIdeasPan
     if (!date || !onSchedule) return;
     try {
       setSchedulingId(ideaId);
-      await onSchedule(ideaTitle, date);
+      const prevNotes = await onSchedule(ideaTitle, date);
       removeIdea(ideaId);
+      pushAction({
+        type: 'schedule-idea',
+        undo: async () => {
+          // Re-add the idea to future meals
+          addIdea({ title: ideaTitle });
+          // Remove the meal from the day's notes by restoring previous notes
+          if (onUnschedule) await onUnschedule(date, prevNotes);
+        },
+        redo: async () => {
+          // Re-schedule: add meal to day and remove from future meals
+          const match = ideasRef.current.find(i => i.title === ideaTitle);
+          if (match) {
+            if (onSchedule) await onSchedule(ideaTitle, date);
+            removeIdea(match.id);
+          }
+        },
+      });
       setScheduleDates(prev => {
         const next = { ...prev };
         delete next[ideaId];
@@ -110,7 +157,7 @@ export function MealIdeasPanel({ onSchedule, compactView = false }: MealIdeasPan
                 </button>
                 <button
                   type="button"
-                  onClick={() => removeIdea(idea.id)}
+                  onClick={() => handleRemoveIdea(idea.id)}
                   className="text-red-500 hover:text-red-600 p-0.5"
                   aria-label={`Remove ${idea.title}`}
                 >
@@ -187,7 +234,7 @@ export function MealIdeasPanel({ onSchedule, compactView = false }: MealIdeasPan
                 </div>
                 <button
                   type="button"
-                  onClick={() => removeIdea(idea.id)}
+                  onClick={() => handleRemoveIdea(idea.id)}
                   className="text-sm text-red-500 hover:text-red-600"
                 >
                   Remove

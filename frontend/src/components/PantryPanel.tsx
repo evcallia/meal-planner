@@ -1,5 +1,6 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useRef, useState } from 'react';
 import { usePantry } from '../hooks/usePantry';
+import { useUndo } from '../contexts/UndoContext';
 
 interface PantryPanelProps {
   compactView?: boolean;
@@ -7,18 +8,64 @@ interface PantryPanelProps {
 
 export function PantryPanel({ compactView = false }: PantryPanelProps) {
   const { items, addItem, updateItem, removeItem, adjustQuantity } = usePantry();
+  const { pushAction } = useUndo();
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   const [name, setName] = useState('');
   const [quantity, setQuantity] = useState('1');
+
+  const handleRemoveItem = (itemId: string) => {
+    const item = items.find(i => i.id === itemId);
+    if (!item) return;
+    const itemName = item.name;
+    const itemQuantity = item.quantity;
+    removeItem(itemId);
+    pushAction({
+      type: 'remove-pantry-item',
+      undo: async () => { addItem({ name: itemName, quantity: itemQuantity }); },
+      redo: async () => {
+        // After undo re-adds the item, it gets a new ID, so find by name
+        const match = itemsRef.current.find(i => i.name === itemName);
+        if (match) removeItem(match.id);
+      },
+    });
+  };
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
     const parsed = Number(quantity);
-    addItem({
-      name,
-      quantity: Number.isFinite(parsed) ? parsed : 1,
-    });
+    const itemName = name;
+    const itemQty = Number.isFinite(parsed) ? parsed : 1;
+    addItem({ name: itemName, quantity: itemQty });
     setName('');
     setQuantity('1');
+    pushAction({
+      type: 'add-pantry-item',
+      undo: async () => {
+        const match = itemsRef.current.find(i => i.name === itemName);
+        if (match) removeItem(match.id);
+      },
+      redo: async () => { addItem({ name: itemName, quantity: itemQty }); },
+    });
+  };
+
+  const handleAdjustQuantity = (itemId: string, delta: number) => {
+    const item = items.find(i => i.id === itemId);
+    if (!item) return;
+    const prevQty = item.quantity;
+    const itemName = item.name;
+    adjustQuantity(itemId, delta);
+    pushAction({
+      type: 'adjust-pantry-qty',
+      undo: async () => {
+        const match = itemsRef.current.find(i => i.name === itemName);
+        if (match) updateItem(match.id, { quantity: prevQty });
+      },
+      redo: async () => {
+        const match = itemsRef.current.find(i => i.name === itemName);
+        if (match) adjustQuantity(match.id, delta);
+      },
+    });
   };
 
   if (compactView) {
@@ -66,7 +113,7 @@ export function PantryPanel({ compactView = false }: PantryPanelProps) {
                 />
                 <button
                   type="button"
-                  onClick={() => adjustQuantity(item.id, -1)}
+                  onClick={() => handleAdjustQuantity(item.id, -1)}
                   className="rounded border border-gray-300 dark:border-gray-600 px-1.5 py-0.5 text-xs text-gray-600 dark:text-gray-300"
                   aria-label={`Decrease ${item.name}`}
                 >
@@ -75,7 +122,7 @@ export function PantryPanel({ compactView = false }: PantryPanelProps) {
                 <span className="w-6 text-center text-gray-900 dark:text-gray-100">{item.quantity}</span>
                 <button
                   type="button"
-                  onClick={() => adjustQuantity(item.id, 1)}
+                  onClick={() => handleAdjustQuantity(item.id, 1)}
                   className="rounded border border-gray-300 dark:border-gray-600 px-1.5 py-0.5 text-xs text-gray-600 dark:text-gray-300"
                   aria-label={`Increase ${item.name}`}
                 >
@@ -83,7 +130,7 @@ export function PantryPanel({ compactView = false }: PantryPanelProps) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => removeItem(item.id)}
+                  onClick={() => handleRemoveItem(item.id)}
                   className="text-red-500 hover:text-red-600 p-0.5"
                   aria-label={`Remove ${item.name}`}
                 >
@@ -165,7 +212,7 @@ export function PantryPanel({ compactView = false }: PantryPanelProps) {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => adjustQuantity(item.id, -1)}
+                    onClick={() => handleAdjustQuantity(item.id, -1)}
                     className="rounded-md border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm text-gray-600 dark:text-gray-300"
                     aria-label={`Decrease ${item.name}`}
                   >
@@ -173,7 +220,7 @@ export function PantryPanel({ compactView = false }: PantryPanelProps) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => adjustQuantity(item.id, 1)}
+                    onClick={() => handleAdjustQuantity(item.id, 1)}
                     className="rounded-md border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm text-gray-600 dark:text-gray-300"
                     aria-label={`Increase ${item.name}`}
                   >
@@ -181,7 +228,7 @@ export function PantryPanel({ compactView = false }: PantryPanelProps) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => removeItem(item.id)}
+                    onClick={() => handleRemoveItem(item.id)}
                     className="rounded-md text-sm text-red-500 hover:text-red-600"
                   >
                     Remove

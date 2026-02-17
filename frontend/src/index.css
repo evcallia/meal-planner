@@ -39,3 +39,13 @@ body {
 .overflow-wrap-anywhere {
   overflow-wrap: anywhere;
 }
+
+/* Desktop-only hover delete button - hidden on touch devices */
+.hover-delete-btn {
+  display: none !important;
+}
+@media (hover: hover) and (pointer: fine) {
+  .group:hover .hover-delete-btn {
+    display: flex !important;
+  }
+}
