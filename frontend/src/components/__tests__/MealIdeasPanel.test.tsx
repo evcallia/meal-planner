@@ -8,6 +8,10 @@ vi.mock('../../hooks/useMealIdeas', () => ({
   useMealIdeas: vi.fn(),
 }));
 
+vi.mock('../../contexts/UndoContext', () => ({
+  useUndo: () => ({ canUndo: false, canRedo: false, pushAction: vi.fn(), undo: vi.fn(), redo: vi.fn() }),
+}));
+
 describe('MealIdeasPanel', () => {
   const mockUseMealIdeas = vi.mocked(useMealIdeas);
   const addIdea = vi.fn();
@@ -69,7 +73,7 @@ describe('MealIdeasPanel', () => {
       removeIdea,
     });
 
-    const onSchedule = vi.fn(() => Promise.resolve());
+    const onSchedule = vi.fn(() => Promise.resolve(''));
     const user = userEvent.setup();
 
     render(<MealIdeasPanel onSchedule={onSchedule} />);

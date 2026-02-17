@@ -10,6 +10,7 @@ import {
   getLocalPantryItems,
   deleteLocalPantryItem,
   clearLocalPantryItems,
+  removePendingChangesForTempId,
 } from '../db';
 
 interface PantryItemInput {
@@ -297,9 +298,10 @@ export function usePantry() {
       } else if (!isTempId(id)) {
         // Queue for later sync (offline, but not a temp ID)
         await queueChange('pantry-delete', '', { id });
+      } else {
+        // Temp ID: remove its pending add from the sync queue to prevent duplicates
+        await removePendingChangesForTempId(id);
       }
-      // If it's a temp ID, we just need to remove it from the add queue
-      // which will happen during sync when the temp ID isn't found
     };
     void run();
   }, [isOnline, refreshItems]);

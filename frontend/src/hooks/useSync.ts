@@ -189,7 +189,17 @@ export function useSync() {
         setPendingCount(prev => prev - 1);
       } catch (error) {
         console.error('Failed to sync change:', error);
-        // Stop syncing on error, will retry on next online event
+        // If change is older than 1 hour, discard it — it's likely stale
+        const ONE_HOUR = 60 * 60 * 1000;
+        if (change.createdAt && Date.now() - change.createdAt > ONE_HOUR) {
+          console.warn('Discarding stale pending change (>1h old):', change.type, change.date);
+          if (change.id) {
+            await removePendingChange(change.id);
+          }
+          setPendingCount(prev => prev - 1);
+          continue;
+        }
+        // For recent changes, stop and retry later
         break;
       }
     }
