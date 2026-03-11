@@ -205,7 +205,7 @@ export function MealItem({
               }}
               className={`
                 w-5 h-5 rounded border-2 flex items-center justify-center
-                transition-colors duration-150
+                transition-colors duration-150 ${!showHeader ? 'mt-0.5' : ''}
                 ${itemized
                   ? 'bg-green-500 border-green-500 dark:bg-green-600 dark:border-green-600'
                   : 'border-gray-300 hover:border-gray-400 dark:border-gray-600 dark:hover:border-gray-500'
@@ -227,7 +227,7 @@ export function MealItem({
             }
           }}
           data-meal-target={mealTargetDate}
-          className={`text-gray-800 dark:text-gray-200 leading-snug cursor-text flex-1 min-w-0 break-words overflow-wrap-anywhere ${showHeader && showItemizedColumn ? 'mt-4' : ''} [&_a]:text-blue-600 [&_a]:dark:text-blue-400 [&_a]:underline [&_a]:break-all`}
+          className={`text-gray-800 dark:text-gray-200 leading-snug cursor-text flex-1 min-w-0 break-words overflow-wrap-anywhere ${showHeader && showItemizedColumn ? 'mt-4' : ''} [&_a]:text-blue-600 [&_a]:dark:text-blue-400 [&_a]:underline [&_a]:break-all [&_p]:m-0`}
           dangerouslySetInnerHTML={{ __html: linkedHtml }}
         />
         {/* Drag handle indicator */}

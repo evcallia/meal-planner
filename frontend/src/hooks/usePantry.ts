@@ -148,6 +148,9 @@ export function usePantry() {
     const handleRealtime = (event: Event) => {
       const detail = (event as CustomEvent).detail as { type?: string } | undefined;
       if (detail?.type === 'pantry.updated') {
+        // Don't refresh while debounced updates are pending — the server
+        // state may not yet reflect the user's latest optimistic changes.
+        if (Object.keys(pendingUpdatesRef.current).length > 0) return;
         refreshItems();
       }
     };
@@ -257,8 +260,11 @@ export function usePantry() {
             quantity: payload?.quantity !== undefined ? normalizeQuantity(payload.quantity) : undefined,
           });
           if (!isMountedRef.current) return;
-          setItems(prev => prev.map(item => item.id === id ? updated : item));
-          void refreshItems();
+          // Only apply server response if no newer pending update exists
+          if (!pendingUpdatesRef.current[id]) {
+            setItems(prev => prev.map(item => item.id === id ? updated : item));
+            void refreshItems();
+          }
         } catch (error) {
           console.error('Failed to update pantry item:', error);
           // Queue for later sync

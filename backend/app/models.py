@@ -95,6 +95,44 @@ class CalendarCacheMetadata(Base):
     cache_end: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 
+class GrocerySection(Base):
+    """Grocery list sections (e.g., Produce, Dairy)."""
+    __tablename__ = "grocery_sections"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(Text)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    items: Mapped[list["GroceryItem"]] = relationship(
+        "GroceryItem", back_populates="section", cascade="all, delete-orphan"
+    )
+
+
+class GroceryItem(Base):
+    """Individual grocery list items."""
+    __tablename__ = "grocery_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    section_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grocery_sections.id", ondelete="CASCADE")
+    )
+    name: Mapped[str] = mapped_column(Text)
+    quantity: Mapped[str | None] = mapped_column(Text, nullable=True)
+    checked: Mapped[bool] = mapped_column(Boolean, default=False)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    section: Mapped["GrocerySection"] = relationship("GrocerySection", back_populates="items")
+
+
 class HiddenCalendarEvent(Base):
     """Calendar events hidden from the UI."""
     __tablename__ = "hidden_calendar_events"

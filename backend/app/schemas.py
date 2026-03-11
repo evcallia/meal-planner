@@ -91,6 +91,72 @@ class HiddenCalendarEventSchema(BaseModel):
         from_attributes = True
 
 
+class GroceryItemSchema(BaseModel):
+    id: UUID
+    section_id: UUID
+    name: str
+    quantity: str | None = None
+    checked: bool
+    position: int
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class GrocerySectionSchema(BaseModel):
+    id: UUID
+    name: str
+    position: int
+    items: list[GroceryItemSchema]
+
+    class Config:
+        from_attributes = True
+
+
+class GroceryItemCreate(BaseModel):
+    section_id: UUID
+    name: str = Field(..., min_length=1)
+    quantity: str | None = None
+
+
+class GroceryItemToggle(BaseModel):
+    checked: bool
+
+
+class GroceryItemUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    quantity: str | None = None
+    checked: bool | None = None
+
+
+class GroceryReplaceItem(BaseModel):
+    name: str
+    quantity: str | None = None
+    checked: bool = False
+
+
+class GroceryReplaceSection(BaseModel):
+    name: str
+    items: list[GroceryReplaceItem]
+
+
+class GroceryReplacePayload(BaseModel):
+    sections: list[GroceryReplaceSection]
+
+
+class GrocerySectionUpdate(BaseModel):
+    name: str = Field(..., min_length=1)
+
+
+class GroceryReorderSections(BaseModel):
+    section_ids: list[UUID]
+
+
+class GroceryReorderItems(BaseModel):
+    item_ids: list[UUID]
+
+
 class DayData(BaseModel):
     date: date
     events: list[CalendarEvent]

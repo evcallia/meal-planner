@@ -47,3 +47,20 @@ export interface MealIdea {
   title: string;
   updated_at: string;
 }
+
+export interface GroceryItem {
+  id: string;
+  section_id: string;
+  name: string;
+  quantity: string | null;
+  checked: boolean;
+  position: number;
+  updated_at: string;
+}
+
+export interface GrocerySection {
+  id: string;
+  name: string;
+  position: number;
+  items: GroceryItem[];
+}

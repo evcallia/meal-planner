@@ -1,0 +1,685 @@
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { useGroceryList } from '../hooks/useGroceryList';
+import { parseGroceryText } from '../utils/groceryParser';
+import { GrocerySection } from '../types';
+import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
+
+interface GroceryListViewProps {
+  compactView?: boolean;
+}
+
+export function GroceryListView({ compactView: _compactView }: GroceryListViewProps) {
+  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection } = useGroceryList();
+  const [showInputArea, setShowInputArea] = useState(false);
+  const [inputText, setInputText] = useState('');
+  const [addingToSection, setAddingToSection] = useState<string | null>(null);
+  const [newItemName, setNewItemName] = useState('');
+  const [showClearMenu, setShowClearMenu] = useState(false);
+  const [isSectionDragging, setIsSectionDragging] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const clearMenuRef = useRef<HTMLDivElement>(null);
+  const sectionContainerRef = useRef<HTMLDivElement>(null);
+
+  const visibleSections = useMemo(() => {
+    return sections.filter(s => s.items.some(i => !i.checked));
+  }, [sections]);
+
+  const handleSectionReorder = useCallback((from: number, to: number) => {
+    const fromSection = visibleSections[from];
+    const toSection = visibleSections[to];
+    const fromFull = sections.findIndex(s => s.id === fromSection.id);
+    const toFull = sections.findIndex(s => s.id === toSection.id);
+    reorderSections(fromFull, toFull);
+  }, [visibleSections, sections, reorderSections]);
+
+  const handleSectionDragStart = useCallback(() => {
+    setIsSectionDragging(true);
+  }, []);
+
+  const handleSectionDragEnd = useCallback(() => {
+    setIsSectionDragging(false);
+  }, []);
+
+  const { dragState: sectionDragState, getDragHandlers: getSectionDragHandlers, getHandleMouseDown: getSectionHandleMouseDown } = useDragReorder({
+    itemCount: visibleSections.length,
+    onReorder: handleSectionReorder,
+    containerRef: sectionContainerRef,
+    onDragStart: handleSectionDragStart,
+    onDragEnd: handleSectionDragEnd,
+  });
+
+  useEffect(() => {
+    if (!showClearMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (clearMenuRef.current && !clearMenuRef.current.contains(e.target as Node)) {
+        setShowClearMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showClearMenu]);
+
+  const handleSubmitText = useCallback(async () => {
+    const text = inputText.trim();
+    if (!text) return;
+
+    const parsed = parseGroceryText(text);
+    if (parsed.length > 0) {
+      await mergeList(parsed);
+      setInputText('');
+      setShowInputArea(false);
+    }
+  }, [inputText, mergeList]);
+
+  const handleAddItem = useCallback(async (sectionId: string) => {
+    if (!newItemName.trim()) return;
+    const qtyMatch = newItemName.trim().match(/^\((\d+)\)\s+(.+)$/);
+    if (qtyMatch) {
+      await addItem(sectionId, qtyMatch[2], qtyMatch[1]);
+    } else {
+      await addItem(sectionId, newItemName.trim());
+    }
+    setNewItemName('');
+    setAddingToSection(null);
+  }, [newItemName, addItem]);
+
+  const handleClearChecked = useCallback(async () => {
+    setShowClearMenu(false);
+    await clearChecked();
+  }, [clearChecked]);
+
+  const handleClearAll = useCallback(async () => {
+    setShowClearMenu(false);
+    await clearAll();
+  }, [clearAll]);
+
+  const checkedItems = useMemo(() => {
+    return sections.flatMap(s => s.items.filter(i => i.checked));
+  }, [sections]);
+
+  const hasItems = sections.length > 0;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64" data-testid="grocery-loading">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Action bar: add items + clear */}
+      <div className="flex items-center gap-2">
+        {sections.length === 0 || showInputArea ? (
+          <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              {sections.length === 0 ? 'Add your grocery list' : 'Add items to grocery list'}
+            </h3>
+            <textarea
+              ref={textareaRef}
+              value={inputText}
+              onChange={e => setInputText(e.target.value)}
+              placeholder={'Type or paste grocery list...\n\n[Produce]\n(2) Bananas\nArugula\n\n[Dairy]\nMilk\nYogurt'}
+              className="w-full h-32 p-3 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                onClick={handleSubmitText}
+                disabled={!inputText.trim()}
+                className="px-4 py-1.5 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-600 rounded-lg transition-colors"
+              >
+                Add items
+              </button>
+              {showInputArea && (
+                <button
+                  onClick={() => { setShowInputArea(false); setInputText(''); }}
+                  className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            <button
+              onClick={() => setShowInputArea(true)}
+              className="flex-1 py-3 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+            >
+              Add items
+            </button>
+
+            {/* Clear menu */}
+            {hasItems && (
+              <div className="relative" ref={clearMenuRef}>
+                <button
+                  onClick={() => setShowClearMenu(prev => !prev)}
+                  className="p-3 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 transition-colors"
+                  aria-label="Clear options"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                  </svg>
+                </button>
+                {showClearMenu && (
+                  <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-20 min-w-[180px]">
+                    {checkedItems.length > 0 && (
+                      <button
+                        onClick={handleClearChecked}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        Clear checked items ({checkedItems.length})
+                      </button>
+                    )}
+                    <button
+                      onClick={handleClearAll}
+                      className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                    >
+                      Clear all items
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Sections with unchecked items */}
+      <div ref={sectionContainerRef}>
+        {visibleSections.map((section, sectionIndex) => {
+          const isBeingDragged = sectionDragState.isDragging && sectionDragState.dragIndex === sectionIndex;
+          const shiftStyle = computeShiftTransform(sectionIndex, sectionDragState);
+          return (
+            <div
+              key={section.id}
+              data-drag-index={sectionIndex}
+              className={sectionIndex > 0 ? 'mt-4' : ''}
+              style={{
+                opacity: isBeingDragged ? 0.3 : 1,
+                transform: shiftStyle || undefined,
+                transition: sectionDragState.isDragging ? 'transform 200ms ease-out, opacity 200ms' : undefined,
+              }}
+            >
+              <SectionCard
+                section={section}
+                sectionIndex={sectionIndex}
+                sectionDragHandlers={getSectionDragHandlers(sectionIndex)}
+                sectionHandleMouseDown={getSectionHandleMouseDown(sectionIndex)}
+                isSectionDragging={isSectionDragging}
+                onToggle={toggleItem}
+                onDelete={deleteItem}
+                onEdit={editItem}
+                onRenameSection={renameSection}
+                onReorderItems={(from, to) => reorderItems(section.id, from, to)}
+                addingToSection={addingToSection}
+                onStartAdd={setAddingToSection}
+                newItemName={newItemName}
+                onNewItemNameChange={setNewItemName}
+                onAddItem={handleAddItem}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Checked items */}
+      {checkedItems.length > 0 && (
+        <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+          <h3 className="font-medium text-gray-400 dark:text-gray-500 mb-2 text-sm">
+            Checked ({checkedItems.length})
+          </h3>
+          <div className="space-y-1">
+            {checkedItems.map(item => (
+              <GroceryItemRow
+                key={item.id}
+                item={item}
+                onToggle={toggleItem}
+                onDelete={deleteItem}
+                onEdit={editItem}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface SectionCardProps {
+  section: GrocerySection;
+  sectionIndex: number;
+  sectionDragHandlers: ReturnType<ReturnType<typeof useDragReorder>['getDragHandlers']>;
+  sectionHandleMouseDown: (e: React.MouseEvent) => void;
+  isSectionDragging: boolean;
+  onToggle: (id: string, checked: boolean) => void;
+  onDelete: (id: string) => void;
+  onEdit: (id: string, updates: { name?: string; quantity?: string | null }) => void;
+  onRenameSection: (sectionId: string, newName: string) => void;
+  onReorderItems: (fromIndex: number, toIndex: number) => void;
+  addingToSection: string | null;
+  onStartAdd: (sectionId: string | null) => void;
+  newItemName: string;
+  onNewItemNameChange: (name: string) => void;
+  onAddItem: (sectionId: string) => void;
+}
+
+function SectionCard({
+  section,
+  sectionDragHandlers,
+  sectionHandleMouseDown,
+  isSectionDragging,
+  onToggle,
+  onDelete,
+  onEdit,
+  onRenameSection,
+  onReorderItems,
+  addingToSection,
+  onStartAdd,
+  newItemName,
+  onNewItemNameChange,
+  onAddItem,
+}: SectionCardProps) {
+  const uncheckedItems = section.items.filter(i => !i.checked);
+  const itemContainerRef = useRef<HTMLDivElement>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editNameValue, setEditNameValue] = useState(section.name);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const headerInputRef = useRef<HTMLInputElement>(null);
+
+  const commitRename = useCallback(() => {
+    const trimmed = editNameValue.trim();
+    if (trimmed && trimmed !== section.name) {
+      onRenameSection(section.id, trimmed);
+    }
+    setIsEditingName(false);
+  }, [editNameValue, section.id, section.name, onRenameSection]);
+
+  useEffect(() => {
+    if (isEditingName && headerInputRef.current) {
+      headerInputRef.current.focus();
+      headerInputRef.current.select();
+    }
+  }, [isEditingName]);
+
+  const { dragState: itemDragState, getDragHandlers: getItemDragHandlers, getHandleMouseDown: getItemHandleMouseDown } = useDragReorder({
+    itemCount: uncheckedItems.length,
+    onReorder: onReorderItems,
+    containerRef: itemContainerRef,
+  });
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+      {/* Section Header -- long-press to drag section */}
+      <div
+        className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 touch-none"
+        {...sectionDragHandlers}
+      >
+        <div className="flex items-center gap-2">
+          <svg
+            className="drag-handle w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0 cursor-grab active:cursor-grabbing"
+            fill="currentColor"
+            viewBox="0 0 20 20"
+            onMouseDown={sectionHandleMouseDown}
+          >
+            <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
+          </svg>
+          {isEditingName ? (
+            <input
+              ref={headerInputRef}
+              type="text"
+              value={editNameValue}
+              onChange={e => setEditNameValue(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') commitRename();
+                if (e.key === 'Escape') { setEditNameValue(section.name); setIsEditingName(false); }
+              }}
+              onBlur={commitRename}
+              className="font-semibold text-sm bg-white dark:bg-gray-700 border border-blue-400 dark:border-blue-500 rounded px-1.5 py-0.5 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-0"
+            />
+          ) : (
+            <h3
+              className="font-semibold text-gray-900 dark:text-gray-100 text-sm cursor-pointer"
+              onClick={(e) => { e.stopPropagation(); setEditNameValue(section.name); setIsEditingName(true); }}
+            >
+              {section.name}
+            </h3>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setIsCollapsed(prev => !prev); }}
+          className="flex items-center gap-1 text-gray-400 dark:text-gray-500 text-xs hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+        >
+          {uncheckedItems.length} item{uncheckedItems.length !== 1 ? 's' : ''}
+          <svg
+            className={`w-3.5 h-3.5 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Items — collapse during section drag or manual collapse */}
+      <div style={{ display: (isSectionDragging || isCollapsed) ? 'none' : undefined }}>
+        <div className="py-1" ref={itemContainerRef}>
+          {uncheckedItems.map((item, index) => {
+            const isBeingDragged = itemDragState.isDragging && itemDragState.dragIndex === index;
+            const shiftStyle = computeShiftTransform(index, itemDragState);
+            return (
+              <div
+                key={item.id}
+                data-drag-index={index}
+                style={{
+                  opacity: isBeingDragged ? 0.3 : 1,
+                  transform: shiftStyle || undefined,
+                  transition: itemDragState.isDragging ? 'transform 200ms ease-out, opacity 200ms' : undefined,
+                }}
+              >
+                <GroceryItemRow
+                  item={item}
+                  onToggle={onToggle}
+                  onDelete={onDelete}
+                  onEdit={onEdit}
+                  dragHandlers={getItemDragHandlers(index)}
+                  handleMouseDown={getItemHandleMouseDown(index)}
+                  isDragging={itemDragState.isDragging}
+                />
+              </div>
+            );
+          })}
+
+          {/* Add item inline */}
+          {addingToSection === section.id ? (
+            <div className="flex items-center gap-2 px-4 py-2">
+              <input
+                type="text"
+                value={newItemName}
+                onChange={e => onNewItemNameChange(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') onAddItem(section.id);
+                  if (e.key === 'Escape') onStartAdd(null);
+                }}
+                placeholder="Item name..."
+                autoFocus
+                className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500 text-sm py-1"
+              />
+              <button
+                onClick={() => onAddItem(section.id)}
+                className="text-blue-500 hover:text-blue-600 text-sm font-medium"
+              >
+                Add
+              </button>
+              <button
+                onClick={() => onStartAdd(null)}
+                className="text-gray-400 hover:text-gray-600 text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => onStartAdd(section.id)}
+              className="w-full text-left text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors px-4 py-1.5 text-sm"
+            >
+              + Add item
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface GroceryItemRowProps {
+  item: GrocerySection['items'][number];
+  onToggle: (id: string, checked: boolean) => void;
+  onDelete: (id: string) => void;
+  onEdit: (id: string, updates: { name?: string; quantity?: string | null }) => void;
+  dragHandlers?: ReturnType<ReturnType<typeof useDragReorder>['getDragHandlers']>;
+  handleMouseDown?: (e: React.MouseEvent) => void;
+  isDragging?: boolean;
+}
+
+function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging }: GroceryItemRowProps) {
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(item.name);
+  const [editQuantity, setEditQuantity] = useState(item.quantity ?? '');
+  const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const swipeModeRef = useRef(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  const SWIPE_THRESHOLD = 50;
+  const SWIPE_MAX = 80;
+
+  const startEditing = useCallback(() => {
+    if (item.checked) return;
+    setEditName(item.name);
+    setEditQuantity(item.quantity ?? '');
+    setIsEditing(true);
+  }, [item.name, item.quantity, item.checked]);
+
+  const commitEdit = useCallback(() => {
+    const trimmedName = editName.trim();
+    if (!trimmedName) {
+      setIsEditing(false);
+      return;
+    }
+
+    const updates: { name?: string; quantity?: string | null } = {};
+    if (trimmedName !== item.name) updates.name = trimmedName;
+    const qtyNum = parseInt(editQuantity) || 0;
+    const newQty = qtyNum > 0 ? String(qtyNum) : null;
+    if (newQty !== item.quantity) updates.quantity = newQty;
+
+    if (Object.keys(updates).length > 0) {
+      onEdit(item.id, updates);
+    }
+    setIsEditing(false);
+  }, [editName, editQuantity, item.id, item.name, item.quantity, onEdit]);
+
+  const cancelEdit = useCallback(() => {
+    setIsEditing(false);
+    setEditName(item.name);
+    setEditQuantity(item.quantity ?? '');
+  }, [item.name, item.quantity]);
+
+  useEffect(() => {
+    if (isEditing && nameInputRef.current) {
+      nameInputRef.current.focus();
+      nameInputRef.current.select();
+    }
+  }, [isEditing]);
+
+  if (isEditing) {
+    const qtyNum = parseInt(editQuantity) || 0;
+    return (
+      <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 dark:bg-blue-900/20">
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={() => setEditQuantity(String(Math.max(0, qtyNum - 1) || ''))}
+            className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
+          >
+            −
+          </button>
+          <span className="w-8 text-center text-sm font-medium text-blue-600 dark:text-blue-400">
+            {qtyNum || '–'}
+          </span>
+          <button
+            onClick={() => setEditQuantity(String(qtyNum + 1))}
+            className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
+          >
+            +
+          </button>
+        </div>
+        <input
+          ref={nameInputRef}
+          type="text"
+          value={editName}
+          onChange={e => setEditName(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') commitEdit();
+            if (e.key === 'Escape') cancelEdit();
+          }}
+          className="flex-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        />
+        <button
+          onClick={commitEdit}
+          className="text-blue-500 hover:text-blue-600 text-sm font-medium flex-shrink-0"
+        >
+          Save
+        </button>
+        <button
+          onClick={cancelEdit}
+          className="text-gray-400 hover:text-gray-600 text-sm flex-shrink-0"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative overflow-hidden">
+      {swipeOffset > 0 && (
+        <div className="absolute inset-y-0 right-0 flex items-center" style={{ width: SWIPE_MAX }}>
+          <button
+            type="button"
+            data-delete-action
+            onClick={() => {
+              setSwipeOffset(0);
+              setIsSwipeRevealed(false);
+              onDelete(item.id);
+            }}
+            className="w-full h-full bg-red-500 text-white font-medium text-sm flex items-center justify-center"
+          >
+            Delete
+          </button>
+        </div>
+      )}
+      <div
+        className="flex items-start gap-2 group px-4 py-1.5"
+        style={{
+          transform: swipeOffset > 0 ? `translateX(-${swipeOffset}px)` : undefined,
+          transition: swipeModeRef.current ? undefined : 'transform 200ms ease-out',
+        }}
+        onTouchStart={(e) => {
+          const touch = e.touches[0];
+          touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+          swipeModeRef.current = false;
+          if (isSwipeRevealed) {
+            const target = e.target as HTMLElement;
+            if (!target.closest('[data-delete-action]')) {
+              setIsSwipeRevealed(false);
+              setSwipeOffset(0);
+            }
+          }
+          dragHandlers?.onTouchStart(e);
+        }}
+        onTouchMove={(e) => {
+          if (isDragging) {
+            dragHandlers?.onTouchMove(e);
+            return;
+          }
+
+          if (isSwipeRevealed) return;
+          const touch = e.touches[0];
+          const dx = touch.clientX - touchStartRef.current.x;
+          const dy = Math.abs(touch.clientY - touchStartRef.current.y);
+          const absDx = Math.abs(dx);
+          if (!swipeModeRef.current && absDx > 15 && dx < 0 && absDx > dy * 1.5) {
+            swipeModeRef.current = true;
+          }
+          if (swipeModeRef.current) {
+            e.preventDefault();
+            setSwipeOffset(Math.min(Math.max(-dx, 0), SWIPE_MAX));
+          }
+          dragHandlers?.onTouchMove(e);
+        }}
+        onTouchEnd={() => {
+          dragHandlers?.onTouchEnd();
+
+          if (swipeModeRef.current) {
+            if (swipeOffset >= SWIPE_THRESHOLD) {
+              setSwipeOffset(SWIPE_MAX);
+              setIsSwipeRevealed(true);
+            } else {
+              setSwipeOffset(0);
+            }
+            swipeModeRef.current = false;
+          }
+        }}
+      >
+        {/* Desktop drag handle for items */}
+        {dragHandlers && handleMouseDown && (
+          <svg
+            className="drag-handle w-3.5 h-3.5 text-gray-300 dark:text-gray-600 flex-shrink-0 mt-0.5 cursor-grab active:cursor-grabbing"
+            fill="currentColor"
+            viewBox="0 0 20 20"
+            onMouseDown={handleMouseDown}
+          >
+            <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
+          </svg>
+        )}
+
+        {/* Checkbox */}
+        <button
+          type="button"
+          onClick={() => onToggle(item.id, !item.checked)}
+          className={`
+            flex-shrink-0 w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5
+            transition-colors duration-150
+            ${item.checked
+              ? 'bg-green-500 border-green-500 dark:bg-green-600 dark:border-green-600'
+              : 'border-gray-300 hover:border-gray-400 dark:border-gray-600 dark:hover:border-gray-500'
+            }
+          `}
+        >
+          {item.checked && (
+            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </button>
+
+        {/* Item text -- tap to edit */}
+        <span
+          className={`
+            flex-1 min-w-0 break-words cursor-pointer
+            text-sm
+            ${item.checked
+              ? 'text-gray-400 dark:text-gray-500 line-through'
+              : 'text-gray-800 dark:text-gray-200'
+            }
+          `}
+          onClick={startEditing}
+        >
+          {item.quantity && (
+            <span className={`font-medium ${item.checked ? 'text-gray-400 dark:text-gray-500' : 'text-blue-600 dark:text-blue-400'}`}>
+              ({item.quantity}){' '}
+            </span>
+          )}
+          {item.name}
+        </span>
+
+        {/* Desktop delete button */}
+        <button
+          type="button"
+          onClick={() => onDelete(item.id)}
+          className="hover-delete-btn flex-shrink-0 items-center ml-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
+          aria-label="Delete item"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}

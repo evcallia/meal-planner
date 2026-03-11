@@ -212,3 +212,71 @@ export async function unhideCalendarEvent(hiddenId: string): Promise<{ status: s
     method: 'DELETE',
   });
 }
+
+// Grocery API
+import type { GrocerySection, GroceryItem } from '../types';
+
+export async function getGroceryList(): Promise<GrocerySection[]> {
+  return fetchAPI<GrocerySection[]>('/grocery');
+}
+
+export async function replaceGroceryList(sections: { name: string; items: { name: string; quantity: string | null; checked?: boolean }[] }[]): Promise<GrocerySection[]> {
+  return fetchAPI<GrocerySection[]>('/grocery', {
+    method: 'PUT',
+    body: JSON.stringify({ sections }),
+  });
+}
+
+export async function toggleGroceryItem(itemId: string, checked: boolean): Promise<GroceryItem> {
+  return fetchAPI<GroceryItem>(`/grocery/items/${itemId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ checked }),
+  });
+}
+
+export async function addGroceryItem(sectionId: string, name: string, quantity: string | null = null): Promise<GroceryItem> {
+  return fetchAPI<GroceryItem>('/grocery/items', {
+    method: 'POST',
+    body: JSON.stringify({ section_id: sectionId, name, quantity }),
+  });
+}
+
+export async function deleteGroceryItem(itemId: string): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/grocery/items/${itemId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function reorderGrocerySections(sectionIds: string[]): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>('/grocery/reorder-sections', {
+    method: 'PATCH',
+    body: JSON.stringify({ section_ids: sectionIds }),
+  });
+}
+
+export async function reorderGroceryItems(sectionId: string, itemIds: string[]): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/grocery/sections/${sectionId}/reorder-items`, {
+    method: 'PATCH',
+    body: JSON.stringify({ item_ids: itemIds }),
+  });
+}
+
+export async function renameGrocerySection(sectionId: string, name: string): Promise<GrocerySection> {
+  return fetchAPI<GrocerySection>(`/grocery/sections/${sectionId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function editGroceryItem(itemId: string, updates: { name?: string; quantity?: string | null }): Promise<GroceryItem> {
+  return fetchAPI<GroceryItem>(`/grocery/items/${itemId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function clearGroceryItems(mode: 'checked' | 'all'): Promise<GrocerySection[]> {
+  return fetchAPI<GrocerySection[]>(`/grocery/items?mode=${mode}`, {
+    method: 'DELETE',
+  });
+}

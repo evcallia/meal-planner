@@ -19,7 +19,7 @@ from app.config import get_settings
 get_settings.cache_clear()
 from app.database import engine, Base, SessionLocal
 from app.models import MealNote, CachedCalendarEvent
-from app.routers import days, auth, pantry, meal_ideas, realtime, calendar
+from app.routers import days, auth, pantry, meal_ideas, realtime, calendar, grocery
 from app.ical_service import initialize_cache, shutdown_cache
 from app.realtime import broadcaster, shutdown_event
 
@@ -139,12 +139,27 @@ app.include_router(pantry.router)
 app.include_router(meal_ideas.router)
 app.include_router(realtime.router)
 app.include_router(calendar.router)
+app.include_router(grocery.router)
 
 
 # Health check
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+# Dev-only: fake login when OIDC is not configured
+if not settings.oidc_issuer:
+    @app.get("/api/auth/dev-login")
+    async def dev_login(request: Request):
+        """Set a fake session for local development."""
+        request.session["user"] = {
+            "sub": "dev-user",
+            "email": "dev@localhost",
+            "name": "Dev User",
+        }
+        from fastapi.responses import RedirectResponse as RR
+        return RR(url="/")
 
 
 # Serve React static files

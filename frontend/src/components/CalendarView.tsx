@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { CalendarEvent, DayData } from '../types';
 import { DayCard } from './DayCard';
-import { getDays, getEvents, updateNotes, toggleItemized, hideCalendarEvent } from '../api/client';
+import { getDays, getEvents, updateNotes, toggleItemized, hideCalendarEvent, unhideCalendarEvent } from '../api/client';
 import {
   saveLocalNote,
   queueChange,
@@ -14,6 +14,8 @@ import {
   saveLocalHiddenEvent,
   deleteLocalHiddenEvent,
   generateTempId,
+  isTempId,
+  getTempIdMapping,
 } from '../db';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useUndo } from '../contexts/UndoContext';
@@ -592,46 +594,92 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     }));
   };
 
+  const restoreEventToDay = (event: CalendarEvent) => {
+    const eventDate = event.start_time!.split('T')[0];
+    setDays(prev => prev.map(day => {
+      if (day.date !== eventDate) return day;
+      const updated = { ...day, events: [...day.events, event] };
+      daysCache.current.set(day.date, updated);
+      saveLocalCalendarEvents(day.date, updated.events);
+      return updated;
+    }));
+  };
+
+  const doHideEvent = async (event: CalendarEvent): Promise<string> => {
+    const eventUid = event.uid ?? event.id;
+    const calendarName = event.calendar_name ?? '';
+    const payload = {
+      event_uid: eventUid,
+      calendar_name: calendarName,
+      title: event.title,
+      start_time: event.start_time,
+      end_time: event.end_time,
+      all_day: event.all_day,
+    };
+    const hiddenKey = buildHiddenKey(eventUid, calendarName, event.start_time!);
+
+    if (!isOnline) {
+      const tempId = generateTempId();
+      const eventDate = event.start_time!.split('T')[0];
+      hiddenEventKeysRef.current.add(hiddenKey);
+      await saveLocalHiddenEvent({
+        id: tempId,
+        event_uid: eventUid,
+        event_date: eventDate,
+        calendar_name: calendarName,
+        title: event.title,
+        start_time: event.start_time!,
+        end_time: event.end_time ?? null,
+        all_day: event.all_day,
+      });
+      await queueChange('calendar-hide', eventDate, { tempId, ...payload });
+      removeEventById(event.id!, false);
+      window.dispatchEvent(new CustomEvent('meal-planner-hidden-updated', { detail: { date: eventDate } }));
+      return tempId;
+    }
+
+    const hidden = await hideCalendarEvent(payload);
+    hiddenEventKeysRef.current.add(buildHiddenKey(hidden.event_uid, hidden.calendar_name, hidden.start_time));
+    await saveLocalHiddenEvent({ ...hidden, updatedAt: Date.now() });
+    removeEventById(event.id!, false);
+    return hidden.id;
+  };
+
+  const doUnhideEvent = async (event: CalendarEvent, hiddenId: string) => {
+    const eventUid = event.uid ?? event.id;
+    const calendarName = event.calendar_name ?? '';
+    const hiddenKey = buildHiddenKey(eventUid, calendarName, event.start_time!);
+    hiddenEventKeysRef.current.delete(hiddenKey);
+
+    if (!isOnline) {
+      const eventDate = event.start_time!.split('T')[0];
+      await deleteLocalHiddenEvent(hiddenId);
+      await queueChange('calendar-unhide', eventDate, { hiddenId });
+    } else {
+      const realId = isTempId(hiddenId) ? (await getTempIdMapping(hiddenId)) ?? hiddenId : hiddenId;
+      await unhideCalendarEvent(realId);
+      await deleteLocalHiddenEvent(realId);
+    }
+    restoreEventToDay(event);
+  };
+
   const handleHideEvent = async (event: CalendarEvent) => {
     if (!event.id || !event.start_time) return;
     if (lastHiddenEventRef.current === event.id) return;
     lastHiddenEventRef.current = event.id;
     try {
-      const eventUid = event.uid ?? event.id;
-      const calendarName = event.calendar_name ?? '';
-      const payload = {
-        event_uid: eventUid,
-        calendar_name: calendarName,
-        title: event.title,
-        start_time: event.start_time,
-        end_time: event.end_time,
-        all_day: event.all_day,
-      };
+      const hiddenIdRef = { current: '' };
+      hiddenIdRef.current = await doHideEvent(event);
 
-      if (!isOnline) {
-        const tempId = generateTempId();
-        const eventDate = event.start_time.split('T')[0];
-        hiddenEventKeysRef.current.add(buildHiddenKey(eventUid, calendarName, event.start_time));
-        await saveLocalHiddenEvent({
-          id: tempId,
-          event_uid: eventUid,
-          event_date: eventDate,
-          calendar_name: calendarName,
-          title: event.title,
-          start_time: event.start_time,
-          end_time: event.end_time ?? null,
-          all_day: event.all_day,
-        });
-        await queueChange('calendar-hide', eventDate, { tempId, ...payload });
-        removeEventById(event.id, false);
-        window.dispatchEvent(new CustomEvent('meal-planner-hidden-updated', { detail: { date: eventDate } }));
-        return;
-      }
-
-      const hidden = await hideCalendarEvent(payload);
-      hiddenEventKeysRef.current.add(buildHiddenKey(hidden.event_uid, hidden.calendar_name, hidden.start_time));
-      await saveLocalHiddenEvent({ ...hidden, updatedAt: Date.now() });
-      removeEventById(event.id, false);
+      pushAction({
+        type: 'hide-calendar-event',
+        undo: async () => {
+          await doUnhideEvent(event, hiddenIdRef.current);
+        },
+        redo: async () => {
+          hiddenIdRef.current = await doHideEvent(event);
+        },
+      });
     } catch (error) {
       console.error('Failed to hide event:', error);
     } finally {
