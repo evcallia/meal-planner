@@ -518,14 +518,14 @@ export function DayCard({
                     {lines.map((line, i) => {
                       const isItemized = itemsMap.get(i) || false;
                       return (
-                        <div key={i} className="flex items-center gap-1.5">
+                        <div key={i} className="flex items-start gap-1.5">
                           {/* Inline checkbox */}
                           {showItemizedColumn && (
                             <button
                               type="button"
                               onClick={() => onToggleItemized(i, !isItemized)}
                               className={`
-                                flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center
+                                flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center mt-[5px]
                                 transition-colors duration-150
                                 ${isItemized
                                   ? 'bg-green-500 border-green-500 dark:bg-green-600 dark:border-green-600'

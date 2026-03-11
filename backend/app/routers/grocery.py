@@ -1,0 +1,230 @@
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session, joinedload
+
+from app.auth import get_current_user
+from app.database import get_db
+from app.models import GrocerySection, GroceryItem
+from app.schemas import (
+    GrocerySectionSchema,
+    GroceryItemSchema,
+    GroceryItemCreate,
+    GroceryItemUpdate,
+    GroceryReplacePayload,
+    GroceryReorderSections,
+    GroceryReorderItems,
+    GrocerySectionUpdate,
+)
+from app.realtime import broadcast_event
+
+router = APIRouter(prefix="/api/grocery", tags=["grocery"])
+
+
+@router.get("", response_model=list[GrocerySectionSchema])
+async def list_grocery(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    sections = (
+        db.query(GrocerySection)
+        .options(joinedload(GrocerySection.items))
+        .order_by(GrocerySection.position.asc())
+        .all()
+    )
+    # Sort items within each section: unchecked first by position, checked last by position
+    for section in sections:
+        section.items.sort(key=lambda item: (item.checked, item.position))
+    return sections
+
+
+@router.put("", response_model=list[GrocerySectionSchema])
+async def replace_grocery(
+    payload: GroceryReplacePayload,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    # Delete all existing sections (cascades to items)
+    db.query(GrocerySection).delete()
+    db.flush()
+
+    sections = []
+    for i, sec in enumerate(payload.sections):
+        section = GrocerySection(name=sec.name, position=i)
+        db.add(section)
+        db.flush()
+        for j, item in enumerate(sec.items):
+            grocery_item = GroceryItem(
+                section_id=section.id,
+                name=item.name,
+                quantity=item.quantity,
+                checked=item.checked,
+                position=j,
+            )
+            db.add(grocery_item)
+        db.flush()
+        sections.append(section)
+
+    db.commit()
+    # Re-query to get full data with items
+    result = (
+        db.query(GrocerySection)
+        .options(joinedload(GrocerySection.items))
+        .order_by(GrocerySection.position.asc())
+        .all()
+    )
+    for section in result:
+        section.items.sort(key=lambda item: (item.checked, item.position))
+    await broadcast_event("grocery.updated", {})
+    return result
+
+
+@router.patch("/sections/{section_id}", response_model=GrocerySectionSchema)
+async def update_section(
+    section_id: UUID,
+    payload: GrocerySectionUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    section = db.query(GrocerySection).options(joinedload(GrocerySection.items)).filter(GrocerySection.id == section_id).first()
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    section.name = payload.name.strip()
+    db.commit()
+    db.refresh(section)
+    section.items.sort(key=lambda item: (item.checked, item.position))
+    await broadcast_event("grocery.updated", {})
+    return section
+
+
+@router.patch("/reorder-sections")
+async def reorder_sections(
+    payload: GroceryReorderSections,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    for i, section_id in enumerate(payload.section_ids):
+        section = db.query(GrocerySection).filter(GrocerySection.id == section_id).first()
+        if section:
+            section.position = i
+    db.commit()
+    await broadcast_event("grocery.updated", {})
+    return {"status": "ok"}
+
+
+@router.patch("/sections/{section_id}/reorder-items")
+async def reorder_items(
+    section_id: UUID,
+    payload: GroceryReorderItems,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    section = db.query(GrocerySection).filter(GrocerySection.id == section_id).first()
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    for i, item_id in enumerate(payload.item_ids):
+        item = db.query(GroceryItem).filter(
+            GroceryItem.id == item_id,
+            GroceryItem.section_id == section_id,
+        ).first()
+        if item:
+            item.position = i
+    db.commit()
+    await broadcast_event("grocery.updated", {})
+    return {"status": "ok"}
+
+
+@router.patch("/items/{item_id}", response_model=GroceryItemSchema)
+async def update_grocery_item(
+    item_id: UUID,
+    payload: GroceryItemUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    item = db.query(GroceryItem).filter(GroceryItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    if payload.checked is not None:
+        item.checked = payload.checked
+    if payload.name is not None:
+        item.name = payload.name.strip()
+    if 'quantity' in payload.model_fields_set:
+        item.quantity = payload.quantity if payload.quantity else None
+    db.commit()
+    db.refresh(item)
+    await broadcast_event("grocery.updated", {"id": str(item.id)})
+    return item
+
+
+@router.post("/items", response_model=GroceryItemSchema)
+async def add_grocery_item(
+    payload: GroceryItemCreate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    section = db.query(GrocerySection).filter(GrocerySection.id == payload.section_id).first()
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    # Get max position in this section
+    max_pos = db.query(GroceryItem.position).filter(
+        GroceryItem.section_id == payload.section_id
+    ).order_by(GroceryItem.position.desc()).first()
+    next_pos = (max_pos[0] + 1) if max_pos else 0
+
+    item = GroceryItem(
+        section_id=payload.section_id,
+        name=payload.name.strip(),
+        quantity=payload.quantity,
+        position=next_pos,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    await broadcast_event("grocery.updated", {"id": str(item.id)})
+    return item
+
+
+@router.delete("/items/{item_id}")
+async def delete_grocery_item(
+    item_id: UUID,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    item = db.query(GroceryItem).filter(GroceryItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    db.delete(item)
+    db.commit()
+    await broadcast_event("grocery.updated", {"id": str(item_id), "deleted": True})
+    return {"status": "deleted"}
+
+
+@router.delete("/items", response_model=list[GrocerySectionSchema])
+async def clear_grocery_items(
+    mode: str = Query(..., pattern="^(checked|all)$"),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Clear checked items or all items from the grocery list."""
+    if mode == "all":
+        db.query(GrocerySection).delete()
+    elif mode == "checked":
+        db.query(GroceryItem).filter(GroceryItem.checked.is_(True)).delete()
+        # Remove empty sections
+        sections = db.query(GrocerySection).options(joinedload(GrocerySection.items)).all()
+        for section in sections:
+            if len(section.items) == 0:
+                db.delete(section)
+
+    db.commit()
+
+    result = (
+        db.query(GrocerySection)
+        .options(joinedload(GrocerySection.items))
+        .order_by(GrocerySection.position.asc())
+        .all()
+    )
+    for section in result:
+        section.items.sort(key=lambda item: (item.checked, item.position))
+    await broadcast_event("grocery.updated", {})
+    return result

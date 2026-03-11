@@ -24,6 +24,15 @@ import {
   deleteMealIdea,
   hideCalendarEvent,
   unhideCalendarEvent,
+  replaceGroceryList,
+  toggleGroceryItem,
+  addGroceryItem,
+  deleteGroceryItem as deleteGroceryItemAPI,
+  editGroceryItem as editGroceryItemAPI,
+  clearGroceryItems as clearGroceryItemsAPI,
+  reorderGrocerySections as reorderGrocerySectionsAPI,
+  reorderGroceryItems as reorderGroceryItemsAPI,
+  renameGrocerySection as renameGrocerySectionAPI,
 } from '../api/client';
 import { ConnectionStatus } from '../types';
 
@@ -182,6 +191,105 @@ export function useSync() {
           }
           await unhideCalendarEvent(realId);
           await deleteLocalHiddenEvent(realId);
+        } else if (change.type === 'grocery-replace') {
+          const payload = change.payload as { sections: { name: string; items: { name: string; quantity: string | null }[] }[] };
+          await replaceGroceryList(payload.sections);
+        } else if (change.type === 'grocery-check') {
+          const payload = change.payload as { id: string; checked: boolean };
+          let realId = payload.id;
+          if (isTempId(payload.id)) {
+            const mapped = await getTempIdMapping(payload.id);
+            if (mapped) {
+              realId = mapped;
+            } else {
+              if (change.id) await removePendingChange(change.id);
+              setPendingCount(prev => prev - 1);
+              continue;
+            }
+          }
+          await toggleGroceryItem(realId, payload.checked);
+        } else if (change.type === 'grocery-add') {
+          const payload = change.payload as { id: string; sectionId: string; name: string; quantity: string | null };
+          let realSectionId = payload.sectionId;
+          if (isTempId(payload.sectionId)) {
+            const mapped = await getTempIdMapping(payload.sectionId);
+            if (mapped) realSectionId = mapped;
+          }
+          const created = await addGroceryItem(realSectionId, payload.name, payload.quantity);
+          if (isTempId(payload.id)) {
+            await saveTempIdMapping(payload.id, created.id);
+          }
+        } else if (change.type === 'grocery-delete') {
+          const payload = change.payload as { id: string };
+          let realId = payload.id;
+          if (isTempId(payload.id)) {
+            const mapped = await getTempIdMapping(payload.id);
+            if (mapped) {
+              realId = mapped;
+            } else {
+              if (change.id) await removePendingChange(change.id);
+              setPendingCount(prev => prev - 1);
+              continue;
+            }
+          }
+          await deleteGroceryItemAPI(realId);
+        } else if (change.type === 'grocery-edit') {
+          const payload = change.payload as { id: string; name?: string; quantity?: string | null };
+          let realId = payload.id;
+          if (isTempId(payload.id)) {
+            const mapped = await getTempIdMapping(payload.id);
+            if (mapped) {
+              realId = mapped;
+            } else {
+              if (change.id) await removePendingChange(change.id);
+              setPendingCount(prev => prev - 1);
+              continue;
+            }
+          }
+          const updates: { name?: string; quantity?: string | null } = {};
+          if (payload.name !== undefined) updates.name = payload.name;
+          if (payload.quantity !== undefined) updates.quantity = payload.quantity;
+          await editGroceryItemAPI(realId, updates);
+        } else if (change.type === 'grocery-clear') {
+          const payload = change.payload as { mode: 'checked' | 'all' };
+          await clearGroceryItemsAPI(payload.mode);
+        } else if (change.type === 'grocery-reorder-sections') {
+          const payload = change.payload as { sectionIds: string[] };
+          const resolvedIds = await Promise.all(
+            payload.sectionIds.map(async (id) => {
+              if (isTempId(id)) {
+                const mapped = await getTempIdMapping(id);
+                return mapped ?? id;
+              }
+              return id;
+            })
+          );
+          await reorderGrocerySectionsAPI(resolvedIds);
+        } else if (change.type === 'grocery-reorder-items') {
+          const payload = change.payload as { sectionId: string; itemIds: string[] };
+          let realSectionId = payload.sectionId;
+          if (isTempId(payload.sectionId)) {
+            const mapped = await getTempIdMapping(payload.sectionId);
+            if (mapped) realSectionId = mapped;
+          }
+          const resolvedItemIds = await Promise.all(
+            payload.itemIds.map(async (id) => {
+              if (isTempId(id)) {
+                const mapped = await getTempIdMapping(id);
+                return mapped ?? id;
+              }
+              return id;
+            })
+          );
+          await reorderGroceryItemsAPI(realSectionId, resolvedItemIds);
+        } else if (change.type === 'grocery-rename-section') {
+          const payload = change.payload as { sectionId: string; name: string };
+          let realSectionId = payload.sectionId;
+          if (isTempId(payload.sectionId)) {
+            const mapped = await getTempIdMapping(payload.sectionId);
+            if (mapped) realSectionId = mapped;
+          }
+          await renameGrocerySectionAPI(realSectionId, payload.name);
         }
         if (change.id) {
           await removePendingChange(change.id);

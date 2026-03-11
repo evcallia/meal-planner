@@ -18,7 +18,16 @@ export type ChangeType =
   | 'meal-idea-update'
   | 'meal-idea-delete'
   | 'calendar-hide'
-  | 'calendar-unhide';
+  | 'calendar-unhide'
+  | 'grocery-replace'
+  | 'grocery-check'
+  | 'grocery-add'
+  | 'grocery-delete'
+  | 'grocery-edit'
+  | 'grocery-clear'
+  | 'grocery-reorder-sections'
+  | 'grocery-reorder-items'
+  | 'grocery-rename-section';
 
 export interface PendingChange {
   id?: number;
@@ -38,6 +47,22 @@ export interface LocalPantryItem {
 export interface LocalMealIdea {
   id: string;
   title: string;
+  updated_at: string;
+}
+
+export interface LocalGrocerySection {
+  id: string;
+  name: string;
+  position: number;
+}
+
+export interface LocalGroceryItem {
+  id: string;
+  section_id: string;
+  name: string;
+  quantity: string | null;
+  checked: boolean;
+  position: number;
   updated_at: string;
 }
 
@@ -77,6 +102,8 @@ class MealPlannerDB extends Dexie {
   tempIdMap!: Table<{ tempId: string; realId: string }, string>;
   calendarDays!: Table<LocalCalendarDay, string>;
   hiddenCalendarEvents!: Table<LocalHiddenCalendarEvent, string>;
+  grocerySections!: Table<LocalGrocerySection, string>;
+  groceryItems!: Table<LocalGroceryItem, string>;
 
   constructor() {
     super('MealPlannerDB');
@@ -108,6 +135,17 @@ class MealPlannerDB extends Dexie {
       calendarDays: 'date',
       hiddenCalendarEvents: 'id'
     });
+    this.version(5).stores({
+      mealNotes: 'date',
+      pendingChanges: '++id, date, type',
+      pantryItems: 'id',
+      mealIdeas: 'id',
+      tempIdMap: 'tempId',
+      calendarDays: 'date',
+      hiddenCalendarEvents: 'id',
+      grocerySections: 'id',
+      groceryItems: 'id, section_id'
+    });
     // Ensure table properties are initialized for both runtime and tests.
     this.mealNotes = this.table('mealNotes');
     this.pendingChanges = this.table('pendingChanges');
@@ -116,6 +154,8 @@ class MealPlannerDB extends Dexie {
     this.tempIdMap = this.table('tempIdMap');
     this.calendarDays = this.table('calendarDays');
     this.hiddenCalendarEvents = this.table('hiddenCalendarEvents');
+    this.grocerySections = this.table('grocerySections');
+    this.groceryItems = this.table('groceryItems');
   }
 }
 
@@ -328,4 +368,43 @@ export async function updateLocalHiddenEventId(
 ) {
   await db.hiddenCalendarEvents.delete(tempId);
   await saveLocalHiddenEvent(event);
+}
+
+// Grocery local storage
+export async function saveLocalGrocerySections(sections: LocalGrocerySection[]) {
+  await db.grocerySections.clear();
+  if (sections.length > 0) {
+    await db.grocerySections.bulkPut(sections);
+  }
+}
+
+export async function getLocalGrocerySections(): Promise<LocalGrocerySection[]> {
+  return db.grocerySections.orderBy('position').toArray();
+}
+
+export async function saveLocalGroceryItems(items: LocalGroceryItem[]) {
+  await db.groceryItems.clear();
+  if (items.length > 0) {
+    await db.groceryItems.bulkPut(items);
+  }
+}
+
+export async function getLocalGroceryItems(): Promise<LocalGroceryItem[]> {
+  return db.groceryItems.toArray();
+}
+
+export async function getLocalGroceryItemsBySection(sectionId: string): Promise<LocalGroceryItem[]> {
+  return db.groceryItems.where('section_id').equals(sectionId).toArray();
+}
+
+export async function saveLocalGroceryItem(item: LocalGroceryItem) {
+  await db.groceryItems.put(item);
+}
+
+export async function deleteLocalGroceryItem(id: string) {
+  await db.groceryItems.delete(id);
+}
+
+export async function saveLocalGrocerySection(section: LocalGrocerySection) {
+  await db.grocerySections.put(section);
 }

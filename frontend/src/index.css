@@ -49,3 +49,17 @@ body {
     display: flex !important;
   }
 }
+
+/* Drag handle — hidden on touch, visible on desktop with cursor */
+.drag-handle {
+  display: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .drag-handle {
+    display: block;
+    cursor: grab;
+  }
+  .drag-handle:active {
+    cursor: grabbing;
+  }
+}

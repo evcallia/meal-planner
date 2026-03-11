@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-c", "export PATH=/opt/homebrew/bin:$PATH && cd /Users/evan.callia/Desktop/meal-planner/frontend && npm run dev"],
+      "port": 5173
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-c", "cd /Users/evan.callia/Desktop/meal-planner && POSTGRES_HOST=localhost OIDC_ISSUER= SECURE_COOKIES=false FRONTEND_URL=http://localhost:5173 /Users/evan.callia/Desktop/meal-planner/backend/.venv/bin/python -m uvicorn app.main:app --app-dir backend --reload --port 8000"],
+      "port": 8000
+    },
+    {
+      "name": "postgres",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-c", "export DOCKER_HOST=unix:///Users/evan.callia/.colima/default/docker.sock && (/opt/homebrew/bin/docker start mealplanner-pg 2>/dev/null || /opt/homebrew/bin/docker run --name mealplanner-pg -e POSTGRES_DB=mealplanner -e POSTGRES_USER=mealplanner -e POSTGRES_PASSWORD=changeme -p 5432:5432 -d postgres:16-alpine) && exec /opt/homebrew/bin/docker logs -f mealplanner-pg"],
+      "port": 5432
+    }
+  ]
+}
