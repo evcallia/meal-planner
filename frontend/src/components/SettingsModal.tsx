@@ -23,10 +23,11 @@ interface SettingsModalProps {
   updateAvailable?: boolean;
   onApplyUpdate?: () => void;
   updating?: boolean;
+  pendingCount?: number;
+  onClearPendingChanges?: () => void;
 }
 
 function formatRelativeTime(dateString: string | null): string {
-  // console.log('test');
   if (!dateString) return 'Never';
 
   const date = new Date(dateString);
@@ -42,7 +43,7 @@ function formatRelativeTime(dateString: string | null): string {
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 }
 
-export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode, updateAvailable, onApplyUpdate, updating }: SettingsModalProps) {
+export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode, updateAvailable, onApplyUpdate, updating, pendingCount, onClearPendingChanges }: SettingsModalProps) {
   const [cacheStatus, setCacheStatus] = useState<CalendarCacheStatus | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
@@ -558,6 +559,27 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               <p className="text-sm text-red-500">{hiddenError}</p>
             )}
           </div>
+
+          {/* Pending Changes */}
+          {pendingCount != null && pendingCount > 0 && onClearPendingChanges && (
+            <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-gray-900 dark:text-gray-100 font-medium">Pending Changes</span>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    {pendingCount} change{pendingCount === 1 ? '' : 's'} waiting to sync
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onClearPendingChanges}
+                  className="px-3 py-1.5 text-sm font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

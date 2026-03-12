@@ -26,6 +26,26 @@ import { useOnlineStatus } from './useOnlineStatus';
 import { useUndo } from '../contexts/UndoContext';
 import { ParsedGrocerySection } from '../utils/groceryParser';
 
+const GROCERY_STORAGE_KEY = 'meal-planner-grocery';
+
+function saveGroceryToLocalStorage(sections: GrocerySection[]) {
+  try {
+    localStorage.setItem(GROCERY_STORAGE_KEY, JSON.stringify(sections));
+  } catch { /* storage full — best effort */ }
+}
+
+function loadGroceryFromLocalStorage(): GrocerySection[] {
+  try {
+    const raw = localStorage.getItem(GROCERY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
 export function useGroceryList() {
   const [sections, setSections] = useState<GrocerySection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,6 +62,23 @@ export function useGroceryList() {
   const pendingMutationsRef = useRef(0);
   const deferredLoadRef = useRef(false);
 
+  // Assemble GrocerySection[] from separate IndexedDB tables, falling back to localStorage
+  const loadFromLocal = async (): Promise<GrocerySection[]> => {
+    try {
+      const localSections = await getLocalGrocerySections();
+      const localItems = await getLocalGroceryItems();
+      if (localSections.length > 0) {
+        return localSections.map(s => ({
+          ...s,
+          items: localItems
+            .filter(i => i.section_id === s.id)
+            .sort((a, b) => (a.checked === b.checked ? a.position - b.position : a.checked ? 1 : -1)),
+        }));
+      }
+    } catch { /* IndexedDB failed */ }
+    return loadGroceryFromLocalStorage();
+  };
+
   // Load grocery list
   const loadGroceryList = useCallback(async () => {
     const fetchVersion = optimisticVersionRef.current;
@@ -51,7 +88,8 @@ export function useGroceryList() {
         // If an optimistic update happened while we were fetching, discard this result
         if (optimisticVersionRef.current !== fetchVersion) return;
         setSections(data);
-        // Cache locally
+        // Cache locally (IndexedDB + localStorage backup)
+        saveGroceryToLocalStorage(data);
         await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
         const allItems = data.flatMap(s => s.items);
         await saveLocalGroceryItems(allItems.map(i => ({
@@ -64,28 +102,10 @@ export function useGroceryList() {
           updated_at: i.updated_at,
         })));
       } else {
-        // Load from local
-        const localSections = await getLocalGrocerySections();
-        const localItems = await getLocalGroceryItems();
-        const assembled: GrocerySection[] = localSections.map(s => ({
-          ...s,
-          items: localItems
-            .filter(i => i.section_id === s.id)
-            .sort((a, b) => (a.checked === b.checked ? a.position - b.position : a.checked ? 1 : -1)),
-        }));
-        setSections(assembled);
+        setSections(await loadFromLocal());
       }
     } catch {
-      // Fallback to local
-      const localSections = await getLocalGrocerySections();
-      const localItems = await getLocalGroceryItems();
-      const assembled: GrocerySection[] = localSections.map(s => ({
-        ...s,
-        items: localItems
-          .filter(i => i.section_id === s.id)
-          .sort((a, b) => (a.checked === b.checked ? a.position - b.position : a.checked ? 1 : -1)),
-      }));
-      setSections(assembled);
+      setSections(await loadFromLocal());
     } finally {
       setLoading(false);
     }
