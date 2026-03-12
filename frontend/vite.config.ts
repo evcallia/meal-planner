@@ -42,7 +42,7 @@ export default defineConfig(({ mode }) => {
         includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
         manifest: {
           name: 'Meal Planner',
-          short_name: 'Meals',
+          short_name: 'Meal Planner',
           description: 'Plan your weekly meals',
           theme_color: '#0f766e',
           background_color: '#ffffff',

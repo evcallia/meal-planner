@@ -11,11 +11,11 @@ import { useSync } from './hooks/useSync';
 import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
 import { useRealtime } from './hooks/useRealtime';
-import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes } from './api/client';
+import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryList } from './api/client';
 import { UserInfo } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
-import { getLocalNote, queueChange, saveLocalNote } from './db';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'grocery';
@@ -307,9 +307,10 @@ function AppContent() {
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [currentPage, setCurrentPage] = useState<Page>('meals');
-  const { status, pendingCount } = useSync();
+  const { status, pendingCount, clearAllPendingChanges } = useSync();
   const { isDark, toggle: toggleDarkMode } = useDarkMode();
   const { settings, updateSettings } = useSettings();
+  const isOnline = useOnlineStatus();
   useRealtime();
 
   // PWA update detection (SW lifecycle)
@@ -425,6 +426,19 @@ function AppContent() {
     checkAuth();
   }, []);
 
+  // Pre-cache grocery list for offline use (IndexedDB + localStorage backup)
+  useEffect(() => {
+    if (!user || !isOnline) return;
+    getGroceryList().then(async (data) => {
+      try { localStorage.setItem('meal-planner-grocery', JSON.stringify(data)); } catch { /* full */ }
+      await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+      await saveLocalGroceryItems(data.flatMap(s => s.items.map(i => ({
+        id: i.id, section_id: i.section_id, name: i.name,
+        quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+      }))));
+    }).catch(() => { /* best-effort */ });
+  }, [user, isOnline]);
+
   useEffect(() => {
     const scale = settings.compactView ? settings.textScaleCompact : settings.textScaleStandard;
     const root = document.documentElement;
@@ -511,6 +525,8 @@ function AppContent() {
           updateAvailable={updateAvailable}
           onApplyUpdate={applyUpdate}
           updating={updating}
+          pendingCount={pendingCount}
+          onClearPendingChanges={clearAllPendingChanges}
         />
       )}
 

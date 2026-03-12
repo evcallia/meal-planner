@@ -3,6 +3,7 @@ import { useOnlineStatus } from './useOnlineStatus';
 import {
   getPendingChanges,
   removePendingChange,
+  clearPendingChanges,
   isTempId,
   saveTempIdMapping,
   getTempIdMapping,
@@ -339,5 +340,11 @@ export function useSync() {
     return () => clearInterval(interval);
   }, []);
 
-  return { status, pendingCount, syncPendingChanges };
+  const clearAllPendingChanges = useCallback(async () => {
+    await clearPendingChanges();
+    setPendingCount(0);
+    setStatus(isOnline ? 'online' : 'offline');
+  }, [isOnline]);
+
+  return { status, pendingCount, syncPendingChanges, clearAllPendingChanges };
 }
