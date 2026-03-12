@@ -20,9 +20,13 @@ interface SettingsModalProps {
   onClose: () => void;
   isDark: boolean;
   onToggleDarkMode: () => void;
+  updateAvailable?: boolean;
+  onApplyUpdate?: () => void;
+  updating?: boolean;
 }
 
 function formatRelativeTime(dateString: string | null): string {
+  // console.log('test');
   if (!dateString) return 'Never';
 
   const date = new Date(dateString);
@@ -38,7 +42,7 @@ function formatRelativeTime(dateString: string | null): string {
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 }
 
-export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode }: SettingsModalProps) {
+export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode, updateAvailable, onApplyUpdate, updating }: SettingsModalProps) {
   const [cacheStatus, setCacheStatus] = useState<CalendarCacheStatus | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
@@ -258,6 +262,34 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
 
         {/* Content */}
         <div className="p-4 space-y-4">
+          {/* Update Available */}
+          {updateAvailable && onApplyUpdate && (
+            <div className="pb-4 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 bg-blue-500 rounded-full shrink-0" />
+                  <div>
+                    <span className="text-gray-900 dark:text-gray-100 font-medium">Update Available</span>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">A new version is ready to install</p>
+                  </div>
+                </div>
+                <button
+                  onClick={onApplyUpdate}
+                  disabled={updating}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white rounded-lg transition-colors shrink-0 ${updating ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'}`}
+                >
+                  {updating && (
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  )}
+                  {updating ? 'Updating…' : 'Update'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Calendar Sync Section */}
           <div className="pb-4 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center justify-between mb-2">
