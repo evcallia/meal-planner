@@ -163,6 +163,9 @@ if not settings.oidc_issuer:
 
 
 # Serve React static files
+NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+NO_CACHE_FILES = {"sw.js", "index.html", "version.json", "manifest.webmanifest"}
+
 if STATIC_DIR.exists():
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
@@ -172,6 +175,11 @@ if STATIC_DIR.exists():
         # Try to serve the exact file
         file_path = STATIC_DIR / full_path
         if file_path.is_file():
-            return FileResponse(file_path)
+            resp = FileResponse(file_path)
+            if file_path.name in NO_CACHE_FILES:
+                resp.headers.update(NO_CACHE_HEADERS)
+            return resp
         # Otherwise serve index.html (SPA routing)
-        return FileResponse(STATIC_DIR / "index.html")
+        resp = FileResponse(STATIC_DIR / "index.html")
+        resp.headers.update(NO_CACHE_HEADERS)
+        return resp

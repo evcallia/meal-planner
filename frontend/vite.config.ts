@@ -1,9 +1,23 @@
-import { defineConfig } from 'vite'
+import { defineConfig, Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'node:path'
+import fs from 'node:fs'
 
 const buildTimestamp = new Date().toISOString()
+
+function versionPlugin(): Plugin {
+  return {
+    name: 'version-json',
+    apply: 'build',
+    writeBundle(options) {
+      const outDir = options.dir || 'dist';
+      const versionPath = path.resolve(outDir, 'version.json');
+      const content = JSON.stringify({ build: buildTimestamp });
+      fs.writeFileSync(versionPath, content);
+    },
+  };
+}
 
 export default defineConfig(({ mode }) => {
   const isTest = mode === 'test' || process.env.VITEST === 'true'
@@ -14,15 +28,17 @@ export default defineConfig(({ mode }) => {
     },
     resolve: {
       alias: isTest
-        ? {
-            'virtual:pwa-register': path.resolve(__dirname, 'src/test/pwa-register.ts'),
-          }
+        ? [
+            { find: 'virtual:pwa-register/react', replacement: path.resolve(__dirname, 'src/test/pwa-register-react.ts') },
+            { find: 'virtual:pwa-register', replacement: path.resolve(__dirname, 'src/test/pwa-register.ts') },
+          ]
         : undefined,
     },
     plugins: [
       react(),
+      versionPlugin(),
       VitePWA({
-        registerType: 'autoUpdate',
+        registerType: 'prompt',
         includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
         manifest: {
           name: 'Meal Planner',
@@ -56,7 +72,6 @@ export default defineConfig(({ mode }) => {
           navigateFallbackDenylist: [/^\/api/],
           cleanupOutdatedCaches: true,
           clientsClaim: true,
-          skipWaiting: true,
           runtimeCaching: [
             {
               urlPattern: /\/api\/auth\/.*/i,
@@ -86,7 +101,7 @@ export default defineConfig(({ mode }) => {
         : [],
       proxy: {
         '/api': {
-          target: 'http://localhost:8000',
+          target: 'http://localhost:8001',
           changeOrigin: true,
           cookieDomainRewrite: 'localhost',
         }

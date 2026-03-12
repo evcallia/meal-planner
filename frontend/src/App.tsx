@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRegisterSW } from 'virtual:pwa-register/react';
 import { CalendarView } from './components/CalendarView';
 import { PantryPanel } from './components/PantryPanel';
 import { MealIdeasPanel } from './components/MealIdeasPanel';
 import { GroceryListView } from './components/GroceryListView';
 import { StatusBar } from './components/StatusBar';
 import { SettingsModal } from './components/SettingsModal';
+import { UpdateNotification } from './components/UpdateNotification';
 import { useSync } from './hooks/useSync';
 import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
@@ -24,12 +26,14 @@ function PageHeader({
   onLogout,
   onShowSettings,
   status,
+  updateAvailable,
 }: {
   title: string;
   user: UserInfo;
   onLogout: () => void;
   onShowSettings: () => void;
   status: string;
+  updateAvailable?: boolean;
 }) {
   const { canUndo, canRedo, undo, redo } = useUndo();
 
@@ -74,13 +78,16 @@ function PageHeader({
           {/* Settings button */}
           <button
             onClick={onShowSettings}
-            className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-            aria-label="Settings"
+            className="relative p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            aria-label={updateAvailable ? "Settings (update available)" : "Settings"}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
+            {updateAvailable && (
+              <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-blue-500 rounded-full ring-2 ring-white dark:ring-gray-800" />
+            )}
           </button>
           <span className="text-sm text-gray-600 dark:text-gray-400 hidden sm:inline">{user.name || user.email}</span>
           <button
@@ -138,12 +145,14 @@ function MealsPage({
   settings,
   onShowSettings,
   onLogout,
+  updateAvailable,
 }: {
   user: UserInfo;
   status: string;
   settings: ReturnType<typeof import('./hooks/useSettings').useSettings>['settings'];
   onShowSettings: () => void;
   onLogout: () => void;
+  updateAvailable?: boolean;
 }) {
   const isOnline = useOnlineStatus();
   const todayRefElement = useRef<HTMLDivElement | null>(null);
@@ -226,7 +235,7 @@ function MealsPage({
 
   return (
     <>
-      <PageHeader title="Meal Planner" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} />
+      <PageHeader title="Meal Planner" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 py-4 pb-20 space-y-6">
         <div ref={topSectionRef} />
         {settings.showMealIdeas && <MealIdeasPanel onSchedule={handleScheduleMeal} onUnschedule={handleUnscheduleMeal} compactView={settings.compactView} />}
@@ -274,16 +283,18 @@ function GroceryPage({
   settings,
   onShowSettings,
   onLogout,
+  updateAvailable,
 }: {
   user: UserInfo;
   status: string;
   settings: ReturnType<typeof import('./hooks/useSettings').useSettings>['settings'];
   onShowSettings: () => void;
   onLogout: () => void;
+  updateAvailable?: boolean;
 }) {
   return (
     <>
-      <PageHeader title="Grocery List" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} />
+      <PageHeader title="Grocery List" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 py-4 pb-20 space-y-6">
         <GroceryListView compactView={settings.compactView} />
       </main>
@@ -300,6 +311,81 @@ function AppContent() {
   const { isDark, toggle: toggleDarkMode } = useDarkMode();
   const { settings, updateSettings } = useSettings();
   useRealtime();
+
+  // PWA update detection (SW lifecycle)
+  const {
+    needRefresh: [needRefresh],
+    updateServiceWorker,
+  } = useRegisterSW({
+    onRegistered(registration: ServiceWorkerRegistration | undefined) {
+      if (registration) {
+        // Check for SW updates every 15 minutes
+        setInterval(() => registration.update().catch(() => {}), 15 * 60 * 1000);
+        // Check on visibility/focus (critical for iOS standalone)
+        const onResume = () => registration.update().catch(() => {});
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') onResume();
+        });
+        window.addEventListener('focus', onResume);
+      }
+    },
+  });
+
+  // version.json backup detection (for iOS standalone)
+  const [versionUpdateAvailable, setVersionUpdateAvailable] = useState(
+    () => !!(window as any).__pwaUpdateAvailable
+  );
+  useEffect(() => {
+    if ((window as any).__pwaUpdateAvailable) setVersionUpdateAvailable(true);
+    const handler = () => setVersionUpdateAvailable(true);
+    window.addEventListener('pwa-update-available', handler);
+    return () => window.removeEventListener('pwa-update-available', handler);
+  }, []);
+
+  const updateAvailable = needRefresh || versionUpdateAvailable;
+  const [updating, setUpdating] = useState(false);
+
+  const applyUpdate = useCallback(() => {
+    setUpdating(true);
+    let reloading = false;
+    const doReload = () => {
+      if (reloading) return;
+      reloading = true;
+      window.location.reload();
+    };
+
+    const nuclearUpdate = async () => {
+      if (reloading) return;
+      try {
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(r => r.unregister()));
+        }
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map(key => caches.delete(key)));
+        }
+      } catch { /* best effort */ }
+      doReload();
+    };
+
+    if (needRefresh) {
+      // SW path: tell waiting SW to skipWaiting, reload when it takes control
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener(
+          'controllerchange', () => doReload(), { once: true }
+        );
+      }
+      updateServiceWorker(true);
+      // Fallback: if controllerchange doesn't fire in 2s, go nuclear
+      // (unregister SWs + clear caches) to prevent the waiting SW from
+      // re-triggering needRefresh after a plain reload
+      setTimeout(nuclearUpdate, 2000);
+    } else {
+      // version.json path: unregister SW, clear caches, reload
+      nuclearUpdate();
+    }
+  }, [needRefresh, updateServiceWorker]);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -398,6 +484,7 @@ function AppContent() {
             settings={settings}
             onShowSettings={() => setShowSettings(true)}
             onLogout={handleLogout}
+            updateAvailable={updateAvailable}
           />
         </UndoProvider>
       ) : (
@@ -408,6 +495,7 @@ function AppContent() {
             settings={settings}
             onShowSettings={() => setShowSettings(true)}
             onLogout={handleLogout}
+            updateAvailable={updateAvailable}
           />
         </UndoProvider>
       )}
@@ -420,8 +508,14 @@ function AppContent() {
           onClose={() => setShowSettings(false)}
           isDark={isDark}
           onToggleDarkMode={toggleDarkMode}
+          updateAvailable={updateAvailable}
+          onApplyUpdate={applyUpdate}
+          updating={updating}
         />
       )}
+
+      {/* Update Notification */}
+      <UpdateNotification updateAvailable={updateAvailable} onApplyUpdate={applyUpdate} updating={updating} />
 
       {/* Bottom Navigation */}
       <BottomNav currentPage={currentPage} onChange={setCurrentPage} />
