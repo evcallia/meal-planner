@@ -39,6 +39,10 @@ Key details:
 - Desktop drag handles: `cursor-grab active:cursor-grabbing` on SVG grip icons, `onMouseDown` for immediate drag start
 - Touch + mouse coexistence: touch uses long-press timer on the row/header element, mouse uses `onMouseDown` on the grip icon only — no conflict since they're on different elements
 - Ghost element: clone of `[data-drag-index]` element, `position: fixed`, `overflow: hidden`, cleaned up on unmount via `useEffect`
+- **Mobile touch scroll prevention**: React synthetic touch handlers are passive by default — `e.preventDefault()` in `onTouchMove` won't block page scrolling. Fix: add a document-level `touchmove` listener with `{ passive: false }` in `beginDrag`, clean up in `finishDrag`
+- **Auto-scroll during drag**: `requestAnimationFrame` loop in `beginDrag` scrolls viewport when `lastClientY` is within 60px of edges (proportional speed, max 12px/frame). Must recache item rects after each scroll frame for accurate hit-testing
+- **Cross-section drag**: Each section has its own `useDragReorder` instance. Parent component bridges them via `onDropOutside`/`onDragMove` callbacks and shared `crossDrag` state. Drop target found by querying `[data-section-id]` elements and measuring item rects within `[data-item-container]`
+- **Collapsed state with replace APIs**: When `replaceGroceryListAPI`/`replacePantryListAPI` recreates sections (new server IDs), local state keyed by ID resets. Fix: lift collapsed state to parent component, keyed by section **name** (stable across replace operations)
 
 ## Optimistic Update Patterns (useGroceryList)
 - **Optimistic version tracking**: `optimisticVersionRef` (useRef counter) incremented on every local/optimistic update. `loadGroceryList` captures the version before fetching; if the version changed while the fetch was in-flight, discard the stale server response. This prevents realtime/refetch responses from overwriting newer local state
