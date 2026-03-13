@@ -18,7 +18,7 @@ from app.config import get_settings
 # Clear the settings cache on import to ensure fresh settings are loaded
 get_settings.cache_clear()
 from app.database import engine, Base, SessionLocal
-from app.models import MealNote, CachedCalendarEvent
+from app.models import MealNote, CachedCalendarEvent, PantrySection, PantryItem
 from app.routers import days, auth, pantry, meal_ideas, realtime, calendar, grocery
 from app.ical_service import initialize_cache, shutdown_cache
 from app.realtime import broadcaster, shutdown_event
@@ -82,6 +82,45 @@ def run_migrations():
             conn.execute(text("ALTER TABLE cached_calendar_events ADD COLUMN event_uid TEXT DEFAULT ''"))
             conn.commit()
         print("Migration complete: added event_uid column")
+
+    # Migrate pantry_items to section-based structure
+    if inspector.has_table("pantry_items"):
+        pantry_columns = [col["name"] for col in inspector.get_columns("pantry_items")]
+        if "section_id" not in pantry_columns:
+            print("Migrating pantry_items to section-based structure...")
+            db = SessionLocal()
+            try:
+                # Create default section
+                default_section = PantrySection(name="General", position=0)
+                db.add(default_section)
+                db.flush()
+
+                # Add new columns
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE pantry_items ADD COLUMN section_id UUID"))
+                    conn.execute(text("ALTER TABLE pantry_items ADD COLUMN position INTEGER DEFAULT 0"))
+                    conn.commit()
+
+                # Assign all existing items to the default section with positions
+                existing_items = db.execute(text("SELECT id FROM pantry_items ORDER BY name ASC")).fetchall()
+                for i, row in enumerate(existing_items):
+                    db.execute(
+                        text("UPDATE pantry_items SET section_id = :sid, position = :pos WHERE id = :id"),
+                        {"sid": default_section.id, "pos": i, "id": row[0]},
+                    )
+
+                # Make section_id NOT NULL and add FK
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE pantry_items ALTER COLUMN section_id SET NOT NULL"))
+                    conn.commit()
+
+                db.commit()
+                print("Migration complete: pantry_items now use sections")
+            except Exception as e:
+                db.rollback()
+                print(f"Pantry migration error (may already be done): {e}")
+            finally:
+                db.close()
 
 
 @asynccontextmanager

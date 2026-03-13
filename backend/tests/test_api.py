@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from unittest.mock import patch, AsyncMock
 
-from app.models import MealNote, MealItem, PantryItem, MealIdea
+from app.models import MealNote, MealItem, PantrySection, PantryItem, MealIdea
 from app.schemas import CalendarEvent
 
 
@@ -276,9 +276,9 @@ class TestDaysAPI:
             ("PATCH", f"/api/days/{sample_meal_note.date}/items/0"),
             ("GET", "/api/days/events?start_date=2024-02-15&end_date=2024-02-15"),
             ("GET", "/api/pantry"),
-            ("POST", "/api/pantry"),
-            ("PUT", "/api/pantry/00000000-0000-0000-0000-000000000000"),
-            ("DELETE", "/api/pantry/00000000-0000-0000-0000-000000000000"),
+            ("POST", "/api/pantry/items"),
+            ("PUT", "/api/pantry/items/00000000-0000-0000-0000-000000000000"),
+            ("DELETE", "/api/pantry/items/00000000-0000-0000-0000-000000000000"),
             ("GET", "/api/meal-ideas"),
             ("POST", "/api/meal-ideas"),
             ("PUT", "/api/meal-ideas/00000000-0000-0000-0000-000000000000"),
@@ -289,7 +289,7 @@ class TestDaysAPI:
             if method == "GET":
                 response = client.get(endpoint)
             elif method == "PUT":
-                if endpoint.startswith("/api/pantry/"):
+                if endpoint.startswith("/api/pantry/items/"):
                     response = client.put(endpoint, json={"name": "test", "quantity": 1})
                 elif endpoint.startswith("/api/meal-ideas/"):
                     response = client.put(endpoint, json={"title": "test"})
@@ -298,8 +298,8 @@ class TestDaysAPI:
             elif method == "PATCH":
                 response = client.patch(endpoint, json={"itemized": True})
             elif method == "POST":
-                if endpoint == "/api/pantry":
-                    response = client.post(endpoint, json={"name": "test", "quantity": 1})
+                if endpoint == "/api/pantry/items":
+                    response = client.post(endpoint, json={"section_id": "00000000-0000-0000-0000-000000000000", "name": "test", "quantity": 1})
                 elif endpoint == "/api/meal-ideas":
                     response = client.post(endpoint, json={"title": "test"})
                 else:
@@ -339,21 +339,29 @@ class TestPantryAPI:
 
     @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
     def test_create_update_delete_pantry_item(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
-        create_response = authenticated_client.post("/api/pantry", json={"name": "Meatballs", "quantity": 2})
+        # Create a section first
+        section = PantrySection(name="General", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+        section_id = str(section.id)
+
+        create_response = authenticated_client.post("/api/pantry/items", json={"section_id": section_id, "name": "Meatballs", "quantity": 2})
         assert create_response.status_code == 200
         created = create_response.json()
         assert created["name"] == "Meatballs"
         assert created["quantity"] == 2
+        assert created["section_id"] == section_id
         mock_broadcast.assert_awaited()
 
         item_id = created["id"]
-        update_response = authenticated_client.put(f"/api/pantry/{item_id}", json={"quantity": 3})
+        update_response = authenticated_client.put(f"/api/pantry/items/{item_id}", json={"quantity": 3})
         assert update_response.status_code == 200
         updated = update_response.json()
         assert updated["quantity"] == 3
         mock_broadcast.assert_awaited()
 
-        delete_response = authenticated_client.delete(f"/api/pantry/{item_id}")
+        delete_response = authenticated_client.delete(f"/api/pantry/items/{item_id}")
         assert delete_response.status_code == 200
         mock_broadcast.assert_awaited()
 
@@ -362,9 +370,14 @@ class TestPantryAPI:
         assert remaining is None
 
     @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
-    def test_create_pantry_item_empty_name(self, mock_broadcast, authenticated_client: TestClient):
+    def test_create_pantry_item_empty_name(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
         """Test creating pantry item with empty name fails."""
-        response = authenticated_client.post("/api/pantry", json={"name": "  ", "quantity": 1})
+        section = PantrySection(name="General", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+
+        response = authenticated_client.post("/api/pantry/items", json={"section_id": str(section.id), "name": "  ", "quantity": 1})
         assert response.status_code == 400
         assert "Name is required" in response.json()["detail"]
 
@@ -372,7 +385,7 @@ class TestPantryAPI:
     def test_update_pantry_item_not_found(self, mock_broadcast, authenticated_client: TestClient):
         """Test updating non-existent pantry item fails."""
         response = authenticated_client.put(
-            "/api/pantry/00000000-0000-0000-0000-000000000001",
+            "/api/pantry/items/00000000-0000-0000-0000-000000000001",
             json={"quantity": 5}
         )
         assert response.status_code == 404
@@ -381,33 +394,171 @@ class TestPantryAPI:
     @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
     def test_update_pantry_item_empty_name(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
         """Test updating pantry item with empty name fails."""
-        # Create item first
-        create_response = authenticated_client.post("/api/pantry", json={"name": "Test Item", "quantity": 1})
+        section = PantrySection(name="General", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+
+        create_response = authenticated_client.post("/api/pantry/items", json={"section_id": str(section.id), "name": "Test Item", "quantity": 1})
         item_id = create_response.json()["id"]
 
-        # Try to update with empty name
-        response = authenticated_client.put(f"/api/pantry/{item_id}", json={"name": "  "})
+        response = authenticated_client.put(f"/api/pantry/items/{item_id}", json={"name": "  "})
         assert response.status_code == 400
         assert "Name is required" in response.json()["detail"]
 
     @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
     def test_update_pantry_item_with_name(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
         """Test updating pantry item name."""
-        # Create item first
-        create_response = authenticated_client.post("/api/pantry", json={"name": "Old Name", "quantity": 1})
+        section = PantrySection(name="General", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+
+        create_response = authenticated_client.post("/api/pantry/items", json={"section_id": str(section.id), "name": "Old Name", "quantity": 1})
         item_id = create_response.json()["id"]
 
-        # Update name
-        response = authenticated_client.put(f"/api/pantry/{item_id}", json={"name": "New Name"})
+        response = authenticated_client.put(f"/api/pantry/items/{item_id}", json={"name": "New Name"})
         assert response.status_code == 200
         assert response.json()["name"] == "New Name"
 
     @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
     def test_delete_pantry_item_not_found(self, mock_broadcast, authenticated_client: TestClient):
         """Test deleting non-existent pantry item fails."""
-        response = authenticated_client.delete("/api/pantry/00000000-0000-0000-0000-000000000001")
+        response = authenticated_client.delete("/api/pantry/items/00000000-0000-0000-0000-000000000001")
         assert response.status_code == 404
         assert "Item not found" in response.json()["detail"]
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_replace_pantry(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test replacing the entire pantry via PUT."""
+        # Create initial data
+        section = PantrySection(name="Old", position=0)
+        db_session.add(section)
+        db_session.commit()
+
+        payload = {
+            "sections": [
+                {"name": "Fridge", "items": [{"name": "Milk", "quantity": 1}, {"name": "Eggs", "quantity": 12}]},
+                {"name": "Freezer", "items": [{"name": "Ice cream", "quantity": 2}]},
+            ]
+        }
+        response = authenticated_client.put("/api/pantry", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["name"] == "Fridge"
+        assert len(data[0]["items"]) == 2
+        assert data[1]["name"] == "Freezer"
+        assert len(data[1]["items"]) == 1
+        mock_broadcast.assert_awaited()
+
+        # Old section should be gone
+        assert db_session.query(PantrySection).filter(PantrySection.name == "Old").first() is None
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_rename_section(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test renaming a pantry section."""
+        section = PantrySection(name="General", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+
+        response = authenticated_client.patch(f"/api/pantry/sections/{section.id}", json={"name": "Fridge"})
+        assert response.status_code == 200
+        assert response.json()["name"] == "Fridge"
+        mock_broadcast.assert_awaited()
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_rename_section_not_found(self, mock_broadcast, authenticated_client: TestClient):
+        """Test renaming non-existent section fails."""
+        response = authenticated_client.patch(
+            "/api/pantry/sections/00000000-0000-0000-0000-000000000001",
+            json={"name": "Nope"}
+        )
+        assert response.status_code == 404
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_reorder_sections(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test reordering pantry sections."""
+        s1 = PantrySection(name="A", position=0)
+        s2 = PantrySection(name="B", position=1)
+        db_session.add_all([s1, s2])
+        db_session.commit()
+        db_session.refresh(s1)
+        db_session.refresh(s2)
+
+        response = authenticated_client.patch("/api/pantry/reorder-sections", json={"section_ids": [str(s2.id), str(s1.id)]})
+        assert response.status_code == 200
+        mock_broadcast.assert_awaited()
+
+        db_session.refresh(s1)
+        db_session.refresh(s2)
+        assert s2.position == 0
+        assert s1.position == 1
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_reorder_items(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test reordering items within a section."""
+        section = PantrySection(name="General", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+
+        i1 = PantryItem(section_id=section.id, name="A", quantity=1, position=0)
+        i2 = PantryItem(section_id=section.id, name="B", quantity=1, position=1)
+        db_session.add_all([i1, i2])
+        db_session.commit()
+        db_session.refresh(i1)
+        db_session.refresh(i2)
+
+        response = authenticated_client.patch(
+            f"/api/pantry/sections/{section.id}/reorder-items",
+            json={"item_ids": [str(i2.id), str(i1.id)]}
+        )
+        assert response.status_code == 200
+        mock_broadcast.assert_awaited()
+
+        db_session.refresh(i1)
+        db_session.refresh(i2)
+        assert i2.position == 0
+        assert i1.position == 1
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_reorder_items_section_not_found(self, mock_broadcast, authenticated_client: TestClient):
+        """Test reordering items in non-existent section fails."""
+        response = authenticated_client.patch(
+            "/api/pantry/sections/00000000-0000-0000-0000-000000000001/reorder-items",
+            json={"item_ids": []}
+        )
+        assert response.status_code == 404
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_create_pantry_item_section_not_found(self, mock_broadcast, authenticated_client: TestClient):
+        """Test creating item in non-existent section fails."""
+        response = authenticated_client.post("/api/pantry/items", json={
+            "section_id": "00000000-0000-0000-0000-000000000001",
+            "name": "Test",
+            "quantity": 1
+        })
+        assert response.status_code == 404
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_clear_pantry(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test clearing all pantry items."""
+        section = PantrySection(name="General", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+        item = PantryItem(section_id=section.id, name="Milk", quantity=1, position=0)
+        db_session.add(item)
+        db_session.commit()
+
+        response = authenticated_client.delete("/api/pantry/items?mode=all")
+        assert response.status_code == 200
+        assert response.json() == []
+        mock_broadcast.assert_awaited()
+
+        assert db_session.query(PantrySection).count() == 0
 
 
 class TestMealIdeasAPI:

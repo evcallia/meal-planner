@@ -382,33 +382,6 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
             </button>
           </label>
 
-          {/* Pantry Toggle */}
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
-            <div className="flex-1 min-w-0">
-              <span className="text-gray-900 dark:text-gray-100 font-medium">Show Pantry</span>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Keep pantry inventory visible below the calendar
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={settings.showPantry}
-              onClick={() => onUpdate({ showPantry: !settings.showPantry })}
-              className={`
-                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
-                ${settings.showPantry ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
-              `}
-            >
-              <span
-                className={`
-                  inline-block h-4 w-4 transform rounded-full bg-white transition-transform
-                  ${settings.showPantry ? 'translate-x-6' : 'translate-x-1'}
-                `}
-              />
-            </button>
-          </label>
-
           {/* Itemized Column Toggle */}
           <label className="flex items-center justify-between gap-3 cursor-pointer">
             <div className="flex-1 min-w-0">

@@ -47,6 +47,11 @@ export function useMealIdeas() {
   const hasHydratedRef = useRef(false);
   const hasSavedRef = useRef(false);
   const isOnline = useOnlineStatus();
+  const editingRef = useRef(false);
+
+  const setEditing = useCallback((editing: boolean) => {
+    editingRef.current = editing;
+  }, []);
 
   const invalidateLoad = () => {
     loadTokenRef.current += 1;
@@ -83,7 +88,10 @@ export function useMealIdeas() {
       const tempIdeas = localIdeas.filter(idea => isTempId(idea.id));
       const mergedIdeas = [...serverIdeas, ...tempIdeas];
 
-      setIdeas(mergedIdeas);
+      // Don't overwrite local state while the user is actively editing
+      if (!editingRef.current) {
+        setIdeas(mergedIdeas);
+      }
 
       // Sync server ideas to local DB for offline access
       await clearLocalMealIdeas();
@@ -184,11 +192,9 @@ export function useMealIdeas() {
   const updateIdea = useCallback((id: string, updates: Partial<Pick<MealIdea, 'title'>>) => {
     setIdeas(prev => prev.map(idea => {
       if (idea.id !== id) return idea;
-      const title = updates.title !== undefined ? updates.title.trim() : idea.title;
       return {
         ...idea,
         ...updates,
-        title: title || idea.title,
       };
     }));
 
@@ -197,7 +203,7 @@ export function useMealIdeas() {
       ...nextUpdates,
       ...updates,
     };
-    if (sanitizedUpdates.title !== undefined && sanitizedUpdates.title.trim().length === 0) {
+    if (sanitizedUpdates.title !== undefined && sanitizedUpdates.title.length === 0) {
       delete sanitizedUpdates.title;
     }
     pendingUpdatesRef.current[id] = sanitizedUpdates;
@@ -226,13 +232,9 @@ export function useMealIdeas() {
 
       if (isOnline && !isTempId(id)) {
         try {
-          invalidateLoad();
-          const updated = await updateMealIdea(id, {
+          await updateMealIdea(id, {
             title: payload?.title,
           });
-          if (!isMountedRef.current) return;
-          setIdeas(prev => prev.map(idea => idea.id === id ? updated : idea));
-          void refreshIdeas();
         } catch (error) {
           console.error('Failed to update meal idea:', error);
           // Queue for later sync
@@ -295,5 +297,6 @@ export function useMealIdeas() {
     addIdea,
     updateIdea,
     removeIdea,
+    setEditing,
   };
 }

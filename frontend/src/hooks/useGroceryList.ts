@@ -52,6 +52,12 @@ export function useGroceryList() {
   const isOnline = useOnlineStatus();
   const { pushAction } = useUndo();
 
+  // Broadcast unchecked item count for the bottom nav badge
+  useEffect(() => {
+    const count = sections.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0);
+    window.dispatchEvent(new CustomEvent('grocery-count-changed', { detail: count }));
+  }, [sections]);
+
   // Version counter: incremented on every optimistic update.
   // loadGroceryList checks this before applying fetched data to avoid
   // overwriting newer optimistic state with a stale server response.
@@ -845,5 +851,90 @@ export function useGroceryList() {
     });
   }, [sections, isOnline, pushAction]);
 
-  return { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection };
+  // Move item between sections
+  const moveItem = useCallback(async (fromSectionId: string, fromIndex: number, toSectionId: string, toIndex: number) => {
+    if (fromSectionId === toSectionId) return;
+
+    const fromSection = sections.find(s => s.id === fromSectionId);
+    const toSection = sections.find(s => s.id === toSectionId);
+    if (!fromSection || !toSection) return;
+
+    const unchecked = fromSection.items.filter(i => !i.checked);
+    const item = unchecked[fromIndex];
+    if (!item) return;
+
+    const prevSections = sections;
+    const newSections = sections.map(s => {
+      if (s.id === fromSectionId) {
+        const items = s.items.filter(i => i.id !== item.id).map((i, idx) => ({ ...i, position: idx }));
+        return { ...s, items };
+      }
+      if (s.id === toSectionId) {
+        const targetUnchecked = s.items.filter(i => !i.checked);
+        const targetChecked = s.items.filter(i => i.checked);
+        const movedItem = { ...item, section_id: toSectionId };
+        targetUnchecked.splice(toIndex, 0, movedItem);
+        const allItems = [...targetUnchecked, ...targetChecked].map((i, idx) => ({ ...i, position: idx }));
+        return { ...s, items: allItems };
+      }
+      return s;
+    });
+
+    const toPayload = (secs: GrocerySection[]) => secs.map(s => ({
+      name: s.name,
+      items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked })),
+    }));
+
+    pushAction({
+      type: 'move-grocery-item',
+      undo: async () => {
+        optimisticVersionRef.current++;
+        pendingMutationsRef.current++;
+        setSections(prevSections);
+        await saveLocalGrocerySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+        await saveLocalGroceryItems(prevSections.flatMap(s => s.items.map(i => ({
+          id: i.id, section_id: i.section_id, name: i.name,
+          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+        }))));
+        if (isOnline) {
+          try { await replaceGroceryListAPI(toPayload(prevSections)); } catch { /* queue */ }
+        }
+        settleMutation();
+      },
+      redo: async () => {
+        optimisticVersionRef.current++;
+        pendingMutationsRef.current++;
+        setSections(newSections);
+        await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+        await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
+          id: i.id, section_id: i.section_id, name: i.name,
+          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+        }))));
+        if (isOnline) {
+          try { await replaceGroceryListAPI(toPayload(newSections)); } catch { /* queue */ }
+        }
+        settleMutation();
+      },
+    });
+
+    optimisticVersionRef.current++;
+    setSections(newSections);
+
+    await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+    await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
+      id: i.id, section_id: i.section_id, name: i.name,
+      quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+    }))));
+
+    if (isOnline) {
+      pendingMutationsRef.current++;
+      try { await replaceGroceryListAPI(toPayload(newSections)); } catch {
+        await queueChange('grocery-replace', '', { sections: toPayload(newSections) });
+      } finally { settleMutation(); }
+    } else {
+      await queueChange('grocery-replace', '', { sections: toPayload(newSections) });
+    }
+  }, [sections, isOnline, pushAction, settleMutation]);
+
+  return { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, moveItem };
 }

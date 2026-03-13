@@ -59,6 +59,7 @@ describe('useMealIdeas', () => {
     localStorage.clear();
   });
 
+
   it('loads meal ideas from the server and sorts by updated time', async () => {
     mockGetMealIdeas.mockResolvedValueOnce([
       { id: '1', title: 'Older', updated_at: '2026-02-03T10:00:00Z' },
@@ -94,11 +95,10 @@ describe('useMealIdeas', () => {
 
   it('debounces updates before calling the API', async () => {
     mockGetMealIdeas
-      .mockResolvedValueOnce([{ id: '1', title: 'Idea', updated_at: '2026-02-03T10:00:00Z' }])
-      .mockResolvedValueOnce([{ id: '1', title: 'Updated', updated_at: '2026-02-03T10:05:00Z' }]);
+      .mockResolvedValueOnce([{ id: '1', title: 'Idea', updated_at: '2026-02-03T10:00:00Z' }]);
     mockUpdateMealIdea.mockResolvedValue({ id: '1', title: 'Updated', updated_at: '2026-02-03T10:05:00Z' });
 
-    const { result } = renderHook(() => useMealIdeas());
+    const { result, unmount } = renderHook(() => useMealIdeas());
 
     await waitFor(() => expect(result.current.ideas).toHaveLength(1));
 
@@ -114,6 +114,7 @@ describe('useMealIdeas', () => {
 
     expect(mockUpdateMealIdea).toHaveBeenCalledWith('1', { title: 'Updated' });
     vi.useRealTimers();
+    unmount();
   });
 
   it('removes meal ideas via the API', async () => {
@@ -135,6 +136,7 @@ describe('useMealIdeas', () => {
     await waitFor(() => {
       expect(mockDeleteMealIdea).toHaveBeenCalledWith('1');
     });
+
   });
 
   it('refreshes when a realtime meal-ideas update arrives', async () => {

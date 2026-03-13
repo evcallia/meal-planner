@@ -41,7 +41,7 @@ describe('SettingsModal', () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>
   const defaultSettings: Settings = {
     showItemizedColumn: true,
-    showPantry: true,
+
     showMealIdeas: true,
     compactView: false,
     textScaleStandard: 1,
@@ -91,12 +91,9 @@ const mockRemovePendingChange = vi.mocked(removePendingChange)
 
   it('displays the current setting state correctly', async () => {
     await renderModal()
-    
+
     const ideasToggle = screen.getByRole('switch', { name: /show future meals/i })
     expect(ideasToggle).toHaveAttribute('aria-checked', 'true')
-
-    const pantryToggle = screen.getByRole('switch', { name: /show pantry/i })
-    expect(pantryToggle).toHaveAttribute('aria-checked', 'true')
 
     const toggle = screen.getByRole('switch', { name: /show itemized column/i })
     expect(toggle).toHaveAttribute('aria-checked', 'true')
@@ -105,7 +102,7 @@ const mockRemovePendingChange = vi.mocked(removePendingChange)
   it('displays unchecked state when setting is false', async () => {
     const settings: Settings = {
       showItemizedColumn: false,
-      showPantry: false,
+
       showMealIdeas: false,
       compactView: false,
       textScaleStandard: 1,
@@ -116,9 +113,6 @@ const mockRemovePendingChange = vi.mocked(removePendingChange)
     
     const ideasToggle = screen.getByRole('switch', { name: /show future meals/i })
     expect(ideasToggle).toHaveAttribute('aria-checked', 'false')
-
-    const pantryToggle = screen.getByRole('switch', { name: /show pantry/i })
-    expect(pantryToggle).toHaveAttribute('aria-checked', 'false')
 
     const toggle = screen.getByRole('switch', { name: /show itemized column/i })
     expect(toggle).toHaveAttribute('aria-checked', 'false')
@@ -133,18 +127,6 @@ const mockRemovePendingChange = vi.mocked(removePendingChange)
     
     expect(defaultProps.onUpdate).toHaveBeenCalledWith({
       showItemizedColumn: false,
-    })
-  })
-
-  it('updates pantry visibility when toggled', async () => {
-    await renderModal()
-
-    const pantryToggle = screen.getByRole('switch', { name: /show pantry/i })
-
-    fireEvent.click(pantryToggle)
-
-    expect(defaultProps.onUpdate).toHaveBeenCalledWith({
-      showPantry: false,
     })
   })
 
@@ -201,12 +183,9 @@ const mockRemovePendingChange = vi.mocked(removePendingChange)
     const ideasToggle = screen.getByRole('switch', { name: /show future meals/i })
     expect(ideasToggle).toHaveAttribute('aria-checked', 'true')
 
-    const pantryToggle = screen.getByRole('switch', { name: /show pantry/i })
-    expect(pantryToggle).toHaveAttribute('aria-checked', 'true')
-
     const toggle = screen.getByRole('switch', { name: /show itemized column/i })
     expect(toggle).toHaveAttribute('aria-checked', 'true')
-    
+
     const closeButton = screen.getByRole('button', { name: '' }) // Empty name for X button
     expect(closeButton).toBeInTheDocument()
   })

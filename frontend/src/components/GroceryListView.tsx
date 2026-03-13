@@ -9,13 +9,14 @@ interface GroceryListViewProps {
 }
 
 export function GroceryListView({ compactView: _compactView }: GroceryListViewProps) {
-  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection } = useGroceryList();
+  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, moveItem } = useGroceryList();
   const [showInputArea, setShowInputArea] = useState(false);
   const [inputText, setInputText] = useState('');
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
   const [newItemName, setNewItemName] = useState('');
   const [showClearMenu, setShowClearMenu] = useState(false);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const clearMenuRef = useRef<HTMLDivElement>(null);
   const sectionContainerRef = useRef<HTMLDivElement>(null);
@@ -47,6 +48,73 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     onDragStart: handleSectionDragStart,
     onDragEnd: handleSectionDragEnd,
   });
+
+  const [crossDrag, setCrossDrag] = useState<{
+    sourceSectionId: string;
+    targetSectionId: string;
+    targetIndex: number;
+    itemHeight: number;
+  } | null>(null);
+
+  const findDropTarget = useCallback((sourceSectionId: string, clientY: number) => {
+    if (!sectionContainerRef.current) return null;
+    const sectionEls = sectionContainerRef.current.querySelectorAll('[data-section-id]');
+    for (const el of sectionEls) {
+      const sectionId = (el as HTMLElement).dataset.sectionId;
+      if (!sectionId || sectionId === sourceSectionId) continue;
+      const rect = el.getBoundingClientRect();
+      if (clientY >= rect.top && clientY <= rect.bottom) {
+        const itemContainer = el.querySelector('[data-item-container]');
+        let targetIndex = 0;
+        let itemHeight = 36;
+        if (itemContainer) {
+          const itemEls = itemContainer.querySelectorAll(':scope > [data-drag-index]');
+          targetIndex = itemEls.length;
+          for (let i = 0; i < itemEls.length; i++) {
+            const itemRect = itemEls[i].getBoundingClientRect();
+            if (itemRect.height > 0) {
+              itemHeight = itemRect.height;
+              if (clientY < itemRect.top + itemRect.height / 2) {
+                targetIndex = i;
+                break;
+              }
+            }
+          }
+        }
+        return { sectionId, targetIndex, itemHeight };
+      }
+    }
+    return null;
+  }, []);
+
+  const handleItemDragMove = useCallback((sourceSectionId: string, _fromIndex: number, clientY: number) => {
+    const target = findDropTarget(sourceSectionId, clientY);
+    setCrossDrag(prev => {
+      if (!target) return prev ? null : prev;
+      if (prev?.targetSectionId === target.sectionId && prev?.targetIndex === target.targetIndex) return prev;
+      return { sourceSectionId, targetSectionId: target.sectionId, targetIndex: target.targetIndex, itemHeight: target.itemHeight };
+    });
+  }, [findDropTarget]);
+
+  const handleItemDragEnd = useCallback(() => {
+    setCrossDrag(null);
+  }, []);
+
+  const handleItemDropOutside = useCallback((sourceSectionId: string, fromIndex: number, clientY: number) => {
+    const target = findDropTarget(sourceSectionId, clientY);
+    if (target) {
+      moveItem(sourceSectionId, fromIndex, target.sectionId, target.targetIndex);
+    }
+  }, [findDropTarget, moveItem]);
+
+  const toggleCollapsed = useCallback((sectionName: string) => {
+    setCollapsedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(sectionName)) next.delete(sectionName);
+      else next.add(sectionName);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!showClearMenu) return;
@@ -195,6 +263,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
             <div
               key={section.id}
               data-drag-index={sectionIndex}
+              data-section-id={section.id}
               className={sectionIndex > 0 ? 'mt-4' : ''}
               style={{
                 opacity: isBeingDragged ? 0.3 : 1,
@@ -208,11 +277,17 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 sectionDragHandlers={getSectionDragHandlers(sectionIndex)}
                 sectionHandleMouseDown={getSectionHandleMouseDown(sectionIndex)}
                 isSectionDragging={isSectionDragging}
+                isCollapsed={collapsedSections.has(section.name)}
+                onToggleCollapse={() => toggleCollapsed(section.name)}
                 onToggle={toggleItem}
                 onDelete={deleteItem}
                 onEdit={editItem}
                 onRenameSection={renameSection}
                 onReorderItems={(from, to) => reorderItems(section.id, from, to)}
+                onItemDropOutside={(fromIndex, clientY) => handleItemDropOutside(section.id, fromIndex, clientY)}
+                onItemDragMove={(fromIndex, clientY) => handleItemDragMove(section.id, fromIndex, clientY)}
+                onItemDragEnd={handleItemDragEnd}
+                crossDropTarget={crossDrag?.targetSectionId === section.id ? { targetIndex: crossDrag.targetIndex, itemHeight: crossDrag.itemHeight } : null}
                 addingToSection={addingToSection}
                 onStartAdd={setAddingToSection}
                 newItemName={newItemName}
@@ -253,11 +328,17 @@ interface SectionCardProps {
   sectionDragHandlers: ReturnType<ReturnType<typeof useDragReorder>['getDragHandlers']>;
   sectionHandleMouseDown: (e: React.MouseEvent) => void;
   isSectionDragging: boolean;
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
   onToggle: (id: string, checked: boolean) => void;
   onDelete: (id: string) => void;
   onEdit: (id: string, updates: { name?: string; quantity?: string | null }) => void;
   onRenameSection: (sectionId: string, newName: string) => void;
   onReorderItems: (fromIndex: number, toIndex: number) => void;
+  onItemDropOutside: (fromIndex: number, clientY: number) => void;
+  onItemDragMove: (fromIndex: number, clientY: number) => void;
+  onItemDragEnd: () => void;
+  crossDropTarget: { targetIndex: number; itemHeight: number } | null;
   addingToSection: string | null;
   onStartAdd: (sectionId: string | null) => void;
   newItemName: string;
@@ -270,11 +351,17 @@ function SectionCard({
   sectionDragHandlers,
   sectionHandleMouseDown,
   isSectionDragging,
+  isCollapsed,
+  onToggleCollapse,
   onToggle,
   onDelete,
   onEdit,
   onRenameSection,
   onReorderItems,
+  onItemDropOutside,
+  onItemDragMove,
+  onItemDragEnd,
+  crossDropTarget,
   addingToSection,
   onStartAdd,
   newItemName,
@@ -285,7 +372,6 @@ function SectionCard({
   const itemContainerRef = useRef<HTMLDivElement>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState(section.name);
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const headerInputRef = useRef<HTMLInputElement>(null);
 
   const commitRename = useCallback(() => {
@@ -307,6 +393,9 @@ function SectionCard({
     itemCount: uncheckedItems.length,
     onReorder: onReorderItems,
     containerRef: itemContainerRef,
+    onDropOutside: onItemDropOutside,
+    onDragMove: onItemDragMove,
+    onDragEnd: onItemDragEnd,
   });
 
   return (
@@ -349,7 +438,7 @@ function SectionCard({
         </div>
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); setIsCollapsed(prev => !prev); }}
+          onClick={(e) => { e.stopPropagation(); onToggleCollapse(); }}
           className="flex items-center gap-1 text-gray-400 dark:text-gray-500 text-xs hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
         >
           {uncheckedItems.length} item{uncheckedItems.length !== 1 ? 's' : ''}
@@ -366,10 +455,14 @@ function SectionCard({
 
       {/* Items — collapse during section drag or manual collapse */}
       <div style={{ display: (isSectionDragging || isCollapsed) ? 'none' : undefined }}>
-        <div className="py-1" ref={itemContainerRef}>
+        <div className="py-1" ref={itemContainerRef} data-item-container>
           {uncheckedItems.map((item, index) => {
             const isBeingDragged = itemDragState.isDragging && itemDragState.dragIndex === index;
-            const shiftStyle = computeShiftTransform(index, itemDragState);
+            const internalShift = computeShiftTransform(index, itemDragState);
+            const crossShift = crossDropTarget && index >= crossDropTarget.targetIndex
+              ? `translateY(${crossDropTarget.itemHeight}px)` : '';
+            const shiftStyle = internalShift || crossShift;
+            const isAnimating = itemDragState.isDragging || !!crossDropTarget;
             return (
               <div
                 key={item.id}
@@ -377,7 +470,7 @@ function SectionCard({
                 style={{
                   opacity: isBeingDragged ? 0.3 : 1,
                   transform: shiftStyle || undefined,
-                  transition: itemDragState.isDragging ? 'transform 200ms ease-out, opacity 200ms' : undefined,
+                  transition: isAnimating ? 'transform 200ms ease-out, opacity 200ms' : undefined,
                 }}
               >
                 <GroceryItemRow
@@ -392,6 +485,12 @@ function SectionCard({
               </div>
             );
           })}
+
+          {/* Spacer for cross-section drag target */}
+          <div style={{
+            height: crossDropTarget ? crossDropTarget.itemHeight : 0,
+            transition: 'height 200ms ease-out',
+          }} />
 
           {/* Add item inline */}
           {addingToSection === section.id ? (

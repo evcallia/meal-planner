@@ -41,18 +41,40 @@ class MealItem(Base):
     meal_note: Mapped["MealNote"] = relationship("MealNote", back_populates="items")
 
 
+class PantrySection(Base):
+    """Pantry sections (e.g., Fridge, Freezer, Dry Goods)."""
+    __tablename__ = "pantry_sections"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(Text)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    items: Mapped[list["PantryItem"]] = relationship(
+        "PantryItem", back_populates="section", cascade="all, delete-orphan"
+    )
+
+
 class PantryItem(Base):
     __tablename__ = "pantry_items"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    section_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("pantry_sections.id", ondelete="CASCADE")
+    )
     name: Mapped[str] = mapped_column(Text)
     quantity: Mapped[int] = mapped_column(Integer, default=0)
+    position: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+    section: Mapped["PantrySection"] = relationship("PantrySection", back_populates="items")
 
 
 class MealIdea(Base):

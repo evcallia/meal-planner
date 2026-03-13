@@ -18,7 +18,7 @@ import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
-type Page = 'meals' | 'grocery';
+type Page = 'meals' | 'pantry' | 'grocery';
 
 function PageHeader({
   title,
@@ -102,7 +102,7 @@ function PageHeader({
   );
 }
 
-function BottomNav({ currentPage, onChange }: { currentPage: Page; onChange: (page: Page) => void }) {
+function BottomNav({ currentPage, onChange, groceryCount }: { currentPage: Page; onChange: (page: Page) => void; groceryCount: number }) {
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-30 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 safe-area-bottom">
       <div className="max-w-lg mx-auto flex">
@@ -121,6 +121,20 @@ function BottomNav({ currentPage, onChange }: { currentPage: Page; onChange: (pa
           <span className="text-xs mt-0.5 font-medium">Meals</span>
         </button>
         <button
+          onClick={() => onChange('pantry')}
+          className={`flex-1 flex flex-col items-center py-2 transition-colors ${
+            currentPage === 'pantry'
+              ? 'text-blue-600 dark:text-blue-400'
+              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+          }`}
+        >
+          {/* Package/pantry icon */}
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+          </svg>
+          <span className="text-xs mt-0.5 font-medium">Pantry</span>
+        </button>
+        <button
           onClick={() => onChange('grocery')}
           className={`flex-1 flex flex-col items-center py-2 transition-colors ${
             currentPage === 'grocery'
@@ -129,9 +143,16 @@ function BottomNav({ currentPage, onChange }: { currentPage: Page; onChange: (pa
           }`}
         >
           {/* Shopping cart icon */}
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" />
-          </svg>
+          <div className="relative">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" />
+            </svg>
+            {groceryCount > 0 && (
+              <span className="absolute -top-1.5 -right-2.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold text-white bg-blue-500 rounded-full leading-none">
+                {groceryCount > 99 ? '99+' : groceryCount}
+              </span>
+            )}
+          </div>
           <span className="text-xs mt-0.5 font-medium">Grocery</span>
         </button>
       </div>
@@ -239,7 +260,6 @@ function MealsPage({
       <main className="flex-1 max-w-lg mx-auto w-full px-4 py-4 pb-20 space-y-6">
         <div ref={topSectionRef} />
         {settings.showMealIdeas && <MealIdeasPanel onSchedule={handleScheduleMeal} onUnschedule={handleUnscheduleMeal} compactView={settings.compactView} />}
-        {settings.showPantry && <PantryPanel compactView={settings.compactView} />}
         <CalendarView
           onTodayRefReady={handleTodayRefReady}
           showItemizedColumn={settings.showItemizedColumn}
@@ -250,16 +270,16 @@ function MealsPage({
 
       {/* Floating Action Buttons */}
       <div className="fixed bottom-16 right-4 z-20 flex flex-col gap-2">
-        {(settings.showPantry || settings.showMealIdeas) && (
+        {settings.showMealIdeas && (
           <button
             onClick={scrollToTopSection}
             className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-full px-3 py-1.5 shadow-lg transition-all duration-200 hover:scale-105 flex items-center gap-1.5 text-sm"
-            aria-label="Jump to pantry"
+            aria-label="Jump to meal ideas"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
             </svg>
-            <span className="font-medium">Pantry</span>
+            <span className="font-medium">Ideas</span>
           </button>
         )}
         <button
@@ -302,11 +322,66 @@ function GroceryPage({
   );
 }
 
+function PantryPage({
+  user,
+  status,
+  settings: _settings,
+  onShowSettings,
+  onLogout,
+  updateAvailable,
+}: {
+  user: UserInfo;
+  status: string;
+  settings: ReturnType<typeof import('./hooks/useSettings').useSettings>['settings'];
+  onShowSettings: () => void;
+  onLogout: () => void;
+  updateAvailable?: boolean;
+}) {
+  return (
+    <>
+      <PageHeader title="Pantry" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 py-4 pb-20 space-y-6">
+        <PantryPanel />
+      </main>
+    </>
+  );
+}
+
 function AppContent() {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
-  const [currentPage, setCurrentPage] = useState<Page>('meals');
+  const [currentPage, setCurrentPage] = useState<Page>(() => {
+    const saved = sessionStorage.getItem('meal-planner-tab');
+    if (saved === 'meals' || saved === 'pantry' || saved === 'grocery') return saved;
+    return 'meals';
+  });
+  const [groceryCount, setGroceryCount] = useState(() => {
+    try {
+      const cached = localStorage.getItem('meal-planner-grocery');
+      if (cached) {
+        const sections = JSON.parse(cached);
+        if (Array.isArray(sections)) {
+          return sections.reduce((sum: number, s: any) => sum + (s.items?.filter((i: any) => !i.checked)?.length ?? 0), 0);
+        }
+      }
+    } catch { /* ignore */ }
+    return 0;
+  });
+
+  // Listen for grocery count updates from useGroceryList
+  useEffect(() => {
+    const handler = (e: Event) => {
+      setGroceryCount((e as CustomEvent<number>).detail);
+    };
+    window.addEventListener('grocery-count-changed', handler);
+    return () => window.removeEventListener('grocery-count-changed', handler);
+  }, []);
+
+  const handlePageChange = useCallback((page: Page) => {
+    setCurrentPage(page);
+    sessionStorage.setItem('meal-planner-tab', page);
+  }, []);
   const { status, pendingCount, clearAllPendingChanges } = useSync();
   const { isDark, toggle: toggleDarkMode } = useDarkMode();
   const { settings, updateSettings } = useSettings();
@@ -431,6 +506,7 @@ function AppContent() {
     if (!user || !isOnline) return;
     getGroceryList().then(async (data) => {
       try { localStorage.setItem('meal-planner-grocery', JSON.stringify(data)); } catch { /* full */ }
+      setGroceryCount(data.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0));
       await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
       await saveLocalGroceryItems(data.flatMap(s => s.items.map(i => ({
         id: i.id, section_id: i.section_id, name: i.name,
@@ -490,7 +566,7 @@ function AppContent() {
       <StatusBar status={status} pendingCount={pendingCount} />
 
       {/* Page Content — each wrapped in its own UndoProvider for independent undo/redo */}
-      {currentPage === 'meals' ? (
+      {currentPage === 'meals' && (
         <UndoProvider>
           <MealsPage
             user={user}
@@ -501,7 +577,20 @@ function AppContent() {
             updateAvailable={updateAvailable}
           />
         </UndoProvider>
-      ) : (
+      )}
+      {currentPage === 'pantry' && (
+        <UndoProvider>
+          <PantryPage
+            user={user}
+            status={status}
+            settings={settings}
+            onShowSettings={() => setShowSettings(true)}
+            onLogout={handleLogout}
+            updateAvailable={updateAvailable}
+          />
+        </UndoProvider>
+      )}
+      {currentPage === 'grocery' && (
         <UndoProvider>
           <GroceryPage
             user={user}
@@ -534,7 +623,7 @@ function AppContent() {
       <UpdateNotification updateAvailable={updateAvailable} onApplyUpdate={applyUpdate} updating={updating} />
 
       {/* Bottom Navigation */}
-      <BottomNav currentPage={currentPage} onChange={setCurrentPage} />
+      <BottomNav currentPage={currentPage} onChange={handlePageChange} groceryCount={groceryCount} />
     </div>
   );
 }

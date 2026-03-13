@@ -61,7 +61,7 @@ vi.mock('../hooks/useDarkMode', () => ({
 
 vi.mock('../hooks/useSettings', () => ({
   useSettings: vi.fn(() => ({ 
-    settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1 }, 
+    settings: { showItemizedColumn: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1 }, 
     updateSettings: vi.fn() 
   }))
 }));
@@ -80,9 +80,9 @@ vi.mock('../api/client', () => ({
   getLoginUrl: vi.fn(() => '/api/auth/login'),
   getDays: vi.fn(),
   updateNotes: vi.fn(),
-  getPantryItems: vi.fn(() => Promise.resolve([])),
+  getPantryList: vi.fn(() => Promise.resolve([])),
   getMealIdeas: vi.fn(() => Promise.resolve([])),
-  createPantryItem: vi.fn(),
+  addPantryItem: vi.fn(),
   updatePantryItem: vi.fn(),
   deletePantryItem: vi.fn(),
   createMealIdea: vi.fn(),
@@ -98,7 +98,10 @@ vi.mock('../db', () => ({
   getLocalNote: vi.fn(() => Promise.resolve(null)),
   saveLocalNote: vi.fn(() => Promise.resolve()),
   saveLocalPantryItem: vi.fn(() => Promise.resolve()),
+  saveLocalPantryItems: vi.fn(() => Promise.resolve()),
   getLocalPantryItems: vi.fn(() => Promise.resolve([])),
+  getLocalPantrySections: vi.fn(() => Promise.resolve([])),
+  saveLocalPantrySections: vi.fn(() => Promise.resolve()),
   deleteLocalPantryItem: vi.fn(() => Promise.resolve()),
   clearLocalPantryItems: vi.fn(() => Promise.resolve()),
   saveLocalMealIdea: vi.fn(() => Promise.resolve()),
@@ -155,7 +158,7 @@ describe('App', () => {
     
     const mockUpdateSettings = vi.fn();
     mockUseSettings.mockReturnValue({ 
-      settings: { showItemizedColumn: true, showPantry: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1 }, 
+      settings: { showItemizedColumn: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1 }, 
       updateSettings: mockUpdateSettings 
     });
     mockUseOnlineStatus.mockReturnValue(true);
@@ -438,7 +441,7 @@ describe('App', () => {
     });
   });
 
-  it('scrolls to pantry and today when buttons are clicked', async () => {
+  it('scrolls to meal ideas and today when buttons are clicked', async () => {
     const mockUser = { id: '123', name: 'Test User', email: 'test@example.com' };
     mockGetCurrentUser.mockResolvedValue(mockUser);
 
@@ -448,7 +451,7 @@ describe('App', () => {
       expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByLabelText('Jump to pantry'));
+    fireEvent.click(screen.getByLabelText('Jump to meal ideas'));
     fireEvent.click(screen.getByLabelText('Jump to today'));
 
     expect(mockScrollToElementWithOffset).toHaveBeenCalled();

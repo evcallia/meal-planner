@@ -27,7 +27,7 @@ describe('useSettings', () => {
 
     expect(result.current.settings).toEqual({
       showItemizedColumn: true,
-      showPantry: true,
+
       showMealIdeas: true,
       compactView: false,
       textScaleStandard: 1,
@@ -40,7 +40,7 @@ describe('useSettings', () => {
   it('loads settings from localStorage', () => {
     const storedSettings = JSON.stringify({
       showItemizedColumn: false,
-      showPantry: false,
+
       showMealIdeas: false,
       compactView: true,
       textScaleStandard: 1.1,
@@ -52,7 +52,7 @@ describe('useSettings', () => {
 
     expect(result.current.settings).toEqual({
       showItemizedColumn: false,
-      showPantry: false,
+
       showMealIdeas: false,
       compactView: true,
       textScaleStandard: 1.1,
@@ -71,7 +71,7 @@ describe('useSettings', () => {
 
     expect(result.current.settings).toEqual({
       showItemizedColumn: true, // Default value
-      showPantry: true,
+
       showMealIdeas: true,
       compactView: false,
       textScaleStandard: 1,
@@ -88,7 +88,7 @@ describe('useSettings', () => {
 
     expect(result.current.settings).toEqual({
       showItemizedColumn: true,
-      showPantry: true,
+
       showMealIdeas: true,
       compactView: false,
       textScaleStandard: 1,
@@ -111,7 +111,7 @@ describe('useSettings', () => {
       'meal-planner-settings',
       JSON.stringify({
         showItemizedColumn: false,
-        showPantry: true,
+  
         showMealIdeas: true,
         compactView: false,
         textScaleStandard: 1,
@@ -124,7 +124,7 @@ describe('useSettings', () => {
   it('allows partial updates', () => {
     const initialSettings = JSON.stringify({
       showItemizedColumn: false,
-      showPantry: false,
+
       showMealIdeas: false,
       compactView: false,
       textScaleStandard: 1,
@@ -136,7 +136,7 @@ describe('useSettings', () => {
 
     // Verify initial state
     expect(result.current.settings.showItemizedColumn).toBe(false)
-    expect(result.current.settings.showPantry).toBe(false)
+
     expect(result.current.settings.showMealIdeas).toBe(false)
     expect(result.current.settings.compactView).toBe(false)
 

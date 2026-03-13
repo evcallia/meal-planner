@@ -17,9 +17,13 @@ import {
 import {
   updateNotes,
   toggleItemized,
-  createPantryItem,
+  addPantryItem,
   updatePantryItem,
   deletePantryItem,
+  replacePantryList,
+  reorderPantrySections as reorderPantrySectionsAPI,
+  reorderPantryItems as reorderPantryItemsAPI,
+  renamePantrySection as renamePantrySectionAPI,
   createMealIdea,
   updateMealIdea,
   deleteMealIdea,
@@ -63,12 +67,15 @@ export function useSync() {
           const payload = change.payload as { lineIndex: number; itemized: boolean };
           await toggleItemized(change.date, payload.lineIndex, payload.itemized);
         } else if (change.type === 'pantry-add') {
-          const payload = change.payload as { id: string; name: string; quantity: number };
-          const created = await createPantryItem({ name: payload.name, quantity: payload.quantity });
-          // Map temp ID to real ID
+          const payload = change.payload as { id: string; sectionId: string; name: string; quantity: number };
+          let realSectionId = payload.sectionId;
+          if (isTempId(payload.sectionId)) {
+            const mapped = await getTempIdMapping(payload.sectionId);
+            if (mapped) realSectionId = mapped;
+          }
+          const created = await addPantryItem(realSectionId, payload.name, payload.quantity);
           if (isTempId(payload.id)) {
             await saveTempIdMapping(payload.id, created.id);
-            // Update local DB with real ID
             await deleteLocalPantryItem(payload.id);
             await saveLocalPantryItem(created);
           }
@@ -109,6 +116,46 @@ export function useSync() {
             }
           }
           await deletePantryItem(realId);
+        } else if (change.type === 'pantry-replace') {
+          const payload = change.payload as { sections: { name: string; items: { name: string; quantity: number }[] }[] };
+          await replacePantryList(payload.sections);
+        } else if (change.type === 'pantry-reorder-sections') {
+          const payload = change.payload as { sectionIds: string[] };
+          const resolvedIds = await Promise.all(
+            payload.sectionIds.map(async (id) => {
+              if (isTempId(id)) {
+                const mapped = await getTempIdMapping(id);
+                return mapped ?? id;
+              }
+              return id;
+            })
+          );
+          await reorderPantrySectionsAPI(resolvedIds);
+        } else if (change.type === 'pantry-reorder-items') {
+          const payload = change.payload as { sectionId: string; itemIds: string[] };
+          let realSectionId = payload.sectionId;
+          if (isTempId(payload.sectionId)) {
+            const mapped = await getTempIdMapping(payload.sectionId);
+            if (mapped) realSectionId = mapped;
+          }
+          const resolvedItemIds = await Promise.all(
+            payload.itemIds.map(async (id) => {
+              if (isTempId(id)) {
+                const mapped = await getTempIdMapping(id);
+                return mapped ?? id;
+              }
+              return id;
+            })
+          );
+          await reorderPantryItemsAPI(realSectionId, resolvedItemIds);
+        } else if (change.type === 'pantry-rename-section') {
+          const payload = change.payload as { sectionId: string; name: string };
+          let realSectionId = payload.sectionId;
+          if (isTempId(payload.sectionId)) {
+            const mapped = await getTempIdMapping(payload.sectionId);
+            if (mapped) realSectionId = mapped;
+          }
+          await renamePantrySectionAPI(realSectionId, payload.name);
         } else if (change.type === 'meal-idea-add') {
           const payload = change.payload as { id: string; title: string };
           const created = await createMealIdea({ title: payload.title });

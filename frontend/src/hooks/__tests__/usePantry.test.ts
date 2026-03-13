@@ -3,10 +3,15 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { usePantry } from '../usePantry';
 
 vi.mock('../../api/client', () => ({
-  getPantryItems: vi.fn(),
-  createPantryItem: vi.fn(),
+  getPantryList: vi.fn(),
+  addPantryItem: vi.fn(),
   updatePantryItem: vi.fn(),
   deletePantryItem: vi.fn(),
+  replacePantryList: vi.fn(),
+  clearPantryItems: vi.fn(),
+  reorderPantrySections: vi.fn(),
+  reorderPantryItems: vi.fn(),
+  renamePantrySection: vi.fn(),
 }));
 
 vi.mock('../../db', () => ({
@@ -14,7 +19,10 @@ vi.mock('../../db', () => ({
   isTempId: vi.fn((id: string) => id.startsWith('temp-')),
   queueChange: vi.fn(),
   saveLocalPantryItem: vi.fn(),
+  saveLocalPantryItems: vi.fn(),
   getLocalPantryItems: vi.fn(() => Promise.resolve([])),
+  getLocalPantrySections: vi.fn(() => Promise.resolve([])),
+  saveLocalPantrySections: vi.fn(),
   deleteLocalPantryItem: vi.fn(),
   clearLocalPantryItems: vi.fn(),
 }));
@@ -23,84 +31,86 @@ vi.mock('../useOnlineStatus', () => ({
   useOnlineStatus: vi.fn(),
 }));
 
-import { getPantryItems, createPantryItem, updatePantryItem, deletePantryItem } from '../../api/client';
-import { getLocalPantryItems, clearLocalPantryItems, saveLocalPantryItem } from '../../db';
+vi.mock('../../contexts/UndoContext', () => ({
+  useUndo: () => ({ canUndo: false, canRedo: false, pushAction: vi.fn(), undo: vi.fn(), redo: vi.fn() }),
+}));
+
+import { getPantryList, addPantryItem, updatePantryItem, deletePantryItem } from '../../api/client';
+import { getLocalPantrySections, getLocalPantryItems, saveLocalPantrySections, saveLocalPantryItems } from '../../db';
 import { useOnlineStatus } from '../useOnlineStatus';
 
 describe('usePantry', () => {
-  const mockGetPantryItems = vi.mocked(getPantryItems);
-  const mockCreatePantryItem = vi.mocked(createPantryItem);
+  const mockGetPantryList = vi.mocked(getPantryList);
+  const mockAddPantryItem = vi.mocked(addPantryItem);
   const mockUpdatePantryItem = vi.mocked(updatePantryItem);
   const mockDeletePantryItem = vi.mocked(deletePantryItem);
+  const mockGetLocalPantrySections = vi.mocked(getLocalPantrySections);
   const mockGetLocalPantryItems = vi.mocked(getLocalPantryItems);
-  const mockClearLocalPantryItems = vi.mocked(clearLocalPantryItems);
-  const mockSaveLocalPantryItem = vi.mocked(saveLocalPantryItem);
   const mockUseOnlineStatus = vi.mocked(useOnlineStatus);
-  const storage = new Map<string, string>();
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
     mockUseOnlineStatus.mockReturnValue(true);
-    storage.clear();
+    mockGetLocalPantrySections.mockResolvedValue([]);
     mockGetLocalPantryItems.mockResolvedValue([]);
-    mockClearLocalPantryItems.mockResolvedValue(undefined);
-    mockSaveLocalPantryItem.mockResolvedValue(undefined);
-    vi.mocked(localStorage.getItem).mockImplementation((key: string) => storage.get(key) ?? null);
-    vi.mocked(localStorage.setItem).mockImplementation((key: string, value: string) => {
-      storage.set(key, String(value));
-    });
-    vi.mocked(localStorage.removeItem).mockImplementation((key: string) => {
-      storage.delete(key);
-    });
-    vi.mocked(localStorage.clear).mockImplementation(() => {
-      storage.clear();
-    });
-    localStorage.clear();
   });
 
-  it('loads pantry items from the server and sorts by name', async () => {
-    mockGetPantryItems.mockResolvedValueOnce([
-      { id: '2', name: 'Tomatoes', quantity: 1, updated_at: '2026-02-03T10:00:00Z' },
-      { id: '1', name: 'Apples', quantity: 2, updated_at: '2026-02-03T09:00:00Z' },
+  it('loads pantry sections from the server', async () => {
+    mockGetPantryList.mockResolvedValueOnce([
+      {
+        id: 's1', name: 'Fridge', position: 0,
+        items: [
+          { id: '1', section_id: 's1', name: 'Milk', quantity: 1, position: 0, updated_at: '2026-02-03T10:00:00Z' },
+          { id: '2', section_id: 's1', name: 'Eggs', quantity: 12, position: 1, updated_at: '2026-02-03T10:00:00Z' },
+        ],
+      },
     ]);
 
     const { result } = renderHook(() => usePantry());
 
-    await waitFor(() => expect(result.current.items).toHaveLength(2));
-    expect(result.current.items[0].name).toBe('Apples');
-    expect(result.current.items[1].name).toBe('Tomatoes');
+    await waitFor(() => expect(result.current.sections).toHaveLength(1));
+    expect(result.current.sections[0].name).toBe('Fridge');
+    expect(result.current.sections[0].items).toHaveLength(2);
+    expect(result.current.sections[0].items[0].name).toBe('Milk');
   });
 
-  it('adds a pantry item via the API and refreshes the list', async () => {
-    mockGetPantryItems
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ id: '1', name: 'Meatballs', quantity: 1, updated_at: '2026-02-03T11:00:00Z' }]);
-    mockCreatePantryItem.mockResolvedValue({ id: '1', name: 'Meatballs', quantity: 1, updated_at: '2026-02-03T11:00:00Z' });
+  it('adds a pantry item to a section via the API', async () => {
+    mockGetPantryList.mockResolvedValueOnce([
+      { id: 's1', name: 'General', position: 0, items: [] },
+    ]);
+    mockAddPantryItem.mockResolvedValue({
+      id: 'new-1', section_id: 's1', name: 'Meatballs', quantity: 1, position: 0, updated_at: '2026-02-03T11:00:00Z',
+    });
 
     const { result } = renderHook(() => usePantry());
 
-    await waitFor(() => expect(result.current.items).toHaveLength(0));
+    await waitFor(() => expect(result.current.sections).toHaveLength(1));
 
     await act(async () => {
-      result.current.addItem({ name: 'Meatballs', quantity: 1 });
+      await result.current.addItem('s1', 'Meatballs', 1);
     });
 
     await waitFor(() => {
-      expect(mockCreatePantryItem).toHaveBeenCalledWith({ name: 'Meatballs', quantity: 1 });
-      expect(result.current.items).toHaveLength(1);
+      expect(mockAddPantryItem).toHaveBeenCalledWith('s1', 'Meatballs', 1);
+      expect(result.current.sections[0].items).toHaveLength(1);
     });
   });
 
   it('debounces updates before calling the API', async () => {
-    mockGetPantryItems
-      .mockResolvedValueOnce([{ id: '1', name: 'Milk', quantity: 1, updated_at: '2026-02-03T11:00:00Z' }])
-      .mockResolvedValueOnce([{ id: '1', name: 'Milk', quantity: 2, updated_at: '2026-02-03T11:05:00Z' }]);
-    mockUpdatePantryItem.mockResolvedValue({ id: '1', name: 'Milk', quantity: 2, updated_at: '2026-02-03T11:05:00Z' });
+    mockGetPantryList.mockResolvedValueOnce([
+      {
+        id: 's1', name: 'General', position: 0,
+        items: [{ id: '1', section_id: 's1', name: 'Milk', quantity: 1, position: 0, updated_at: '2026-02-03T11:00:00Z' }],
+      },
+    ]);
+    mockUpdatePantryItem.mockResolvedValue({
+      id: '1', section_id: 's1', name: 'Milk', quantity: 2, position: 0, updated_at: '2026-02-03T11:05:00Z',
+    });
 
     const { result } = renderHook(() => usePantry());
 
-    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    await waitFor(() => expect(result.current.sections[0]?.items).toHaveLength(1));
 
     vi.useFakeTimers();
 
@@ -117,77 +127,49 @@ describe('usePantry', () => {
   });
 
   it('removes pantry items via the API', async () => {
-    mockGetPantryItems
-      .mockResolvedValueOnce([
-        { id: '1', name: 'Bread', quantity: 1, updated_at: '2026-02-03T12:00:00Z' },
-      ])
-      .mockResolvedValueOnce([]);
+    mockGetPantryList.mockResolvedValueOnce([
+      {
+        id: 's1', name: 'General', position: 0,
+        items: [{ id: '1', section_id: 's1', name: 'Bread', quantity: 1, position: 0, updated_at: '2026-02-03T12:00:00Z' }],
+      },
+    ]);
     mockDeletePantryItem.mockResolvedValue();
 
     const { result } = renderHook(() => usePantry());
 
-    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    await waitFor(() => expect(result.current.sections[0]?.items).toHaveLength(1));
 
     await act(async () => {
-      result.current.removeItem('1');
+      await result.current.removeItem('1');
     });
 
     await waitFor(() => {
       expect(mockDeletePantryItem).toHaveBeenCalledWith('1');
+      expect(result.current.sections[0].items).toHaveLength(0);
     });
   });
 
   it('refreshes when a realtime pantry update arrives', async () => {
-    let shouldReturnUpdated = false;
-    mockGetPantryItems.mockImplementation(() => Promise.resolve(
-      shouldReturnUpdated
-        ? [{ id: '1', name: 'Rice', quantity: 1, updated_at: '2026-02-03T13:00:00Z' }]
-        : []
-    ));
+    let callCount = 0;
+    mockGetPantryList.mockImplementation(() => {
+      callCount++;
+      return Promise.resolve(
+        callCount > 1
+          ? [{ id: 's1', name: 'General', position: 0, items: [{ id: '1', section_id: 's1', name: 'Rice', quantity: 1, position: 0, updated_at: '2026-02-03T13:00:00Z' }] }]
+          : [{ id: 's1', name: 'General', position: 0, items: [] }]
+      );
+    });
 
     const { result } = renderHook(() => usePantry());
 
-    await waitFor(() => expect(mockGetPantryItems).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(result.current.items).toHaveLength(0));
-
-    shouldReturnUpdated = true;
-    act(() => {
-      window.dispatchEvent(new CustomEvent('meal-planner-realtime', { detail: { type: 'pantry.updated' } }));
-    });
-
-    await waitFor(() => expect(mockGetPantryItems).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(result.current.items).toHaveLength(1));
-  });
-
-  it('hydrates from local storage only on the first load', async () => {
-    localStorage.setItem('meal-planner-pantry', JSON.stringify([
-      { id: 'local-1', name: 'Pasta', quantity: 1, updated_at: '2026-02-03T08:00:00Z' },
-    ]));
-    let created = false;
-    mockCreatePantryItem.mockImplementation(async () => {
-      created = true;
-      return { id: 'server-1', name: 'Pasta', quantity: 1, updated_at: '2026-02-03T08:00:00Z' };
-    });
-    mockGetPantryItems.mockImplementation(() => Promise.resolve(
-      created
-        ? [{ id: 'server-1', name: 'Pasta', quantity: 1, updated_at: '2026-02-03T08:00:00Z' }]
-        : []
-    ));
-
-    const { result } = renderHook(() => usePantry());
-
-    await waitFor(() => expect(mockCreatePantryItem).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(result.current.items).toHaveLength(1));
-
-    localStorage.setItem('meal-planner-pantry', JSON.stringify([
-      { id: 'local-1', name: 'Pasta', quantity: 1, updated_at: '2026-02-03T08:00:00Z' },
-    ]));
+    await waitFor(() => expect(mockGetPantryList).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.sections[0]?.items).toHaveLength(0));
 
     act(() => {
       window.dispatchEvent(new CustomEvent('meal-planner-realtime', { detail: { type: 'pantry.updated' } }));
     });
 
-    await waitFor(() => expect(mockGetPantryItems).toHaveBeenCalledTimes(3));
-    expect(mockCreatePantryItem).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mockGetPantryList).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.sections[0]?.items).toHaveLength(1));
   });
 });
