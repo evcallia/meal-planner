@@ -20,6 +20,8 @@ interface DragReorderConfig {
 
 const LONG_PRESS_MS = 300;
 const CANCEL_THRESHOLD = 10;
+const AUTO_SCROLL_EDGE = 60; // px from viewport edge to trigger scroll
+const MAX_SCROLL_SPEED = 12; // px per frame at the very edge
 
 export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd, onDropOutside, onDragMove }: DragReorderConfig) {
   const [dragState, setDragState] = useState<DragReorderState>({
@@ -54,6 +56,8 @@ export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd
     currentOverIndex: 0,
     lastClientY: 0,
     mouseCleanup: null as (() => void) | null,
+    touchMoveCleanup: null as (() => void) | null,
+    autoScrollRaf: 0,
   });
 
   // Prevent text selection while dragging
@@ -96,6 +100,8 @@ export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd
       if (ref.timer) clearTimeout(ref.timer);
       if (ref.ghostEl && ref.ghostEl.parentNode) ref.ghostEl.parentNode.removeChild(ref.ghostEl);
       if (ref.mouseCleanup) ref.mouseCleanup();
+      if (ref.touchMoveCleanup) ref.touchMoveCleanup();
+      if (ref.autoScrollRaf) cancelAnimationFrame(ref.autoScrollRaf);
       document.body.style.removeProperty('user-select');
       document.body.style.removeProperty('-webkit-user-select');
     };
@@ -160,13 +166,48 @@ export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd
     document.body.appendChild(ghost);
     ref.ghostEl = ghost;
 
+    // Prevent page scroll during touch drag (React touch handlers are passive)
+    const preventScroll = (e: TouchEvent) => {
+      if (ref.phase === 'dragging') e.preventDefault();
+    };
+    document.addEventListener('touchmove', preventScroll, { passive: false });
+    ref.touchMoveCleanup = () => {
+      document.removeEventListener('touchmove', preventScroll);
+    };
+
+    // Auto-scroll when dragging near viewport edges
+    const autoScroll = () => {
+      if (ref.phase !== 'dragging') return;
+      const y = ref.lastClientY;
+      const vh = window.innerHeight;
+      let delta = 0;
+      if (y < AUTO_SCROLL_EDGE) {
+        delta = -MAX_SCROLL_SPEED * (1 - y / AUTO_SCROLL_EDGE);
+      } else if (y > vh - AUTO_SCROLL_EDGE) {
+        delta = MAX_SCROLL_SPEED * (1 - (vh - y) / AUTO_SCROLL_EDGE);
+      }
+      if (delta !== 0) {
+        window.scrollBy(0, delta);
+        // Recache rects after scroll so hit-testing stays accurate
+        ref.itemRects = ref.itemElements.map(el => el.getBoundingClientRect());
+        const newOverIndex = computeOverIndex(y);
+        if (newOverIndex !== ref.currentOverIndex) {
+          ref.currentOverIndex = newOverIndex;
+          setDragState(prev => ({ ...prev, overIndex: newOverIndex }));
+        }
+        onDragMoveRef.current?.(ref.startIndex, y);
+      }
+      ref.autoScrollRaf = requestAnimationFrame(autoScroll);
+    };
+    ref.autoScrollRaf = requestAnimationFrame(autoScroll);
+
     setDragState({
       isDragging: true,
       dragIndex: index,
       overIndex: index,
       itemHeight: rect.height,
     });
-  }, [getItemElements]);
+  }, [getItemElements, computeOverIndex]);
 
   const moveDrag = useCallback((clientY: number) => {
     const ref = internalRef.current;
@@ -192,6 +233,8 @@ export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd
       document.body.removeChild(ref.ghostEl);
       ref.ghostEl = null;
     }
+    if (ref.touchMoveCleanup) { ref.touchMoveCleanup(); ref.touchMoveCleanup = null; }
+    if (ref.autoScrollRaf) { cancelAnimationFrame(ref.autoScrollRaf); ref.autoScrollRaf = 0; }
     ref.phase = 'idle';
     setDragState({ isDragging: false, dragIndex: null, overIndex: null, itemHeight: 0 });
     onDragEndRef.current?.();

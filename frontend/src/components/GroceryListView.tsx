@@ -16,6 +16,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   const [newItemName, setNewItemName] = useState('');
   const [showClearMenu, setShowClearMenu] = useState(false);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const clearMenuRef = useRef<HTMLDivElement>(null);
   const sectionContainerRef = useRef<HTMLDivElement>(null);
@@ -105,6 +106,15 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       moveItem(sourceSectionId, fromIndex, target.sectionId, target.targetIndex);
     }
   }, [findDropTarget, moveItem]);
+
+  const toggleCollapsed = useCallback((sectionName: string) => {
+    setCollapsedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(sectionName)) next.delete(sectionName);
+      else next.add(sectionName);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!showClearMenu) return;
@@ -267,6 +277,8 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 sectionDragHandlers={getSectionDragHandlers(sectionIndex)}
                 sectionHandleMouseDown={getSectionHandleMouseDown(sectionIndex)}
                 isSectionDragging={isSectionDragging}
+                isCollapsed={collapsedSections.has(section.name)}
+                onToggleCollapse={() => toggleCollapsed(section.name)}
                 onToggle={toggleItem}
                 onDelete={deleteItem}
                 onEdit={editItem}
@@ -316,6 +328,8 @@ interface SectionCardProps {
   sectionDragHandlers: ReturnType<ReturnType<typeof useDragReorder>['getDragHandlers']>;
   sectionHandleMouseDown: (e: React.MouseEvent) => void;
   isSectionDragging: boolean;
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
   onToggle: (id: string, checked: boolean) => void;
   onDelete: (id: string) => void;
   onEdit: (id: string, updates: { name?: string; quantity?: string | null }) => void;
@@ -337,6 +351,8 @@ function SectionCard({
   sectionDragHandlers,
   sectionHandleMouseDown,
   isSectionDragging,
+  isCollapsed,
+  onToggleCollapse,
   onToggle,
   onDelete,
   onEdit,
@@ -356,7 +372,6 @@ function SectionCard({
   const itemContainerRef = useRef<HTMLDivElement>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState(section.name);
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const headerInputRef = useRef<HTMLInputElement>(null);
 
   const commitRename = useCallback(() => {
@@ -423,7 +438,7 @@ function SectionCard({
         </div>
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); setIsCollapsed(prev => !prev); }}
+          onClick={(e) => { e.stopPropagation(); onToggleCollapse(); }}
           className="flex items-center gap-1 text-gray-400 dark:text-gray-500 text-xs hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
         >
           {uncheckedItems.length} item{uncheckedItems.length !== 1 ? 's' : ''}

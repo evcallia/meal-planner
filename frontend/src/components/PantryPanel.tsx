@@ -10,6 +10,7 @@ export function PantryPanel() {
   const [newItemQty, setNewItemQty] = useState('1');
   const [showClearMenu, setShowClearMenu] = useState(false);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const [isAddingSection, setIsAddingSection] = useState(false);
   const [newSectionName, setNewSectionName] = useState('');
   const clearMenuRef = useRef<HTMLDivElement>(null);
@@ -104,6 +105,15 @@ export function PantryPanel() {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showClearMenu]);
+
+  const toggleCollapsed = useCallback((sectionName: string) => {
+    setCollapsedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(sectionName)) next.delete(sectionName);
+      else next.add(sectionName);
+      return next;
+    });
+  }, []);
 
   const handleAddItem = useCallback(async (sectionId: string) => {
     if (!newItemName.trim()) return;
@@ -237,6 +247,8 @@ export function PantryPanel() {
                 sectionDragHandlers={getSectionDragHandlers(sectionIndex)}
                 sectionHandleMouseDown={getSectionHandleMouseDown(sectionIndex)}
                 isSectionDragging={isSectionDragging}
+                isCollapsed={collapsedSections.has(section.name)}
+                onToggleCollapse={() => toggleCollapsed(section.name)}
                 onUpdateItem={updateItem}
                 onAdjustQuantity={adjustQuantity}
                 onDelete={removeItem}
@@ -268,6 +280,8 @@ interface PantrySectionCardProps {
   sectionDragHandlers: ReturnType<ReturnType<typeof useDragReorder>['getDragHandlers']>;
   sectionHandleMouseDown: (e: React.MouseEvent) => void;
   isSectionDragging: boolean;
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
   onUpdateItem: (id: string, updates: { name?: string; quantity?: number }) => void;
   onAdjustQuantity: (id: string, delta: number) => void;
   onDelete: (id: string) => void;
@@ -292,6 +306,8 @@ function PantrySectionCard({
   sectionDragHandlers,
   sectionHandleMouseDown,
   isSectionDragging,
+  isCollapsed,
+  onToggleCollapse,
   onUpdateItem,
   onAdjustQuantity,
   onDelete,
@@ -313,7 +329,6 @@ function PantrySectionCard({
   const itemContainerRef = useRef<HTMLDivElement>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState(section.name);
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const headerInputRef = useRef<HTMLInputElement>(null);
 
   const commitRename = useCallback(() => {
@@ -381,7 +396,7 @@ function PantrySectionCard({
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); setIsCollapsed(prev => !prev); }}
+            onClick={(e) => { e.stopPropagation(); onToggleCollapse(); }}
             className="flex items-center gap-1 text-gray-400 dark:text-gray-500 text-xs hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
           >
             {section.items.length} item{section.items.length !== 1 ? 's' : ''}
