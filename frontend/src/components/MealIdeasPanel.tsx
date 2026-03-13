@@ -9,7 +9,7 @@ interface MealIdeasPanelProps {
 }
 
 export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }: MealIdeasPanelProps) {
-  const { ideas, addIdea, updateIdea, removeIdea } = useMealIdeas();
+  const { ideas, addIdea, updateIdea, removeIdea, setEditing } = useMealIdeas();
   const { pushAction } = useUndo();
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -134,6 +134,8 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
                 <input
                   value={idea.title}
                   onChange={(event) => updateIdea(idea.id, { title: event.target.value })}
+                  onFocus={() => setEditing(true)}
+                  onBlur={() => setEditing(false)}
                   className="flex-1 min-w-0 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-1.5 py-0.5 text-xs text-gray-900 dark:text-gray-100"
                 />
                 <select
@@ -208,6 +210,8 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
               <input
                 value={idea.title}
                 onChange={(event) => updateIdea(idea.id, { title: event.target.value })}
+                onFocus={() => setEditing(true)}
+                onBlur={() => setEditing(false)}
                 className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1.5 text-sm text-gray-900 dark:text-gray-100"
               />
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

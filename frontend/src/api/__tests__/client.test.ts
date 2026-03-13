@@ -7,8 +7,8 @@ import {
   getCurrentUser,
   logout,
   getLoginUrl,
-  getPantryItems,
-  createPantryItem,
+  getPantryList,
+  addPantryItem,
   updatePantryItem,
   deletePantryItem,
   getMealIdeas,
@@ -232,41 +232,41 @@ describe('API client', () => {
   });
 
   describe('pantry endpoints', () => {
-    it('should fetch pantry items', async () => {
-      const mockItems = [{ id: '1', name: 'Rice', quantity: 2, updated_at: '2026-01-01T00:00:00Z' }];
+    it('should fetch pantry list', async () => {
+      const mockSections = [{ id: 's1', name: 'General', position: 0, items: [] }];
       mockFetch.mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve(mockItems),
+        json: () => Promise.resolve(mockSections),
       });
 
-      const result = await getPantryItems();
+      const result = await getPantryList();
 
       expect(mockFetch).toHaveBeenCalledWith('/api/pantry', expect.objectContaining({
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
-      expect(result).toEqual(mockItems);
+      expect(result).toEqual(mockSections);
     });
 
-    it('should create, update, and delete pantry items', async () => {
-      const mockItem = { id: '1', name: 'Rice', quantity: 2, updated_at: '2026-01-01T00:00:00Z' };
+    it('should add, update, and delete pantry items', async () => {
+      const mockItem = { id: '1', section_id: 's1', name: 'Rice', quantity: 2, position: 0, updated_at: '2026-01-01T00:00:00Z' };
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve(mockItem),
       });
 
-      await createPantryItem({ name: 'Rice', quantity: 2 });
-      expect(mockFetch).toHaveBeenCalledWith('/api/pantry', expect.objectContaining({
+      await addPantryItem('s1', 'Rice', 2);
+      expect(mockFetch).toHaveBeenCalledWith('/api/pantry/items', expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ name: 'Rice', quantity: 2 }),
+        body: JSON.stringify({ section_id: 's1', name: 'Rice', quantity: 2 }),
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
 
       await updatePantryItem('1', { quantity: 3 });
-      expect(mockFetch).toHaveBeenCalledWith('/api/pantry/1', expect.objectContaining({
+      expect(mockFetch).toHaveBeenCalledWith('/api/pantry/items/1', expect.objectContaining({
         method: 'PUT',
         body: JSON.stringify({ quantity: 3 }),
         headers: { 'Content-Type': 'application/json' },
@@ -275,7 +275,7 @@ describe('API client', () => {
       }));
 
       await deletePantryItem('1');
-      expect(mockFetch).toHaveBeenCalledWith('/api/pantry/1', expect.objectContaining({
+      expect(mockFetch).toHaveBeenCalledWith('/api/pantry/items/1', expect.objectContaining({
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

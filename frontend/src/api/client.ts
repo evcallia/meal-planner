@@ -1,4 +1,4 @@
-import { DayData, MealNote, MealItem, UserInfo, CalendarEvent, PantryItem, MealIdea } from '../types';
+import { DayData, MealNote, MealItem, UserInfo, CalendarEvent, PantryItem, PantrySection, MealIdea } from '../types';
 import { logDuration, logPerf, perfNow } from '../utils/perf';
 
 const API_BASE = '/api';
@@ -104,26 +104,60 @@ export function getLoginUrl(): string {
   return `${API_BASE}/auth/login`;
 }
 
-export async function getPantryItems(): Promise<PantryItem[]> {
-  return fetchAPI<PantryItem[]>('/pantry');
+export async function getPantryList(): Promise<PantrySection[]> {
+  return fetchAPI<PantrySection[]>('/pantry');
 }
 
-export async function createPantryItem(payload: { name: string; quantity: number }): Promise<PantryItem> {
-  return fetchAPI<PantryItem>('/pantry', {
+export async function replacePantryList(sections: { name: string; items: { name: string; quantity: number }[] }[]): Promise<PantrySection[]> {
+  return fetchAPI<PantrySection[]>('/pantry', {
+    method: 'PUT',
+    body: JSON.stringify({ sections }),
+  });
+}
+
+export async function addPantryItem(sectionId: string, name: string, quantity: number = 0): Promise<PantryItem> {
+  return fetchAPI<PantryItem>('/pantry/items', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ section_id: sectionId, name, quantity }),
   });
 }
 
 export async function updatePantryItem(itemId: string, payload: { name?: string; quantity?: number }): Promise<PantryItem> {
-  return fetchAPI<PantryItem>(`/pantry/${itemId}`, {
+  return fetchAPI<PantryItem>(`/pantry/items/${itemId}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
   });
 }
 
 export async function deletePantryItem(itemId: string): Promise<void> {
-  await fetchAPI(`/pantry/${itemId}`, {
+  await fetchAPI(`/pantry/items/${itemId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function reorderPantrySections(sectionIds: string[]): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>('/pantry/reorder-sections', {
+    method: 'PATCH',
+    body: JSON.stringify({ section_ids: sectionIds }),
+  });
+}
+
+export async function reorderPantryItems(sectionId: string, itemIds: string[]): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/pantry/sections/${sectionId}/reorder-items`, {
+    method: 'PATCH',
+    body: JSON.stringify({ item_ids: itemIds }),
+  });
+}
+
+export async function renamePantrySection(sectionId: string, name: string): Promise<PantrySection> {
+  return fetchAPI<PantrySection>(`/pantry/sections/${sectionId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function clearPantryItems(mode: 'all'): Promise<PantrySection[]> {
+  return fetchAPI<PantrySection[]>(`/pantry/items?mode=${mode}`, {
     method: 'DELETE',
   });
 }

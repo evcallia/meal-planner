@@ -32,15 +32,28 @@ class MealItemToggle(BaseModel):
 
 class PantryItemSchema(BaseModel):
     id: UUID
+    section_id: UUID
     name: str
     quantity: int
+    position: int
     updated_at: datetime
 
     class Config:
         from_attributes = True
 
 
+class PantrySectionSchema(BaseModel):
+    id: UUID
+    name: str
+    position: int
+    items: list[PantryItemSchema]
+
+    class Config:
+        from_attributes = True
+
+
 class PantryItemCreate(BaseModel):
+    section_id: UUID
     name: str = Field(..., min_length=1)
     quantity: int = Field(default=0, ge=0)
 
@@ -48,6 +61,32 @@ class PantryItemCreate(BaseModel):
 class PantryItemUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1)
     quantity: int | None = Field(default=None, ge=0)
+
+
+class PantryReplaceItem(BaseModel):
+    name: str
+    quantity: int = 0
+
+
+class PantryReplaceSection(BaseModel):
+    name: str
+    items: list[PantryReplaceItem]
+
+
+class PantryReplacePayload(BaseModel):
+    sections: list[PantryReplaceSection]
+
+
+class PantrySectionUpdate(BaseModel):
+    name: str = Field(..., min_length=1)
+
+
+class PantryReorderSections(BaseModel):
+    section_ids: list[UUID]
+
+
+class PantryReorderItems(BaseModel):
+    item_ids: list[UUID]
 
 
 class MealIdeaSchema(BaseModel):

@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 
 export interface Settings {
   showItemizedColumn: boolean;
-  showPantry: boolean;
   showMealIdeas: boolean;
   compactView: boolean;
   textScaleStandard: number;
@@ -12,7 +11,6 @@ export interface Settings {
 
 const DEFAULT_SETTINGS: Settings = {
   showItemizedColumn: true,
-  showPantry: true,
   showMealIdeas: true,
   compactView: false,
   textScaleStandard: 1,

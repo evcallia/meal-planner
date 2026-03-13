@@ -24,9 +24,13 @@ vi.mock('../../db', () => ({
 vi.mock('../../api/client', () => ({
   updateNotes: vi.fn(),
   toggleItemized: vi.fn(),
-  createPantryItem: vi.fn(),
+  addPantryItem: vi.fn(),
   updatePantryItem: vi.fn(),
   deletePantryItem: vi.fn(),
+  replacePantryList: vi.fn(),
+  reorderPantrySections: vi.fn(),
+  reorderPantryItems: vi.fn(),
+  renamePantrySection: vi.fn(),
   createMealIdea: vi.fn(),
   updateMealIdea: vi.fn(),
   deleteMealIdea: vi.fn(),
@@ -51,7 +55,7 @@ import {
 import {
   updateNotes,
   toggleItemized,
-  createPantryItem,
+  addPantryItem,
   updatePantryItem,
   deletePantryItem,
   createMealIdea,
@@ -74,7 +78,7 @@ describe('useSync', () => {
   const mockSaveLocalPantryItem = vi.mocked(saveLocalPantryItem);
   const mockDeleteLocalMealIdea = vi.mocked(deleteLocalMealIdea);
   const mockSaveLocalMealIdea = vi.mocked(saveLocalMealIdea);
-  const mockCreatePantryItem = vi.mocked(createPantryItem);
+  const mockAddPantryItem = vi.mocked(addPantryItem);
   const mockUpdatePantryItem = vi.mocked(updatePantryItem);
   const mockDeletePantryItem = vi.mocked(deletePantryItem);
   const mockCreateMealIdea = vi.mocked(createMealIdea);
@@ -274,25 +278,25 @@ describe('useSync', () => {
 
   it('syncs pantry add changes and maps temp ids', async () => {
     mockUseOnlineStatus.mockReturnValue(true);
-    mockIsTempId.mockReturnValue(true);
+    mockIsTempId.mockImplementation((id: string) => id.startsWith('temp-'));
 
     const mockChanges = [
       {
         id: 10,
         type: 'pantry-add' as const,
         date: '',
-        payload: { id: 'temp-1', name: 'Milk', quantity: 2 },
+        payload: { id: 'temp-1', sectionId: 'sec-1', name: 'Milk', quantity: 2 },
         createdAt: Date.now()
       }
     ];
 
     mockGetPendingChanges.mockResolvedValue(mockChanges);
-    mockCreatePantryItem.mockResolvedValue({ id: 'real-1', name: 'Milk', quantity: 2, updated_at: '2026-01-01T00:00:00Z' });
+    mockAddPantryItem.mockResolvedValue({ id: 'real-1', section_id: 'sec-1', name: 'Milk', quantity: 2, position: 0, updated_at: '2026-01-01T00:00:00Z' });
 
     renderHook(() => useSync());
 
     await waitFor(() => {
-      expect(mockCreatePantryItem).toHaveBeenCalledWith({ name: 'Milk', quantity: 2 });
+      expect(mockAddPantryItem).toHaveBeenCalledWith('sec-1', 'Milk', 2);
       expect(mockSaveTempIdMapping).toHaveBeenCalledWith('temp-1', 'real-1');
       expect(mockDeleteLocalPantryItem).toHaveBeenCalledWith('temp-1');
       expect(mockSaveLocalPantryItem).toHaveBeenCalled();
@@ -304,7 +308,7 @@ describe('useSync', () => {
     mockUseOnlineStatus.mockReturnValue(true);
     mockIsTempId.mockImplementation((id: string) => id.startsWith('temp-'));
     mockGetTempIdMapping.mockResolvedValue('real-2');
-    mockUpdatePantryItem.mockResolvedValue({ id: 'real-2', name: 'Bread', quantity: 2, updated_at: '2026-01-01T00:00:00Z' });
+    mockUpdatePantryItem.mockResolvedValue({ id: 'real-2', section_id: 'sec-1', name: 'Bread', quantity: 2, position: 0, updated_at: '2026-01-01T00:00:00Z' });
 
     const mockChanges = [
       {

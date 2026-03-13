@@ -14,12 +14,14 @@ interface DragReorderConfig {
   containerRef: React.RefObject<HTMLElement | null>;
   onDragStart?: () => void;
   onDragEnd?: () => void;
+  onDropOutside?: (fromIndex: number, clientY: number) => void;
+  onDragMove?: (fromIndex: number, clientY: number) => void;
 }
 
 const LONG_PRESS_MS = 300;
 const CANCEL_THRESHOLD = 10;
 
-export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd }: DragReorderConfig) {
+export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd, onDropOutside, onDragMove }: DragReorderConfig) {
   const [dragState, setDragState] = useState<DragReorderState>({
     isDragging: false,
     dragIndex: null,
@@ -34,6 +36,10 @@ export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd
   onDragStartRef.current = onDragStart;
   const onDragEndRef = useRef(onDragEnd);
   onDragEndRef.current = onDragEnd;
+  const onDropOutsideRef = useRef(onDropOutside);
+  onDropOutsideRef.current = onDropOutside;
+  const onDragMoveRef = useRef(onDragMove);
+  onDragMoveRef.current = onDragMove;
 
   const internalRef = useRef({
     phase: 'idle' as 'idle' | 'pressing' | 'dragging',
@@ -46,6 +52,7 @@ export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd
     itemElements: [] as HTMLElement[],
     ghostEl: null as HTMLDivElement | null,
     currentOverIndex: 0,
+    lastClientY: 0,
     mouseCleanup: null as (() => void) | null,
   });
 
@@ -132,6 +139,7 @@ export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd
 
     ref.offsetY = clientY - rect.top;
     ref.currentOverIndex = index;
+    ref.lastClientY = clientY;
 
     const sourceEl = elements[index];
     if (!sourceEl) { ref.phase = 'idle'; return; }
@@ -162,6 +170,7 @@ export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd
 
   const moveDrag = useCallback((clientY: number) => {
     const ref = internalRef.current;
+    ref.lastClientY = clientY;
     if (ref.ghostEl) {
       ref.ghostEl.style.top = `${clientY - ref.offsetY}px`;
     }
@@ -170,12 +179,14 @@ export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd
       ref.currentOverIndex = newOverIndex;
       setDragState(prev => ({ ...prev, overIndex: newOverIndex }));
     }
+    onDragMoveRef.current?.(ref.startIndex, clientY);
   }, [computeOverIndex]);
 
   const finishDrag = useCallback(() => {
     const ref = internalRef.current;
     const from = ref.startIndex;
     const to = ref.currentOverIndex;
+    const lastY = ref.lastClientY;
 
     if (ref.ghostEl && ref.ghostEl.parentNode) {
       document.body.removeChild(ref.ghostEl);
@@ -185,10 +196,20 @@ export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd
     setDragState({ isDragging: false, dragIndex: null, overIndex: null, itemHeight: 0 });
     onDragEndRef.current?.();
 
+    // Check if drop landed outside the container (cross-section move)
+    const container = containerRef.current;
+    if (container && onDropOutsideRef.current) {
+      const rect = container.getBoundingClientRect();
+      if (lastY < rect.top || lastY > rect.bottom) {
+        onDropOutsideRef.current(from, lastY);
+        return;
+      }
+    }
+
     if (from !== to) {
       onReorderRef.current(from, to);
     }
-  }, []);
+  }, [containerRef]);
 
   // Touch handlers (long-press to drag)
   const getDragHandlers = useCallback((index: number) => ({

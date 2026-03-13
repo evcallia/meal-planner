@@ -37,9 +37,18 @@ export type ConnectionStatus = 'online' | 'offline' | 'syncing';
 
 export interface PantryItem {
   id: string;
+  section_id: string;
   name: string;
   quantity: number;
+  position: number;
   updated_at: string;
+}
+
+export interface PantrySection {
+  id: string;
+  name: string;
+  position: number;
+  items: PantryItem[];
 }
 
 export interface MealIdea {

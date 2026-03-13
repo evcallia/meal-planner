@@ -14,6 +14,10 @@ export type ChangeType =
   | 'pantry-add'
   | 'pantry-update'
   | 'pantry-delete'
+  | 'pantry-replace'
+  | 'pantry-reorder-sections'
+  | 'pantry-reorder-items'
+  | 'pantry-rename-section'
   | 'meal-idea-add'
   | 'meal-idea-update'
   | 'meal-idea-delete'
@@ -37,10 +41,18 @@ export interface PendingChange {
   createdAt: number;
 }
 
-export interface LocalPantryItem {
+export interface LocalPantrySection {
   id: string;
   name: string;
+  position: number;
+}
+
+export interface LocalPantryItem {
+  id: string;
+  section_id: string;
+  name: string;
   quantity: number;
+  position: number;
   updated_at: string;
 }
 
@@ -98,6 +110,7 @@ class MealPlannerDB extends Dexie {
   mealNotes!: Table<LocalMealNote, string>;
   pendingChanges!: Table<PendingChange, number>;
   pantryItems!: Table<LocalPantryItem, string>;
+  pantrySections!: Table<LocalPantrySection, string>;
   mealIdeas!: Table<LocalMealIdea, string>;
   tempIdMap!: Table<{ tempId: string; realId: string }, string>;
   calendarDays!: Table<LocalCalendarDay, string>;
@@ -146,10 +159,23 @@ class MealPlannerDB extends Dexie {
       grocerySections: 'id',
       groceryItems: 'id, section_id'
     });
+    this.version(6).stores({
+      mealNotes: 'date',
+      pendingChanges: '++id, date, type',
+      pantryItems: 'id, section_id',
+      pantrySections: 'id',
+      mealIdeas: 'id',
+      tempIdMap: 'tempId',
+      calendarDays: 'date',
+      hiddenCalendarEvents: 'id',
+      grocerySections: 'id',
+      groceryItems: 'id, section_id'
+    });
     // Ensure table properties are initialized for both runtime and tests.
     this.mealNotes = this.table('mealNotes');
     this.pendingChanges = this.table('pendingChanges');
     this.pantryItems = this.table('pantryItems');
+    this.pantrySections = this.table('pantrySections');
     this.mealIdeas = this.table('mealIdeas');
     this.tempIdMap = this.table('tempIdMap');
     this.calendarDays = this.table('calendarDays');
@@ -244,7 +270,30 @@ export function isTempId(id: string): boolean {
   return id.startsWith('temp-');
 }
 
+// Pantry sections local storage
+export async function saveLocalPantrySections(sections: LocalPantrySection[]) {
+  await db.pantrySections.clear();
+  if (sections.length > 0) {
+    await db.pantrySections.bulkPut(sections);
+  }
+}
+
+export async function getLocalPantrySections(): Promise<LocalPantrySection[]> {
+  return db.pantrySections.orderBy('position').toArray();
+}
+
+export async function saveLocalPantrySection(section: LocalPantrySection) {
+  await db.pantrySections.put(section);
+}
+
 // Pantry items local storage
+export async function saveLocalPantryItems(items: LocalPantryItem[]) {
+  await db.pantryItems.clear();
+  if (items.length > 0) {
+    await db.pantryItems.bulkPut(items);
+  }
+}
+
 export async function saveLocalPantryItem(item: LocalPantryItem) {
   await db.pantryItems.put(item);
 }
