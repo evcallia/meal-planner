@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user
@@ -40,6 +40,7 @@ async def list_pantry(
 @router.put("", response_model=list[PantrySectionSchema])
 async def replace_pantry(
     payload: PantryReplacePayload,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -70,7 +71,7 @@ async def replace_pantry(
     )
     for section in result:
         section.items.sort(key=lambda item: item.position)
-    await broadcast_event("pantry.updated", {})
+    await broadcast_event("pantry.updated", {}, source_id=request.headers.get("x-source-id"))
     return result
 
 
@@ -78,6 +79,7 @@ async def replace_pantry(
 async def update_section(
     section_id: UUID,
     payload: PantrySectionUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -88,13 +90,14 @@ async def update_section(
     db.commit()
     db.refresh(section)
     section.items.sort(key=lambda item: item.position)
-    await broadcast_event("pantry.updated", {})
+    await broadcast_event("pantry.updated", {}, source_id=request.headers.get("x-source-id"))
     return section
 
 
 @router.patch("/reorder-sections")
 async def reorder_sections(
     payload: PantryReorderSections,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -103,7 +106,7 @@ async def reorder_sections(
         if section:
             section.position = i
     db.commit()
-    await broadcast_event("pantry.updated", {})
+    await broadcast_event("pantry.updated", {}, source_id=request.headers.get("x-source-id"))
     return {"status": "ok"}
 
 
@@ -111,6 +114,7 @@ async def reorder_sections(
 async def reorder_items(
     section_id: UUID,
     payload: PantryReorderItems,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -125,13 +129,14 @@ async def reorder_items(
         if item:
             item.position = i
     db.commit()
-    await broadcast_event("pantry.updated", {})
+    await broadcast_event("pantry.updated", {}, source_id=request.headers.get("x-source-id"))
     return {"status": "ok"}
 
 
 @router.post("/items", response_model=PantryItemSchema)
 async def add_pantry_item(
     payload: PantryItemCreate,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -156,7 +161,7 @@ async def add_pantry_item(
     db.add(item)
     db.commit()
     db.refresh(item)
-    await broadcast_event("pantry.updated", {"id": str(item.id)})
+    await broadcast_event("pantry.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
     return item
 
 
@@ -164,6 +169,7 @@ async def add_pantry_item(
 async def update_pantry_item(
     item_id: UUID,
     payload: PantryItemUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -179,13 +185,14 @@ async def update_pantry_item(
         item.quantity = payload.quantity
     db.commit()
     db.refresh(item)
-    await broadcast_event("pantry.updated", {"id": str(item.id)})
+    await broadcast_event("pantry.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
     return item
 
 
 @router.delete("/items/{item_id}")
 async def delete_pantry_item(
     item_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -194,12 +201,13 @@ async def delete_pantry_item(
         raise HTTPException(status_code=404, detail="Item not found")
     db.delete(item)
     db.commit()
-    await broadcast_event("pantry.updated", {"id": str(item_id), "deleted": True})
+    await broadcast_event("pantry.updated", {"id": str(item_id), "deleted": True}, source_id=request.headers.get("x-source-id"))
     return {"status": "deleted"}
 
 
 @router.delete("/items", response_model=list[PantrySectionSchema])
 async def clear_pantry_items(
+    request: Request,
     mode: str = Query(..., pattern="^(all)$"),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -218,5 +226,5 @@ async def clear_pantry_items(
     )
     for section in result:
         section.items.sort(key=lambda item: item.position)
-    await broadcast_event("pantry.updated", {})
+    await broadcast_event("pantry.updated", {}, source_id=request.headers.get("x-source-id"))
     return result

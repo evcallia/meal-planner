@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -24,6 +24,7 @@ async def list_meal_ideas(
 @router.post("", response_model=MealIdeaSchema)
 async def create_meal_idea(
     payload: MealIdeaCreate,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -34,7 +35,7 @@ async def create_meal_idea(
     db.add(idea)
     db.commit()
     db.refresh(idea)
-    await broadcast_event("meal-ideas.updated", {"id": str(idea.id)})
+    await broadcast_event("meal-ideas.updated", {"id": str(idea.id)}, source_id=request.headers.get("x-source-id"))
     return idea
 
 
@@ -42,6 +43,7 @@ async def create_meal_idea(
 async def update_meal_idea(
     idea_id: UUID,
     payload: MealIdeaUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -55,13 +57,14 @@ async def update_meal_idea(
         idea.title = title
     db.commit()
     db.refresh(idea)
-    await broadcast_event("meal-ideas.updated", {"id": str(idea.id)})
+    await broadcast_event("meal-ideas.updated", {"id": str(idea.id)}, source_id=request.headers.get("x-source-id"))
     return idea
 
 
 @router.delete("/{idea_id}")
 async def delete_meal_idea(
     idea_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -70,5 +73,5 @@ async def delete_meal_idea(
         raise HTTPException(status_code=404, detail="Idea not found")
     db.delete(idea)
     db.commit()
-    await broadcast_event("meal-ideas.updated", {"id": str(idea.id), "deleted": True})
+    await broadcast_event("meal-ideas.updated", {"id": str(idea.id), "deleted": True}, source_id=request.headers.get("x-source-id"))
     return {"status": "deleted"}

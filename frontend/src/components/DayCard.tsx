@@ -114,7 +114,11 @@ export function DayCard({
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [isDragOver, setIsDragOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ event: DayData['events'][number]; x: number; y: number } | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const dirtyRef = useRef(false);
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  const onNotesChangeRef = useRef(onNotesChange);
+  onNotesChangeRef.current = onNotesChange;
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -145,25 +149,29 @@ export function DayCard({
       if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
       }
+      // Save unsaved changes on unmount (e.g., navigating away)
+      if (dirtyRef.current) {
+        dirtyRef.current = false;
+        onNotesChangeRef.current(notesRef.current);
+      }
     };
   }, []);
 
   const handleNotesChange = (value: string) => {
     setNotes(value);
+    dirtyRef.current = true;
     setSaveStatus('saving');
-
-    // Debounce save
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-    }
-    debounceRef.current = setTimeout(() => {
-      onNotesChange(value);
-      setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 1500);
-    }, 500);
   };
 
   const handleBlur = () => {
+    // Save unsaved changes on blur
+    if (dirtyRef.current) {
+      dirtyRef.current = false;
+      onNotesChange(notesRef.current);
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 1500);
+    }
+
     // If the user tapped another card's meal area, hold a spacer at the
     // editor's current height so cards below don't shift and swallow the
     // pending click event.  The spacer is removed once the target card's

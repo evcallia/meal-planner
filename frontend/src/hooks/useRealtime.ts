@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
+import { SOURCE_ID } from '../api/client';
 import { useOnlineStatus } from './useOnlineStatus';
 
 type RealtimePayload = {
   type: string;
   payload: unknown;
+  source_id?: string;
 };
 
 let eventSource: EventSource | null = null;
@@ -38,6 +40,7 @@ const createSource = () => {
   eventSource.onmessage = (event) => {
     try {
       const payload = JSON.parse(event.data) as RealtimePayload;
+      if (payload.source_id && payload.source_id === SOURCE_ID) return;
       window.dispatchEvent(new CustomEvent('meal-planner-realtime', { detail: payload }));
     } catch (error) {
       console.warn('Realtime payload parse failed:', error);

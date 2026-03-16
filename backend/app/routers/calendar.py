@@ -2,7 +2,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
 
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -179,6 +179,7 @@ async def list_hidden_events(
 @router.post("/hidden", response_model=HiddenCalendarEventSchema)
 async def hide_calendar_event(
     payload: HideCalendarEventRequest,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -214,7 +215,7 @@ async def hide_calendar_event(
         "end_time": payload.end_time.isoformat() if payload.end_time else None,
         "all_day": payload.all_day,
         "title": payload.title,
-    })
+    }, source_id=request.headers.get("x-source-id"))
 
     return HiddenCalendarEventSchema.model_validate(hidden)
 
@@ -222,6 +223,7 @@ async def hide_calendar_event(
 @router.delete("/hidden/{hidden_id}")
 async def unhide_calendar_event(
     hidden_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -241,6 +243,6 @@ async def unhide_calendar_event(
         "event_uid": hidden.event_uid,
         "calendar_name": hidden.calendar_name,
         "start_time": start_time,
-    })
+    }, source_id=request.headers.get("x-source-id"))
 
     return {"status": "ok"}

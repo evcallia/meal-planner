@@ -920,42 +920,21 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     }
   };
 
-  // Track per-date "before edit" snapshots for undo
-  const notesBeforeEditRef = useRef<Map<string, { notes: string; items: { line_index: number; itemized: boolean }[] }>>(new Map());
-  const notesUndoTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-
   const handleNotesChange = async (date: string, notes: string) => {
     // Get existing items BEFORE updating state
     const existing = days.find(d => d.date === date);
     const existingItems = existing?.meal_note?.items || [];
 
-    // Capture "before edit" snapshot on first change for this date
-    if (!notesBeforeEditRef.current.has(date)) {
-      notesBeforeEditRef.current.set(date, {
-        notes: existing?.meal_note?.notes || '',
-        items: [...existingItems],
+    // Push undo action immediately (called once per edit session on blur)
+    const prevNotes = existing?.meal_note?.notes || '';
+    const prevItems = [...existingItems];
+    if (prevNotes !== notes) {
+      pushAction({
+        type: 'edit-notes',
+        undo: async () => { await restoreNotesAndItems(date, prevNotes, prevItems); },
+        redo: async () => { await restoreNotesAndItems(date, notes, existingItems); },
       });
     }
-
-    // Debounce the undo action - push after 2s of no changes
-    const existingTimer = notesUndoTimerRef.current.get(date);
-    if (existingTimer) clearTimeout(existingTimer);
-    notesUndoTimerRef.current.set(date, setTimeout(() => {
-      const before = notesBeforeEditRef.current.get(date);
-      if (before && before.notes !== notes) {
-        const prevNotes = before.notes;
-        const prevItems = before.items;
-        const newNotes = notes;
-        const newItems = existingItems;
-        pushAction({
-          type: 'edit-notes',
-          undo: async () => { await restoreNotesAndItems(date, prevNotes, prevItems); },
-          redo: async () => { await restoreNotesAndItems(date, newNotes, newItems); },
-        });
-      }
-      notesBeforeEditRef.current.delete(date);
-      notesUndoTimerRef.current.delete(date);
-    }, 2000));
 
     // Optimistic update
     setDays(prev => prev.map(d => {

@@ -67,9 +67,9 @@ describe('API client', () => {
       const result = await getDays('2024-01-01', '2024-01-07');
 
       expect(mockFetch).toHaveBeenCalledWith('/api/days?start_date=2024-01-01&end_date=2024-01-07', expect.objectContaining({
-        headers: {
+        headers: expect.objectContaining({
           'Content-Type': 'application/json',
-        },
+        }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -101,9 +101,9 @@ describe('API client', () => {
       const result = await getEvents('2024-01-01', '2024-01-07');
 
       expect(mockFetch).toHaveBeenCalledWith('/api/days/events?start_date=2024-01-01&end_date=2024-01-07&include_hidden=false', expect.objectContaining({
-        headers: {
+        headers: expect.objectContaining({
           'Content-Type': 'application/json',
-        },
+        }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -129,9 +129,9 @@ describe('API client', () => {
       expect(mockFetch).toHaveBeenCalledWith('/api/days/2024-01-01/notes', expect.objectContaining({
         method: 'PUT',
         body: JSON.stringify({ notes: 'Updated notes' }),
-        headers: {
+        headers: expect.objectContaining({
           'Content-Type': 'application/json',
-        },
+        }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -157,9 +157,9 @@ describe('API client', () => {
       expect(mockFetch).toHaveBeenCalledWith('/api/days/2024-01-01/items/0', expect.objectContaining({
         method: 'PATCH',
         body: JSON.stringify({ itemized: true }),
-        headers: {
+        headers: expect.objectContaining({
           'Content-Type': 'application/json',
-        },
+        }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -242,7 +242,7 @@ describe('API client', () => {
       const result = await getPantryList();
 
       expect(mockFetch).toHaveBeenCalledWith('/api/pantry', expect.objectContaining({
-        headers: { 'Content-Type': 'application/json' },
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -260,7 +260,7 @@ describe('API client', () => {
       expect(mockFetch).toHaveBeenCalledWith('/api/pantry/items', expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ section_id: 's1', name: 'Rice', quantity: 2 }),
-        headers: { 'Content-Type': 'application/json' },
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -269,7 +269,7 @@ describe('API client', () => {
       expect(mockFetch).toHaveBeenCalledWith('/api/pantry/items/1', expect.objectContaining({
         method: 'PUT',
         body: JSON.stringify({ quantity: 3 }),
-        headers: { 'Content-Type': 'application/json' },
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -277,7 +277,7 @@ describe('API client', () => {
       await deletePantryItem('1');
       expect(mockFetch).toHaveBeenCalledWith('/api/pantry/items/1', expect.objectContaining({
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -295,7 +295,7 @@ describe('API client', () => {
       const result = await getMealIdeas();
 
       expect(mockFetch).toHaveBeenCalledWith('/api/meal-ideas', expect.objectContaining({
-        headers: { 'Content-Type': 'application/json' },
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -313,7 +313,7 @@ describe('API client', () => {
       expect(mockFetch).toHaveBeenCalledWith('/api/meal-ideas', expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ title: 'Pasta' }),
-        headers: { 'Content-Type': 'application/json' },
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -322,7 +322,7 @@ describe('API client', () => {
       expect(mockFetch).toHaveBeenCalledWith('/api/meal-ideas/1', expect.objectContaining({
         method: 'PUT',
         body: JSON.stringify({ title: 'Baked Pasta' }),
-        headers: { 'Content-Type': 'application/json' },
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -330,7 +330,7 @@ describe('API client', () => {
       await deleteMealIdea('1');
       expect(mockFetch).toHaveBeenCalledWith('/api/meal-ideas/1', expect.objectContaining({
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -351,7 +351,7 @@ describe('API client', () => {
       await refreshCalendarCache();
       expect(mockFetch).toHaveBeenCalledWith('/api/calendar/refresh', expect.objectContaining({
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
@@ -367,7 +367,7 @@ describe('API client', () => {
       const result = await getCalendarList();
 
       expect(mockFetch).toHaveBeenCalledWith('/api/calendar/list', expect.objectContaining({
-        headers: { 'Content-Type': 'application/json' },
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
         credentials: 'include',
         signal: expect.any(AbortSignal),
       }));
