@@ -525,11 +525,18 @@ function AppContent() {
     };
   }, [settings.compactView, settings.textScaleCompact, settings.textScaleStandard]);
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     await logout();
     localStorage.removeItem('meal-planner-user');
     setUser(null);
-  };
+  }, []);
+
+  // Log out when any API call returns 401
+  useEffect(() => {
+    const handler = () => { handleLogout(); };
+    window.addEventListener('auth-unauthorized', handler);
+    return () => window.removeEventListener('auth-unauthorized', handler);
+  }, [handleLogout]);
 
   if (loading) {
     return (
