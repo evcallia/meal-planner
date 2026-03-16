@@ -37,6 +37,7 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent('auth-unauthorized'));
       throw new Error('Unauthorized');
     }
     throw new Error(`API error: ${response.status}`);

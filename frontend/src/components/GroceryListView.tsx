@@ -162,7 +162,23 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   }, [clearAll]);
 
   const checkedItems = useMemo(() => {
-    return sections.flatMap(s => s.items.filter(i => i.checked));
+    return sections.flatMap(s => s.items.filter(i => i.checked))
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+  }, [sections]);
+
+  const handleCopyList = useCallback(() => {
+    const lines: string[] = [];
+    for (const section of sections) {
+      const unchecked = section.items.filter(i => !i.checked);
+      if (unchecked.length === 0) continue;
+      lines.push(`[${section.name}]`);
+      for (const item of unchecked) {
+        lines.push(item.quantity ? `(${item.quantity}) ${item.name}` : item.name);
+      }
+      lines.push('');
+    }
+    navigator.clipboard.writeText(lines.join('\n').trim());
+    setShowClearMenu(false);
   }, [sections]);
 
   const hasItems = sections.length > 0;
@@ -232,6 +248,14 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 </button>
                 {showClearMenu && (
                   <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-20 min-w-[180px]">
+                    {visibleSections.length > 0 && (
+                      <button
+                        onClick={handleCopyList}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        Copy list
+                      </button>
+                    )}
                     {checkedItems.length > 0 && (
                       <button
                         onClick={handleClearChecked}
