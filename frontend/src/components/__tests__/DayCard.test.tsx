@@ -292,22 +292,19 @@ describe('DayCard', () => {
   it('calls onNotesChange when content is modified', async () => {
     const { fireEvent } = await import('@testing-library/react')
     render(<DayCard {...defaultProps} />)
-    
+
     // Enter edit mode
     const textElement = screen.getByText('Breakfast: Oatmeal')
     fireEvent.click(textElement)
-    
+
     // Modify content
     const editor = screen.getByTestId('rich-text-editor')
     fireEvent.change(editor, { target: { value: 'New meal content' } })
-    
-    // Wait for debounced save
-    await waitFor(
-      () => {
-        expect(defaultProps.onNotesChange).toHaveBeenCalledWith('New meal content')
-      },
-      { timeout: 1000 }
-    )
+
+    // Blur to trigger save
+    fireEvent.blur(editor)
+
+    expect(defaultProps.onNotesChange).toHaveBeenCalledWith('New meal content')
   })
 
   it('shows itemized checkboxes when showItemizedColumn is true', () => {
@@ -394,19 +391,19 @@ describe('DayCard', () => {
   it('displays save status during editing', async () => {
     const { fireEvent } = await import('@testing-library/react')
     render(<DayCard {...defaultProps} />)
-    
+
     // Enter edit mode
     const textElement = screen.getByText('Breakfast: Oatmeal')
     fireEvent.click(textElement)
-    
+
     // Start typing to trigger save status
     const editor = screen.getByTestId('rich-text-editor')
     fireEvent.change(editor, { target: { value: 'Updated content' } })
-    
-    // Wait for onNotesChange to be called (indicating save process started)
-    await waitFor(() => {
-      expect(defaultProps.onNotesChange).toHaveBeenCalled()
-    })
+
+    // Blur to trigger save
+    fireEvent.blur(editor)
+
+    expect(defaultProps.onNotesChange).toHaveBeenCalled()
   })
 
   it('handles all-day events correctly', () => {

@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 import time
 import re
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -119,6 +119,7 @@ async def get_events(
 async def update_notes(
     date: date,
     update: MealNoteUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -170,12 +171,14 @@ async def update_notes(
     _log(f"[DB] Update notes for {date} completed in {t2-t1:.3f}s")
 
     schema = MealNoteSchema.model_validate(meal_note)
+    source_id = request.headers.get("x-source-id")
     await broadcast_event(
         "notes.updated",
         {
             "date": str(date),
             "meal_note": schema.model_dump(mode="json"),
         },
+        source_id=source_id,
     )
     return schema
 
@@ -185,6 +188,7 @@ async def toggle_item(
     date: date,
     line_index: int,
     toggle: MealItemToggle,
+    request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -219,6 +223,7 @@ async def toggle_item(
     _log(f"[DB] Toggle item {date}:{line_index} completed in {t2-t1:.3f}s")
 
     schema = MealItemSchema.model_validate(item)
+    source_id = request.headers.get("x-source-id")
     await broadcast_event(
         "item.updated",
         {
@@ -226,5 +231,6 @@ async def toggle_item(
             "line_index": schema.line_index,
             "itemized": schema.itemized,
         },
+        source_id=source_id,
     )
     return schema

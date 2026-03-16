@@ -10,7 +10,7 @@
     {
       "name": "backend",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-c", "cd /Users/evan.callia/Desktop/meal-planner && POSTGRES_HOST=localhost OIDC_ISSUER= SECURE_COOKIES=false FRONTEND_URL=http://localhost:5173 /Users/evan.callia/Desktop/meal-planner/backend/.venv/bin/python -m uvicorn app.main:app --app-dir backend --reload --port 8001"],
+      "runtimeArgs": ["-c", "cd /Users/evan.callia/Desktop/meal-planner && POSTGRES_HOST=localhost POSTGRES_PASSWORD=changeme APPLE_CALENDAR_EMAIL= OIDC_ISSUER= SECURE_COOKIES=false FRONTEND_URL=http://localhost:5173 /Users/evan.callia/Desktop/meal-planner/backend/.venv/bin/python -m uvicorn app.main:app --app-dir backend --reload --port 8001"],
       "port": 8001
     },
     {

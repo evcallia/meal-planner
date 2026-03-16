@@ -69,5 +69,8 @@ class EventBroadcaster:
 broadcaster = EventBroadcaster()
 
 
-async def broadcast_event(event_type: str, payload: Dict[str, Any]) -> None:
-    await broadcaster.publish({"type": event_type, "payload": payload})
+async def broadcast_event(event_type: str, payload: Dict[str, Any], source_id: str | None = None) -> None:
+    msg: Dict[str, Any] = {"type": event_type, "payload": payload}
+    if source_id:
+        msg["source_id"] = source_id
+    await broadcaster.publish(msg)

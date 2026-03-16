@@ -3,6 +3,7 @@ import { logDuration, logPerf, perfNow } from '../utils/perf';
 
 const API_BASE = '/api';
 const API_TIMEOUT = 5000; // 5 second timeout for API requests
+export const SOURCE_ID = crypto.randomUUID();
 
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   const method = options?.method ?? 'GET';
@@ -18,6 +19,7 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        'X-Source-Id': SOURCE_ID,
         ...options?.headers,
       },
       credentials: 'include',
