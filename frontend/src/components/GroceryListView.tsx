@@ -20,6 +20,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   const [newItemName, setNewItemName] = useState('');
   const [showClearMenu, setShowClearMenu] = useState(false);
   const [filterStoreId, setFilterStoreId] = useState<string | null>(null);
+  const [sortByStore, setSortByStore] = useState(false);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -36,8 +37,20 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
         }))
         .filter(s => s.items.length > 0);
     }
+    if (sortByStore) {
+      const storeOrder = new Map(stores.map(s => [s.id, s.position]));
+      filtered = filtered.map(s => ({
+        ...s,
+        items: [...s.items].sort((a, b) => {
+          const aPos = a.store_id ? (storeOrder.get(a.store_id) ?? Infinity) : Infinity;
+          const bPos = b.store_id ? (storeOrder.get(b.store_id) ?? Infinity) : Infinity;
+          if (aPos !== bPos) return aPos - bPos;
+          return a.position - b.position;
+        }),
+      }));
+    }
     return filtered;
-  }, [sections, filterStoreId]);
+  }, [sections, filterStoreId, sortByStore, stores]);
 
   const handleSectionReorder = useCallback((from: number, to: number) => {
     const fromSection = visibleSections[from];
@@ -251,6 +264,19 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
             >
               Add items
             </button>
+
+            {/* Sort by store toggle */}
+            {stores.length > 0 && (
+              <button
+                onClick={() => setSortByStore(prev => !prev)}
+                className={`p-2 rounded ${sortByStore ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'}`}
+                title={sortByStore ? 'Unsort' : 'Sort by store'}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M3 3a1 1 0 000 2h11a1 1 0 100-2H3zM3 7a1 1 0 000 2h7a1 1 0 100-2H3zM3 11a1 1 0 100 2h4a1 1 0 100-2H3z" />
+                </svg>
+              </button>
+            )}
 
             {/* Clear menu */}
             {hasItems && (
