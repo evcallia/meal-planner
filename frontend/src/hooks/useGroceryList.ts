@@ -220,7 +220,7 @@ export function useGroceryList() {
     // Sync — replace the full list on the server with the merged result
     const mergedPayload = mergedSections.map(s => ({
       name: s.name,
-      items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked })),
+      items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked, store_id: i.store_id })),
     }));
 
     if (isOnline) {
@@ -256,7 +256,7 @@ export function useGroceryList() {
           try {
             const payload = prevSections.map(s => ({
               name: s.name,
-              items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked })),
+              items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked, store_id: i.store_id })),
             }));
             await replaceGroceryListAPI(payload);
           } catch { /* queue */ }
@@ -501,7 +501,7 @@ export function useGroceryList() {
     }));
     const toPayload = (secs: GrocerySection[]) => secs.map(s => ({
       name: s.name,
-      items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked })),
+      items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked, store_id: i.store_id })),
     }));
 
     // Push undo action BEFORE API call so undo is available immediately
@@ -554,7 +554,7 @@ export function useGroceryList() {
   }, [sections, isOnline, pushAction]);
 
   // Edit an item's name or quantity
-  const editItem = useCallback(async (itemId: string, updates: { name?: string; quantity?: string | null }) => {
+  const editItem = useCallback(async (itemId: string, updates: { name?: string; quantity?: string | null; store_id?: string | null }) => {
     const allItems = sections.flatMap(s => s.items);
     const item = allItems.find(i => i.id === itemId);
     if (!item) return;
@@ -586,7 +586,7 @@ export function useGroceryList() {
         }));
         const toPayload = (secs: GrocerySection[]) => secs.map(s => ({
           name: s.name,
-          items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked })),
+          items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked, store_id: i.store_id })),
         }));
 
         optimisticVersionRef.current++;
@@ -771,7 +771,7 @@ export function useGroceryList() {
         if (isOnline) {
           try {
             await replaceGroceryListAPI(prevSections.map(s => ({
-              name: s.name, items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked })),
+              name: s.name, items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked, store_id: i.store_id })),
             })));
           } catch { /* queue */ }
         }
@@ -824,7 +824,7 @@ export function useGroceryList() {
         if (isOnline) {
           try {
             await replaceGroceryListAPI(prevSections.map(s => ({
-              name: s.name, items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked })),
+              name: s.name, items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked, store_id: i.store_id })),
             })));
           } catch { /* queue */ }
         }
@@ -1045,7 +1045,7 @@ export function useGroceryList() {
 
     const toPayload = (secs: GrocerySection[]) => secs.map(s => ({
       name: s.name,
-      items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked })),
+      items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked, store_id: i.store_id })),
     }));
 
     pushAction({
