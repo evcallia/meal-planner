@@ -900,8 +900,9 @@ export function useGroceryList() {
   }, [sections, isOnline, pushAction]);
 
   // Reorder items within a section
-  const reorderItems = useCallback(async (sectionId: string, fromIndex: number, toIndex: number) => {
-    if (fromIndex === toIndex) return;
+  // When orderedIds is provided (e.g., during sort-by-store), use that order instead of from/to indices
+  const reorderItems = useCallback(async (sectionId: string, fromIndex: number, toIndex: number, orderedIds?: string[]) => {
+    if (fromIndex === toIndex && !orderedIds) return;
     const prevSections = sections;
     const section = sections.find(s => s.id === sectionId);
     if (!section) return;
@@ -909,10 +910,19 @@ export function useGroceryList() {
     const unchecked = section.items.filter(i => !i.checked);
     const checked = section.items.filter(i => i.checked);
 
-    const reordered = [...unchecked];
-    const [moved] = reordered.splice(fromIndex, 1);
-    reordered.splice(toIndex, 0, moved);
-    const updatedItems = reordered.map((item, i) => ({ ...item, position: i }));
+    let updatedItems;
+    if (orderedIds) {
+      // Use the provided order — items not in orderedIds keep their relative position after
+      const idOrder = new Map(orderedIds.map((id, i) => [id, i]));
+      const inOrder = orderedIds.map(id => unchecked.find(i => i.id === id)!).filter(Boolean);
+      const notInOrder = unchecked.filter(i => !idOrder.has(i.id));
+      updatedItems = [...inOrder, ...notInOrder].map((item, i) => ({ ...item, position: i }));
+    } else {
+      const reordered = [...unchecked];
+      const [moved] = reordered.splice(fromIndex, 1);
+      reordered.splice(toIndex, 0, moved);
+      updatedItems = reordered.map((item, i) => ({ ...item, position: i }));
+    }
     const allItems = [...updatedItems, ...checked.map((item, i) => ({ ...item, position: updatedItems.length + i }))];
 
     const updatedSections = sections.map(s => s.id === sectionId ? { ...s, items: allItems } : s);

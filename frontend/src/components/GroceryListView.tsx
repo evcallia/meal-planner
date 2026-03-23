@@ -147,6 +147,25 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     editItem(itemId, { store_id: storeId });
   }, [editItem]);
 
+  // When sort-by-store is active, drag indices correspond to the sorted visibleSections,
+  // not the unsorted sections. Map sorted indices to the item IDs and use reorderItemsByIds.
+  const handleReorderItems = useCallback((sectionId: string, from: number, to: number) => {
+    if (!sortByStore && !filterStoreId) {
+      reorderItems(sectionId, from, to);
+      return;
+    }
+    // Get items in the order they're displayed (sorted/filtered)
+    const visSection = visibleSections.find(s => s.id === sectionId);
+    if (!visSection) return;
+    const displayedItems = visSection.items.filter(i => !i.checked);
+    // Apply the drag to the displayed order
+    const reordered = [...displayedItems];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(to, 0, moved);
+    // Pass the new ID order to the hook
+    reorderItems(sectionId, from, to, reordered.map(i => i.id));
+  }, [sortByStore, filterStoreId, visibleSections, reorderItems]);
+
   useEffect(() => {
     if (!showClearMenu) return;
     const handleClick = (e: MouseEvent) => {
@@ -361,7 +380,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 onDelete={deleteItem}
                 onEdit={editItem}
                 onRenameSection={renameSection}
-                onReorderItems={(from, to) => reorderItems(section.id, from, to)}
+                onReorderItems={(from, to) => handleReorderItems(section.id, from, to)}
                 onItemDropOutside={(fromIndex, clientY) => handleItemDropOutside(section.id, fromIndex, clientY)}
                 onItemDragMove={(fromIndex, clientY) => handleItemDragMove(section.id, fromIndex, clientY)}
                 onItemDragEnd={handleItemDragEnd}

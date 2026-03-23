@@ -10,7 +10,7 @@ interface StoreFilterBarProps {
   onReorder: (fromIndex: number, toIndex: number) => void;
 }
 
-export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename, onDelete, onReorder: _onReorder }: StoreFilterBarProps) {
+export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename, onDelete, onReorder }: StoreFilterBarProps) {
   const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -92,6 +92,30 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
               autoFocus
               className="w-full text-sm px-2 py-1 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"
             />
+            {stores.length > 1 && (
+              <div className="flex items-center justify-center gap-2 mb-2">
+                <button
+                  onClick={() => {
+                    const idx = stores.findIndex(s => s.id === editingStoreId);
+                    if (idx > 0) onReorder(idx, idx - 1);
+                  }}
+                  disabled={stores.findIndex(s => s.id === editingStoreId) === 0}
+                  className="px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 disabled:opacity-30"
+                >
+                  Move Left
+                </button>
+                <button
+                  onClick={() => {
+                    const idx = stores.findIndex(s => s.id === editingStoreId);
+                    if (idx < stores.length - 1) onReorder(idx, idx + 1);
+                  }}
+                  disabled={stores.findIndex(s => s.id === editingStoreId) === stores.length - 1}
+                  className="px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 disabled:opacity-30"
+                >
+                  Move Right
+                </button>
+              </div>
+            )}
             <div className="flex justify-between">
               <button onClick={handleDelete} className="text-sm text-red-500 hover:text-red-700">
                 Delete
