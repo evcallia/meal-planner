@@ -5,6 +5,7 @@ import { parseGroceryText } from '../utils/groceryParser';
 import { GrocerySection, Store } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { StoreAutocomplete } from './StoreAutocomplete';
+import { StoreFilterBar } from './StoreFilterBar';
 
 interface GroceryListViewProps {
   compactView?: boolean;
@@ -12,12 +13,13 @@ interface GroceryListViewProps {
 
 export function GroceryListView({ compactView: _compactView }: GroceryListViewProps) {
   const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, moveItem } = useGroceryList();
-  const { stores, createStore } = useStores();
+  const { stores, createStore, renameStore, removeStore, reorderStores } = useStores();
   const [showInputArea, setShowInputArea] = useState(false);
   const [inputText, setInputText] = useState('');
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
   const [newItemName, setNewItemName] = useState('');
   const [showClearMenu, setShowClearMenu] = useState(false);
+  const [filterStoreId, setFilterStoreId] = useState<string | null>(null);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -25,8 +27,17 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   const sectionContainerRef = useRef<HTMLDivElement>(null);
 
   const visibleSections = useMemo(() => {
-    return sections.filter(s => s.items.some(i => !i.checked));
-  }, [sections]);
+    let filtered = sections.filter(s => s.items.some(i => !i.checked));
+    if (filterStoreId) {
+      filtered = filtered
+        .map(s => ({
+          ...s,
+          items: s.items.filter(i => !i.checked && i.store_id === filterStoreId),
+        }))
+        .filter(s => s.items.length > 0);
+    }
+    return filtered;
+  }, [sections, filterStoreId]);
 
   const handleSectionReorder = useCallback((from: number, to: number) => {
     const fromSection = visibleSections[from];
@@ -284,6 +295,16 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
           </>
         )}
       </div>
+
+      {/* Store filter bar */}
+      <StoreFilterBar
+        stores={stores}
+        activeStoreId={filterStoreId}
+        onFilterChange={setFilterStoreId}
+        onRename={renameStore}
+        onDelete={removeStore}
+        onReorder={reorderStores}
+      />
 
       {/* Sections with unchecked items */}
       <div ref={sectionContainerRef}>
