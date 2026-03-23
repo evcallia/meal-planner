@@ -122,6 +122,16 @@ def run_migrations():
             finally:
                 db.close()
 
+    # Add store_id column to grocery_items if missing
+    if inspector.has_table("grocery_items"):
+        grocery_columns = [col["name"] for col in inspector.get_columns("grocery_items")]
+        if "store_id" not in grocery_columns:
+            print("Adding store_id column to grocery_items...")
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE grocery_items ADD COLUMN store_id UUID REFERENCES stores(id) ON DELETE SET NULL"))
+                conn.commit()
+            print("Migration complete: added store_id column")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
