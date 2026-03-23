@@ -1128,5 +1128,16 @@ export function useGroceryList() {
     }
   }, [sections, isOnline, pushAction, settleMutation]);
 
-  return { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, moveItem };
+  // Batch update store_id on multiple items (no undo push — used by store delete/undo)
+  const batchUpdateStoreId = useCallback(async (itemIds: string[], storeId: string | null) => {
+    if (itemIds.length === 0) return;
+    optimisticVersionRef.current++;
+    const idSet = new Set(itemIds);
+    setSections(prev => prev.map(s => ({
+      ...s,
+      items: s.items.map(i => idSet.has(i.id) ? { ...i, store_id: storeId } : i),
+    })));
+  }, []);
+
+  return { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, moveItem, batchUpdateStoreId };
 }
