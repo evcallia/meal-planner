@@ -13,7 +13,7 @@ interface GroceryListViewProps {
 
 export function GroceryListView({ compactView: _compactView }: GroceryListViewProps) {
   const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, moveItem } = useGroceryList();
-  const { stores, createStore, renameStore, removeStore, reorderStores } = useStores();
+  const { stores, createStore, renameStore, removeStore, reorderStores } = useStores(sections);
   const [showInputArea, setShowInputArea] = useState(false);
   const [inputText, setInputText] = useState('');
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
