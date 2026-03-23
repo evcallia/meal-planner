@@ -19,7 +19,7 @@ from app.config import get_settings
 get_settings.cache_clear()
 from app.database import engine, Base, SessionLocal
 from app.models import MealNote, CachedCalendarEvent, PantrySection, PantryItem
-from app.routers import days, auth, pantry, meal_ideas, realtime, calendar, grocery
+from app.routers import days, auth, pantry, meal_ideas, realtime, calendar, grocery, stores
 from app.ical_service import initialize_cache, shutdown_cache
 from app.realtime import broadcaster, shutdown_event
 
@@ -178,6 +178,7 @@ app.include_router(pantry.router)
 app.include_router(meal_ideas.router)
 app.include_router(realtime.router)
 app.include_router(calendar.router)
+app.include_router(stores.router)
 app.include_router(grocery.router)
 
 
