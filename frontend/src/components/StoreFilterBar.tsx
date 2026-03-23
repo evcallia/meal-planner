@@ -30,7 +30,7 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
   onReorderRef.current = onReorder;
 
   // Long-press can either start drag (if pointer moves) or open edit (if released without moving)
-  const longPressReadyRef = useRef<{ index: number; storeId: string; storeName: string; clientX: number } | null>(null);
+  const longPressReadyRef = useRef<{ index: number; storeId: string; storeName: string; clientX: number; clientY: number } | null>(null);
 
   const clearLongPress = () => {
     if (longPressTimerRef.current) {
@@ -45,16 +45,35 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
     chipRectsRef.current = Array.from(chips).map(el => el.getBoundingClientRect());
   };
 
-  const findDropIndex = (clientX: number): number => {
+  const findDropIndex = (clientX: number, clientY: number): number => {
     const rects = chipRectsRef.current;
+    if (rects.length === 0) return 0;
+    // Find the closest chip center by distance
+    let closestIdx = 0;
+    let closestDist = Infinity;
     for (let i = 0; i < rects.length; i++) {
-      const mid = rects[i].left + rects[i].width / 2;
-      if (clientX < mid) return i;
+      const cx = rects[i].left + rects[i].width / 2;
+      const cy = rects[i].top + rects[i].height / 2;
+      const dist = Math.sqrt((clientX - cx) ** 2 + (clientY - cy) ** 2);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestIdx = i;
+      }
     }
-    return rects.length - 1;
+    // If dragging past the midpoint of the closest chip, place after it
+    const closestRect = rects[closestIdx];
+    const midX = closestRect.left + closestRect.width / 2;
+    if (clientX > midX && closestIdx < rects.length - 1) {
+      // Check if the next chip is on the same row
+      const nextRect = rects[closestIdx + 1];
+      if (Math.abs(nextRect.top - closestRect.top) < closestRect.height / 2) {
+        return closestIdx + 1;
+      }
+    }
+    return closestIdx;
   };
 
-  const beginDrag = (index: number, clientX: number) => {
+  const beginDrag = (index: number, clientX: number, clientY: number) => {
     clearLongPress();
     didLongPressRef.current = true;
     isDraggingRef.current = true;
@@ -63,6 +82,7 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
     setDragIndex(index);
     setDragOverIndex(index);
     dragStartXRef.current = clientX;
+    dragStartYRef.current = clientY;
     cacheChipRects();
 
     // Create ghost via cloneNode
@@ -87,14 +107,18 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
     document.getSelection()?.removeAllRanges();
   };
 
-  const moveGhost = (clientX: number) => {
+  const dragStartYRef = useRef(0);
+
+  const moveGhost = (clientX: number, clientY: number) => {
     if (!ghostRef.current || dragIndexRef.current === null) return;
     const startRect = chipRectsRef.current[dragIndexRef.current];
     if (!startRect) return;
     const dx = clientX - dragStartXRef.current;
+    const dy = clientY - dragStartYRef.current;
     ghostRef.current.style.left = `${startRect.left + dx}px`;
+    ghostRef.current.style.top = `${startRect.top + dy}px`;
 
-    const overIdx = findDropIndex(clientX);
+    const overIdx = findDropIndex(clientX, clientY);
     dragOverIndexRef.current = overIdx;
     setDragOverIndex(overIdx);
   };
@@ -122,7 +146,7 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
   // Document-level listeners for drag continuation outside chips
   useEffect(() => {
     const handleMove = (e: PointerEvent) => {
-      if (isDraggingRef.current) moveGhost(e.clientX);
+      if (isDraggingRef.current) moveGhost(e.clientX, e.clientY);
     };
     const handleUp = () => {
       if (isDraggingRef.current) finishDrag();
@@ -145,15 +169,16 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
     };
   }, []);
 
-  const handlePointerDown = (index: number, storeId: string, storeName: string, clientX: number) => {
+  const handlePointerDown = (index: number, storeId: string, storeName: string, clientX: number, clientY: number) => {
     didLongPressRef.current = false;
     dragStartXRef.current = clientX;
+    dragStartYRef.current = clientY;
     longPressReadyRef.current = null;
     longPressTimerRef.current = setTimeout(() => {
       // Long-press fired — mark it, but don't start drag yet.
       // If pointer moves → drag. If pointer releases → edit popover.
       didLongPressRef.current = true;
-      longPressReadyRef.current = { index, storeId, storeName, clientX };
+      longPressReadyRef.current = { index, storeId, storeName, clientX, clientY };
     }, 300);
   };
 
@@ -182,10 +207,11 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
     // If long-press is ready and pointer moved, start the drag
     if (longPressReadyRef.current) {
       const dx = Math.abs(e.clientX - longPressReadyRef.current.clientX);
-      if (dx > 5) {
-        const { index, clientX } = longPressReadyRef.current;
+      const dy = Math.abs(e.clientY - longPressReadyRef.current.clientY);
+      if (dx > 5 || dy > 5) {
+        const { index, clientX, clientY } = longPressReadyRef.current;
         longPressReadyRef.current = null;
-        beginDrag(index, clientX);
+        beginDrag(index, clientX, clientY);
       }
       return;
     }
@@ -218,51 +244,50 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
     setEditingStoreId(null);
   };
 
-  // Compute chip shifts during drag
-  const getShift = (index: number): number => {
-    if (dragIndex === null || dragOverIndex === null || dragIndex === dragOverIndex) return 0;
-    if (index === dragIndex) return 0; // dragged chip is hidden via opacity
-    // Items between dragIndex and dragOverIndex shift
-    if (dragIndex < dragOverIndex) {
-      // Dragging right: items in (dragIndex, dragOverIndex] shift left
-      if (index > dragIndex && index <= dragOverIndex) return -1;
-    } else {
-      // Dragging left: items in [dragOverIndex, dragIndex) shift right
-      if (index >= dragOverIndex && index < dragIndex) return 1;
-    }
-    return 0;
-  };
-
   if (stores.length === 0) return null;
 
   return (
     <div className="relative">
-      <div ref={containerRef} className="flex gap-2 overflow-x-auto pb-2 px-1 -mx-1 scrollbar-hide">
+      <div ref={containerRef} className="flex flex-wrap gap-2 pb-2 px-1 -mx-1">
         {stores.map((store, i) => {
-          const shift = getShift(i);
           const isDragged = dragIndex === i;
-          let shiftPx = 0;
-          if (shift !== 0 && chipRectsRef.current.length > 0 && dragIndex !== null) {
-            // Shift by the width of the dragged chip + gap
-            const draggedRect = chipRectsRef.current[dragIndex];
-            if (draggedRect) shiftPx = shift * (draggedRect.width + 8);
+          // During drag, compute where this chip should visually move to
+          let transformStyle: string | undefined;
+          if (dragIndex !== null && dragOverIndex !== null && dragIndex !== dragOverIndex && !isDragged && chipRectsRef.current.length === stores.length) {
+            // Build the visual reorder: which index does chip i end up at?
+            const order = stores.map((_, idx) => idx);
+            const [moved] = order.splice(dragIndex, 1);
+            order.splice(dragOverIndex, 0, moved);
+            const visualPos = order.indexOf(i);
+            if (visualPos !== i) {
+              // Translate from original rect to target rect
+              const fromRect = chipRectsRef.current[i];
+              const toRect = chipRectsRef.current[visualPos];
+              if (fromRect && toRect) {
+                const dx = toRect.left - fromRect.left;
+                const dy = toRect.top - fromRect.top;
+                if (dx !== 0 || dy !== 0) {
+                  transformStyle = `translate(${dx}px, ${dy}px)`;
+                }
+              }
+            }
           }
 
           return (
             <button
               key={store.id}
               data-chip-index={i}
-              onPointerDown={(e) => handlePointerDown(i, store.id, store.name, e.clientX)}
+              onPointerDown={(e) => handlePointerDown(i, store.id, store.name, e.clientX, e.clientY)}
               onPointerUp={() => handlePointerUp(store.id, store.name)}
               onPointerMove={handlePointerMove}
               onPointerLeave={handlePointerLeave}
               style={{
                 opacity: isDragged ? 0.3 : 1,
-                transform: shiftPx ? `translateX(${shiftPx}px)` : undefined,
+                transform: transformStyle,
                 transition: dragIndex !== null ? 'transform 200ms ease-out, opacity 200ms' : undefined,
               }}
               className={`
-                flex-shrink-0 px-3 py-1 rounded-full text-sm font-medium transition-colors select-none touch-none
+                px-3 py-1 rounded-full text-sm font-medium transition-colors select-none touch-none
                 ${activeStoreId === store.id
                   ? 'bg-blue-500 text-white'
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
