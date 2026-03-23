@@ -29,8 +29,8 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
   const onReorderRef = useRef(onReorder);
   onReorderRef.current = onReorder;
 
-  // Double-tap tracking for edit popover
-  const lastTapRef = useRef<{ storeId: string; time: number } | null>(null);
+  // Long-press can either start drag (if pointer moves) or open edit (if released without moving)
+  const longPressReadyRef = useRef<{ index: number; storeId: string; storeName: string; clientX: number } | null>(null);
 
   const clearLongPress = () => {
     if (longPressTimerRef.current) {
@@ -148,15 +148,12 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
   const handlePointerDown = (index: number, storeId: string, storeName: string, clientX: number) => {
     didLongPressRef.current = false;
     dragStartXRef.current = clientX;
+    longPressReadyRef.current = null;
     longPressTimerRef.current = setTimeout(() => {
-      if (stores.length > 1) {
-        beginDrag(index, clientX);
-      } else {
-        // Only 1 store — open edit popover instead
-        didLongPressRef.current = true;
-        setEditingStoreId(storeId);
-        setEditName(storeName);
-      }
+      // Long-press fired — mark it, but don't start drag yet.
+      // If pointer moves → drag. If pointer releases → edit popover.
+      didLongPressRef.current = true;
+      longPressReadyRef.current = { index, storeId, storeName, clientX };
     }, 300);
   };
 
@@ -166,24 +163,33 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
       finishDrag();
       return;
     }
+    if (longPressReadyRef.current && longPressReadyRef.current.storeId === storeId) {
+      // Long-press completed but no drag movement → open edit popover
+      setEditingStoreId(storeId);
+      setEditName(storeName);
+      longPressReadyRef.current = null;
+      return;
+    }
     if (!didLongPressRef.current) {
-      // Check for double-tap → edit popover
-      const now = Date.now();
-      if (lastTapRef.current && lastTapRef.current.storeId === storeId && now - lastTapRef.current.time < 400) {
-        setEditingStoreId(storeId);
-        setEditName(storeName);
-        lastTapRef.current = null;
-        return;
-      }
-      lastTapRef.current = { storeId, time: now };
-      // Single tap → toggle filter
+      // Short tap → toggle filter
       onFilterChange(activeStoreId === storeId ? null : storeId);
     }
+    longPressReadyRef.current = null;
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
     if (isDraggingRef.current) return; // document listener handles it
-    // Cancel long-press if moved too far before it fires
+    // If long-press is ready and pointer moved, start the drag
+    if (longPressReadyRef.current) {
+      const dx = Math.abs(e.clientX - longPressReadyRef.current.clientX);
+      if (dx > 5) {
+        const { index, clientX } = longPressReadyRef.current;
+        longPressReadyRef.current = null;
+        beginDrag(index, clientX);
+      }
+      return;
+    }
+    // Cancel long-press timer if moved too far before it fires
     if (longPressTimerRef.current) {
       const dx = Math.abs(e.clientX - dragStartXRef.current);
       if (dx > 10) clearLongPress();
@@ -191,7 +197,10 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
   };
 
   const handlePointerLeave = () => {
-    if (!isDraggingRef.current) clearLongPress();
+    if (!isDraggingRef.current) {
+      clearLongPress();
+      longPressReadyRef.current = null;
+    }
   };
 
   const handleSaveRename = () => {
