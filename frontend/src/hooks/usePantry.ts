@@ -23,6 +23,7 @@ import {
 } from '../db';
 import { useOnlineStatus } from './useOnlineStatus';
 import { useUndo } from '../contexts/UndoContext';
+import { toTitleCase } from '../utils/titleCase';
 
 const PANTRY_STORAGE_KEY = 'meal-planner-pantry-sections';
 
@@ -147,7 +148,7 @@ export function usePantry() {
     const newItem: PantryItem = {
       id: tempId,
       section_id: sectionId,
-      name: name.trim(),
+      name: toTitleCase(name.trim()),
       quantity,
       position: maxPos,
       updated_at: new Date().toISOString(),
@@ -167,12 +168,12 @@ export function usePantry() {
     if (isOnline) {
       pendingMutationsRef.current++;
       try {
-        await addPantryItemAPI(sectionId, name.trim(), quantity);
+        await addPantryItemAPI(sectionId, toTitleCase(name.trim()), quantity);
       } catch {
-        await queueChange('pantry-add', '', { id: tempId, sectionId, name: name.trim(), quantity });
+        await queueChange('pantry-add', '', { id: tempId, sectionId, name: toTitleCase(name.trim()), quantity });
       } finally { settleMutation(); }
     } else {
-      await queueChange('pantry-add', '', { id: tempId, sectionId, name: name.trim(), quantity });
+      await queueChange('pantry-add', '', { id: tempId, sectionId, name: toTitleCase(name.trim()), quantity });
     }
 
     pushAction({
@@ -208,6 +209,11 @@ export function usePantry() {
 
   // Update item (debounced 500ms for rapid +/- clicks)
   const updateItem = useCallback((id: string, updates: { name?: string; quantity?: number }) => {
+    // Apply title case to name edits
+    if (updates.name !== undefined) {
+      updates = { ...updates, name: toTitleCase(updates.name) };
+    }
+
     optimisticVersionRef.current++;
     setSections(prev => prev.map(s => ({
       ...s,

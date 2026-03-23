@@ -247,7 +247,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                   </svg>
                 </button>
                 {showClearMenu && (
-                  <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-20 min-w-[180px]">
+                  <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-20 min-w-[220px]">
                     {visibleSections.length > 0 && (
                       <button
                         onClick={handleCopyList}
@@ -261,7 +261,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                         onClick={handleClearChecked}
                         className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                       >
-                        Clear checked items ({checkedItems.length})
+                        Clear checked ({checkedItems.length})
                       </button>
                     )}
                     <button
@@ -623,47 +623,51 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
   if (isEditing) {
     const qtyNum = parseInt(editQuantity) || 0;
     return (
-      <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 dark:bg-blue-900/20">
-        <div className="flex items-center gap-1 flex-shrink-0">
+      <div className="px-4 py-1.5 bg-blue-50 dark:bg-blue-900/20 space-y-1.5">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              onClick={() => setEditQuantity(String(Math.max(0, qtyNum - 1) || ''))}
+              className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
+            >
+              −
+            </button>
+            <span className="w-8 text-center text-sm font-medium text-blue-600 dark:text-blue-400">
+              {qtyNum || '–'}
+            </span>
+            <button
+              onClick={() => setEditQuantity(String(qtyNum + 1))}
+              className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
+            >
+              +
+            </button>
+          </div>
+          <input
+            ref={nameInputRef}
+            type="text"
+            value={editName}
+            onChange={e => setEditName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') commitEdit();
+              if (e.key === 'Escape') cancelEdit();
+            }}
+            className="flex-1 min-w-0 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </div>
+        <div className="flex items-center justify-end gap-3">
           <button
-            onClick={() => setEditQuantity(String(Math.max(0, qtyNum - 1) || ''))}
-            className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
+            onClick={cancelEdit}
+            className="text-gray-400 hover:text-gray-600 text-sm"
           >
-            −
+            Cancel
           </button>
-          <span className="w-8 text-center text-sm font-medium text-blue-600 dark:text-blue-400">
-            {qtyNum || '–'}
-          </span>
           <button
-            onClick={() => setEditQuantity(String(qtyNum + 1))}
-            className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
+            onClick={commitEdit}
+            className="text-blue-500 hover:text-blue-600 text-sm font-medium"
           >
-            +
+            Save
           </button>
         </div>
-        <input
-          ref={nameInputRef}
-          type="text"
-          value={editName}
-          onChange={e => setEditName(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') commitEdit();
-            if (e.key === 'Escape') cancelEdit();
-          }}
-          className="flex-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        />
-        <button
-          onClick={commitEdit}
-          className="text-blue-500 hover:text-blue-600 text-sm font-medium flex-shrink-0"
-        >
-          Save
-        </button>
-        <button
-          onClick={cancelEdit}
-          className="text-gray-400 hover:text-gray-600 text-sm flex-shrink-0"
-        >
-          Cancel
-        </button>
       </div>
     );
   }
