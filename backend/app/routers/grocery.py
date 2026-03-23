@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import GrocerySection, GroceryItem
+from app.models import GrocerySection, GroceryItem, Store, ItemDefault
 from app.schemas import (
     GrocerySectionSchema,
     GroceryItemSchema,
@@ -61,6 +61,7 @@ async def replace_grocery(
                 quantity=item.quantity,
                 checked=item.checked,
                 position=j,
+                store_id=item.store_id,
             )
             db.add(grocery_item)
         db.flush()
@@ -155,6 +156,25 @@ async def update_grocery_item(
         item.name = payload.name.strip()
     if 'quantity' in payload.model_fields_set:
         item.quantity = payload.quantity if payload.quantity else None
+    if 'store_id' in payload.model_fields_set:
+        item.store_id = payload.store_id
+        # Upsert item_defaults
+        normalized_name = item.name.strip().lower()
+        if payload.store_id is not None:
+            default = db.query(ItemDefault).filter(
+                ItemDefault.item_name == normalized_name
+            ).first()
+            if default:
+                default.store_id = payload.store_id
+            else:
+                db.add(ItemDefault(item_name=normalized_name, store_id=payload.store_id))
+        else:
+            # Clearing store — also clear the default
+            default = db.query(ItemDefault).filter(
+                ItemDefault.item_name == normalized_name
+            ).first()
+            if default:
+                default.store_id = None
     db.commit()
     db.refresh(item)
     await broadcast_event("grocery.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
@@ -177,11 +197,21 @@ async def add_grocery_item(
     ).order_by(GroceryItem.position.desc()).first()
     next_pos = (max_pos[0] + 1) if max_pos else 0
 
+    # Auto-populate store from item_defaults if not provided
+    store_id = payload.store_id
+    if store_id is None:
+        default = db.query(ItemDefault).filter(
+            ItemDefault.item_name == payload.name.strip().lower()
+        ).first()
+        if default and default.store_id:
+            store_id = default.store_id
+
     item = GroceryItem(
         section_id=payload.section_id,
         name=payload.name.strip(),
         quantity=payload.quantity,
         position=next_pos,
+        store_id=store_id,
     )
     db.add(item)
     db.commit()
