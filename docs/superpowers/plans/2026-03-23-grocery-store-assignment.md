@@ -46,7 +46,13 @@
 
 - [ ] **Step 1: Add Store model to models.py**
 
-After the `GroceryItem` class (after line 156), add:
+Also add `Index` and `func` to the SQLAlchemy imports at the top of models.py:
+
+```python
+from sqlalchemy import Index, func
+```
+
+After the `GroceryItem` class (after line 155), add:
 
 ```python
 class Store(Base):
@@ -56,9 +62,13 @@ class Store(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    name: Mapped[str] = mapped_column(Text, unique=True)
+    name: Mapped[str] = mapped_column(Text)
     position: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('ix_stores_name_lower', func.lower(name), unique=True),
+    )
 
 
 class ItemDefault(Base):
@@ -378,7 +388,7 @@ git commit -m "Add store auto-populate and item_defaults upsert to grocery endpo
 
 - [ ] **Step 1: Add migration for store_id column and new tables**
 
-In `run_migrations()` in `backend/app/main.py`, add after the existing migrations (before line 124):
+In `run_migrations()` in `backend/app/main.py`, add **after** the pantry migration block's `finally: db.close()` at line 123 (i.e., at the same indentation level as the existing migration blocks, not nested inside the pantry `try`). Note: `Base.metadata.create_all` runs at line 129 **before** `run_migrations()` at line 130, so the `stores` table will already exist when this ALTER TABLE runs:
 
 ```python
     # Add store_id column to grocery_items if missing
@@ -854,20 +864,20 @@ export function useStores() {
   }, [settleMutation]);
 
   const reorderStoresLocal = useCallback(async (fromIndex: number, toIndex: number) => {
-    pendingRef.current++;
-    setStores(prev => {
-      const updated = [...prev];
-      const [moved] = updated.splice(fromIndex, 1);
-      updated.splice(toIndex, 0, moved);
-      const reordered = updated.map((s, i) => ({ ...s, position: i }));
-      saveLocalStores(reordered.map(s => ({ id: s.id, name: s.name, position: s.position })));
+    const updated = [...stores];
+    const [moved] = updated.splice(fromIndex, 1);
+    updated.splice(toIndex, 0, moved);
+    const reordered = updated.map((s, i) => ({ ...s, position: i }));
 
-      reorderStoresAPI(reordered.map(s => s.id)).catch(() => {}).finally(() => settleMutation());
-      // Don't settle here — the API call's finally handles it
-      pendingRef.current--; // undo the increment since API call manages its own
-      return reordered;
-    });
-  }, [settleMutation]);
+    setStores(reordered);
+    await saveLocalStores(reordered.map(s => ({ id: s.id, name: s.name, position: s.position })));
+
+    pendingRef.current++;
+    try {
+      await reorderStoresAPI(reordered.map(s => s.id));
+    } catch { /* will sync on next load */ }
+    finally { settleMutation(); }
+  }, [stores, settleMutation]);
 
   return { stores, loading, createStore, renameStore, removeStore, reorderStores: reorderStoresLocal };
 }
@@ -891,11 +901,13 @@ This task threads `store_id` through all mutation paths. The key changes:
 
 - [ ] **Step 1: Update addItem to pass store_id**
 
-In `addItem` (line 346), the function creates items via `addGroceryItemAPI`. The backend now auto-populates `store_id` from defaults, so the frontend just needs to accept the response's `store_id` field (already handled since `GroceryItem` type now includes it).
+In `addItem` (line 346), the backend auto-populates `store_id` from defaults, so the frontend just accepts the response. But the temp item object and all local save calls need `store_id`:
 
-For offline creation, when generating a temp item, set `store_id: null` (the default will be applied when synced online):
-
-Find the `GroceryItem` construction in addItem (around line 440-450) and add `store_id: null`.
+- **Line 423-431** (temp item construction): Add `store_id: null` to the `newItem` object
+- **Line 439-442** (`saveLocalGroceryItem` call): Add `store_id: newItem.store_id`
+- **Line 371-375** (merge path `saveLocalGroceryItem`): Add `store_id: existingItem.store_id`
+- **Line 395-399** (merge undo `saveLocalGroceryItem`): Add `store_id: existingItem.store_id`
+- **Line 477-480** (redo `saveLocalGroceryItem`): Add `store_id: newItem.store_id`
 
 - [ ] **Step 2: Update editItem to support store_id changes**
 
@@ -907,35 +919,63 @@ const editItem = useCallback(async (itemId: string, updates: { name?: string; qu
 
 Pass `store_id` through to `editGroceryItemAPI` and the local save. When saving locally, include `store_id` in the item data.
 
-- [ ] **Step 3: Thread store_id through replace/undo/redo payloads**
+- [ ] **Step 3: Thread store_id through ALL replace/undo/redo payloads**
 
-In the `toPayload` helper used by undo/redo (appears in multiple places, e.g., line 583-586), add `store_id`:
+There are **three** `toPayload` helpers and **four** inline `replaceGroceryListAPI` calls that all need `store_id`. Every one of these must be updated:
 
-```typescript
-const toPayload = (secs: GrocerySection[]) => secs.map(s => ({
-  name: s.name,
-  items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked, store_id: i.store_id })),
-}));
-```
+**`toPayload` helpers** — add `store_id: i.store_id` to each:
+- **Line 498-501** (inside `deleteItem`)
+- **Line 583-586** (inside `editItem`)
+- **Line 1039-1042** (inside `moveItem`)
 
-Search for all occurrences of `toPayload` and similar inline payload constructions and ensure `store_id` is included.
+**Inline `replaceGroceryListAPI` calls** (not using `toPayload`) — add `store_id: i.store_id`:
+- **Line 766-768** (inside `clearChecked` undo)
+- **Line 819-821** (inside `clearAll` undo)
 
-- [ ] **Step 4: Update local save helpers to include store_id**
+- [ ] **Step 4: Update ALL local save helpers to include store_id**
 
-Anywhere `saveLocalGroceryItem` or `saveLocalGroceryItems` is called, ensure `store_id` is included in the object. Search for patterns like:
+Every `saveLocalGroceryItems` and `saveLocalGroceryItem` call must include `store_id`. Here are all locations:
 
-```typescript
-{ id: i.id, section_id: i.section_id, name: i.name, quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at }
-```
+**`saveLocalGroceryItems` calls** — add `store_id: i.store_id` to each item mapping:
+- **Line 592-595** (editItem merge path)
+- **Line 739-742** (clearChecked local save)
+- **Line 760-763** (clearChecked undo)
+- **Line 813-816** (clearAll undo)
+- **Line 1051-1054** (moveItem undo)
 
-And add `store_id: i.store_id` to each.
+**`saveLocalGroceryItem` calls** — already enumerated in Step 1 above (addItem paths).
 
 - [ ] **Step 5: Update useSync.ts for store_id in queued changes**
 
-In `frontend/src/hooks/useSync.ts`, the grocery change handlers need to pass `store_id` where applicable:
-- `grocery-add`: pass `store_id` if present in the queued payload
-- `grocery-edit`: pass `store_id` if present
-- `grocery-replace`: already handled since replace passes full item objects
+In `frontend/src/hooks/useSync.ts`, update these specific locations:
+
+**Line 243** (`grocery-replace` payload type): Add `store_id?: string | null` to items type:
+```typescript
+const payload = change.payload as { sections: { name: string; items: { name: string; quantity: string | null; store_id?: string | null }[] }[] };
+```
+
+**Line 260** (`grocery-add` payload type): Add `store_id` field:
+```typescript
+const payload = change.payload as { id: string; sectionId: string; name: string; quantity: string | null; store_id?: string | null };
+```
+
+**Line 266** (`addGroceryItem` call): Pass `store_id`:
+```typescript
+const created = await addGroceryItem(realSectionId, payload.name, payload.quantity, payload.store_id ?? null);
+```
+
+**Line 285** (`grocery-edit` payload type): Add `store_id`:
+```typescript
+const payload = change.payload as { id: string; name?: string; quantity?: string | null; store_id?: string | null };
+```
+
+**Line 297-299** (edit updates construction): Add `store_id` handling:
+```typescript
+const updates: { name?: string; quantity?: string | null; store_id?: string | null } = {};
+if (payload.name !== undefined) updates.name = payload.name;
+if (payload.quantity !== undefined) updates.quantity = payload.quantity;
+if (payload.store_id !== undefined) updates.store_id = payload.store_id;
+```
 
 - [ ] **Step 6: Run frontend tests**
 
@@ -1176,42 +1216,131 @@ git commit -m "Add store subtext display and store picker in item edit view"
 - Create: `frontend/src/components/StoreFilterBar.tsx`
 - Modify: `frontend/src/components/GroceryListView.tsx`
 
-- [ ] **Step 1: Create StoreFilterBar component**
+- [ ] **Step 1: Create StoreFilterBar component with management features**
 
-Create `frontend/src/components/StoreFilterBar.tsx`:
+Create `frontend/src/components/StoreFilterBar.tsx`. This component handles:
+- Click to filter
+- Long-press (500ms) to open edit popover (rename + delete)
+- Drag to reorder chips
 
 ```typescript
+import { useState, useRef, useCallback } from 'react';
 import { Store } from '../types';
 
 interface StoreFilterBarProps {
   stores: Store[];
   activeStoreId: string | null;
   onFilterChange: (storeId: string | null) => void;
+  onRename: (storeId: string, name: string) => void;
+  onDelete: (storeId: string) => void;
+  onReorder: (fromIndex: number, toIndex: number) => void;
 }
 
-export function StoreFilterBar({ stores, activeStoreId, onFilterChange }: StoreFilterBarProps) {
+export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename, onDelete, onReorder }: StoreFilterBarProps) {
+  const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didLongPressRef = useRef(false);
+
   if (stores.length === 0) return null;
 
+  const handlePointerDown = (storeId: string, storeName: string) => {
+    didLongPressRef.current = false;
+    longPressTimerRef.current = setTimeout(() => {
+      didLongPressRef.current = true;
+      setEditingStoreId(storeId);
+      setEditName(storeName);
+    }, 500);
+  };
+
+  const handlePointerUp = (storeId: string) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (!didLongPressRef.current) {
+      onFilterChange(activeStoreId === storeId ? null : storeId);
+    }
+  };
+
+  const handlePointerLeave = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleSaveRename = () => {
+    if (editingStoreId && editName.trim()) {
+      onRename(editingStoreId, editName.trim());
+    }
+    setEditingStoreId(null);
+  };
+
+  const handleDelete = () => {
+    if (editingStoreId) {
+      onDelete(editingStoreId);
+      if (activeStoreId === editingStoreId) onFilterChange(null);
+    }
+    setEditingStoreId(null);
+  };
+
   return (
-    <div className="flex gap-2 overflow-x-auto pb-2 px-1 -mx-1 scrollbar-hide">
-      {stores.map(store => (
-        <button
-          key={store.id}
-          onClick={() => onFilterChange(activeStoreId === store.id ? null : store.id)}
-          className={`
-            flex-shrink-0 px-3 py-1 rounded-full text-sm font-medium transition-colors
-            ${activeStoreId === store.id
-              ? 'bg-blue-500 text-white'
-              : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-            }
-          `}
-        >
-          {store.name}
-        </button>
-      ))}
+    <div className="relative">
+      <div className="flex gap-2 overflow-x-auto pb-2 px-1 -mx-1 scrollbar-hide">
+        {stores.map(store => (
+          <button
+            key={store.id}
+            onPointerDown={() => handlePointerDown(store.id, store.name)}
+            onPointerUp={() => handlePointerUp(store.id)}
+            onPointerLeave={handlePointerLeave}
+            className={`
+              flex-shrink-0 px-3 py-1 rounded-full text-sm font-medium transition-colors select-none
+              ${activeStoreId === store.id
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+              }
+            `}
+          >
+            {store.name}
+          </button>
+        ))}
+      </div>
+
+      {/* Edit popover */}
+      {editingStoreId && (
+        <div className="absolute top-full left-0 right-0 mt-1 z-50">
+          <div className="bg-white dark:bg-gray-800 border dark:border-gray-600 rounded-lg shadow-lg p-3 mx-2">
+            <input
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveRename(); if (e.key === 'Escape') setEditingStoreId(null); }}
+              autoFocus
+              className="w-full text-sm px-2 py-1 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"
+            />
+            <div className="flex justify-between">
+              <button onClick={handleDelete} className="text-sm text-red-500 hover:text-red-700">
+                Delete
+              </button>
+              <div className="flex gap-2">
+                <button onClick={() => setEditingStoreId(null)} className="text-sm text-gray-500">
+                  Cancel
+                </button>
+                <button onClick={handleSaveRename} className="text-sm text-blue-500 font-medium">
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+```
+
+Note: Drag-to-reorder on horizontal chips is complex (the existing `useDragReorder` hook is built for vertical lists). For v1, implement reorder via the edit popover (add up/down arrows or a "move left"/"move right" button) or defer chip drag reorder to a follow-up. The `onReorder` prop is wired up so the hook is ready when drag is added.
 ```
 
 - [ ] **Step 2: Add filter state and logic to GroceryListView**
@@ -1248,10 +1377,17 @@ Place `<StoreFilterBar>` between the action bar and the sections container:
   stores={stores}
   activeStoreId={filterStoreId}
   onFilterChange={setFilterStoreId}
+  onRename={renameStore}
+  onDelete={removeStore}
+  onReorder={reorderStores}
 />
 ```
 
-Import `StoreFilterBar` at the top.
+Import `StoreFilterBar` at the top. This requires `renameStore`, `removeStore`, and `reorderStores` from `useStores()` — update the destructuring:
+
+```typescript
+const { stores, createStore, renameStore, removeStore, reorderStores } = useStores();
+```
 
 - [ ] **Step 4: Commit**
 
