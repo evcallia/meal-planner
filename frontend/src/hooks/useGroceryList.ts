@@ -25,6 +25,7 @@ import {
 import { useOnlineStatus } from './useOnlineStatus';
 import { useUndo } from '../contexts/UndoContext';
 import { ParsedGrocerySection } from '../utils/groceryParser';
+import { toTitleCase } from '../utils/titleCase';
 
 const GROCERY_STORAGE_KEY = 'meal-planner-grocery';
 
@@ -173,7 +174,7 @@ export function useGroceryList() {
         const newItems: GroceryItem[] = parsedSection.items.map((item, ii) => ({
           id: generateTempId(),
           section_id: existing.id,
-          name: item.name,
+          name: toTitleCase(item.name),
           quantity: item.quantity,
           checked: false,
           position: maxPos + ii,
@@ -193,7 +194,7 @@ export function useGroceryList() {
           items: parsedSection.items.map((item, ii) => ({
             id: generateTempId(),
             section_id: sectionId,
-            name: item.name,
+            name: toTitleCase(item.name),
             quantity: item.quantity,
             checked: false,
             position: ii,
@@ -274,11 +275,12 @@ export function useGroceryList() {
   // Toggle item checked
   const toggleItem = useCallback(async (itemId: string, checked: boolean) => {
     const prevSections = sections;
+    const checkedAt = new Date().toISOString();
 
     optimisticVersionRef.current++;
     setSections(prev => prev.map(s => ({
       ...s,
-      items: s.items.map(i => i.id === itemId ? { ...i, checked } : i)
+      items: s.items.map(i => i.id === itemId ? { ...i, checked, updated_at: checkedAt } : i)
         .sort((a, b) => (a.checked === b.checked ? a.position - b.position : a.checked ? 1 : -1)),
     })));
 
@@ -288,7 +290,7 @@ export function useGroceryList() {
     if (item) {
       await saveLocalGroceryItem({
         id: item.id, section_id: item.section_id, name: item.name,
-        quantity: item.quantity, checked, position: item.position, updated_at: new Date().toISOString(),
+        quantity: item.quantity, checked, position: item.position, updated_at: checkedAt,
       });
     }
 
@@ -310,7 +312,7 @@ export function useGroceryList() {
         if (item) {
           await saveLocalGroceryItem({
             id: item.id, section_id: item.section_id, name: item.name,
-            quantity: item.quantity, checked: !checked, position: item.position, updated_at: new Date().toISOString(),
+            quantity: item.quantity, checked: !checked, position: item.position, updated_at: item.updated_at,
           });
         }
         if (isOnline) {
@@ -323,13 +325,13 @@ export function useGroceryList() {
         pendingMutationsRef.current++;
         setSections(prev => prev.map(s => ({
           ...s,
-          items: s.items.map(i => i.id === itemId ? { ...i, checked } : i)
+          items: s.items.map(i => i.id === itemId ? { ...i, checked, updated_at: checkedAt } : i)
             .sort((a, b) => (a.checked === b.checked ? a.position - b.position : a.checked ? 1 : -1)),
         })));
         if (item) {
           await saveLocalGroceryItem({
             id: item.id, section_id: item.section_id, name: item.name,
-            quantity: item.quantity, checked, position: item.position, updated_at: new Date().toISOString(),
+            quantity: item.quantity, checked, position: item.position, updated_at: checkedAt,
           });
         }
         if (isOnline) {
@@ -340,17 +342,88 @@ export function useGroceryList() {
     });
   }, [sections, isOnline, pushAction]);
 
-  // Add item to a section
+  // Add item to a section (merges with existing duplicate if found)
   const addItem = useCallback(async (sectionId: string, name: string, quantity: string | null = null) => {
     const section = sections.find(s => s.id === sectionId);
     if (!section) return;
+
+    const trimmedName = toTitleCase(name.trim());
+
+    // Check for existing unchecked item with same name (case-insensitive)
+    const existingItem = section.items.find(
+      i => !i.checked && i.name.toLowerCase() === trimmedName.toLowerCase()
+    );
+
+    if (existingItem) {
+      // Merge: add quantities together
+      const existingQty = parseInt(existingItem.quantity || '1') || 1;
+      const addingQty = parseInt(quantity || '1') || 1;
+      const mergedQty = String(existingQty + addingQty);
+
+      // Delegate to editItem logic inline
+      const prevQuantity = existingItem.quantity;
+      optimisticVersionRef.current++;
+      setSections(prev => prev.map(s => ({
+        ...s,
+        items: s.items.map(i => i.id === existingItem.id ? { ...i, quantity: mergedQty } : i),
+      })));
+
+      await saveLocalGroceryItem({
+        id: existingItem.id, section_id: existingItem.section_id, name: existingItem.name,
+        quantity: mergedQty, checked: existingItem.checked, position: existingItem.position,
+        updated_at: new Date().toISOString(),
+      });
+
+      if (isOnline) {
+        pendingMutationsRef.current++;
+        try { await editGroceryItemAPI(existingItem.id, { quantity: mergedQty }); } catch {
+          await queueChange('grocery-edit', '', { id: existingItem.id, quantity: mergedQty });
+        } finally { settleMutation(); }
+      } else {
+        await queueChange('grocery-edit', '', { id: existingItem.id, quantity: mergedQty });
+      }
+
+      pushAction({
+        type: 'merge-grocery-item',
+        undo: async () => {
+          optimisticVersionRef.current++;
+          pendingMutationsRef.current++;
+          setSections(prev => prev.map(s => ({
+            ...s,
+            items: s.items.map(i => i.id === existingItem.id ? { ...i, quantity: prevQuantity } : i),
+          })));
+          await saveLocalGroceryItem({
+            id: existingItem.id, section_id: existingItem.section_id, name: existingItem.name,
+            quantity: prevQuantity, checked: existingItem.checked, position: existingItem.position,
+            updated_at: new Date().toISOString(),
+          });
+          if (isOnline) {
+            try { await editGroceryItemAPI(existingItem.id, { quantity: prevQuantity }); } catch { /* queue */ }
+          }
+          settleMutation();
+        },
+        redo: async () => {
+          optimisticVersionRef.current++;
+          pendingMutationsRef.current++;
+          setSections(prev => prev.map(s => ({
+            ...s,
+            items: s.items.map(i => i.id === existingItem.id ? { ...i, quantity: mergedQty } : i),
+          })));
+          if (isOnline) {
+            try { await editGroceryItemAPI(existingItem.id, { quantity: mergedQty }); } catch { /* queue */ }
+          }
+          settleMutation();
+        },
+      });
+      return;
+    }
 
     const tempId = generateTempId();
     const maxPos = section.items.length > 0 ? Math.max(...section.items.map(i => i.position)) + 1 : 0;
     const newItem: GroceryItem = {
       id: tempId,
       section_id: sectionId,
-      name: name.trim(),
+      name: trimmedName,
       quantity,
       checked: false,
       position: maxPos,
@@ -371,12 +444,12 @@ export function useGroceryList() {
     if (isOnline) {
       pendingMutationsRef.current++;
       try {
-        await addGroceryItemAPI(sectionId, name.trim(), quantity);
+        await addGroceryItemAPI(sectionId, trimmedName, quantity);
       } catch {
-        await queueChange('grocery-add', '', { id: tempId, sectionId, name: name.trim(), quantity });
+        await queueChange('grocery-add', '', { id: tempId, sectionId, name: trimmedName, quantity });
       } finally { settleMutation(); }
     } else {
-      await queueChange('grocery-add', '', { id: tempId, sectionId, name: name.trim(), quantity });
+      await queueChange('grocery-add', '', { id: tempId, sectionId, name: trimmedName, quantity });
     }
 
     pushAction({
@@ -481,6 +554,89 @@ export function useGroceryList() {
     const allItems = sections.flatMap(s => s.items);
     const item = allItems.find(i => i.id === itemId);
     if (!item) return;
+
+    // Apply title case to name edits
+    if (updates.name !== undefined) {
+      updates = { ...updates, name: toTitleCase(updates.name) };
+    }
+
+    // Check for duplicate: if name is changing to match another unchecked item in the same section, merge
+    const finalName = updates.name ?? item.name;
+    const section = sections.find(s => s.id === item.section_id);
+    if (section) {
+      const duplicate = section.items.find(
+        i => i.id !== itemId && !i.checked && i.name.toLowerCase() === finalName.toLowerCase()
+      );
+      if (duplicate) {
+        // Merge: combine quantities into the duplicate, delete the edited item
+        const editedQty = parseInt((updates.quantity !== undefined ? updates.quantity : item.quantity) || '1') || 1;
+        const dupQty = parseInt(duplicate.quantity || '1') || 1;
+        const mergedQty = String(editedQty + dupQty);
+
+        const prevSections = sections;
+        const newSections = sections.map(s => ({
+          ...s,
+          items: s.items
+            .filter(i => i.id !== itemId)
+            .map(i => i.id === duplicate.id ? { ...i, quantity: mergedQty } : i),
+        }));
+        const toPayload = (secs: GrocerySection[]) => secs.map(s => ({
+          name: s.name,
+          items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked })),
+        }));
+
+        optimisticVersionRef.current++;
+        setSections(newSections);
+
+        await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+        await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
+          id: i.id, section_id: i.section_id, name: i.name,
+          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+        }))));
+
+        if (isOnline) {
+          pendingMutationsRef.current++;
+          try { await replaceGroceryListAPI(toPayload(newSections)); } catch {
+            await queueChange('grocery-replace', '', { sections: toPayload(newSections) });
+          } finally { settleMutation(); }
+        } else {
+          await queueChange('grocery-replace', '', { sections: toPayload(newSections) });
+        }
+
+        pushAction({
+          type: 'edit-merge-grocery-item',
+          undo: async () => {
+            optimisticVersionRef.current++;
+            pendingMutationsRef.current++;
+            setSections(prevSections);
+            await saveLocalGrocerySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+            await saveLocalGroceryItems(prevSections.flatMap(s => s.items.map(i => ({
+              id: i.id, section_id: i.section_id, name: i.name,
+              quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+            }))));
+            if (isOnline) {
+              try { await replaceGroceryListAPI(toPayload(prevSections)); } catch { /* queue */ }
+            }
+            settleMutation();
+          },
+          redo: async () => {
+            optimisticVersionRef.current++;
+            pendingMutationsRef.current++;
+            setSections(newSections);
+            await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+            await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
+              id: i.id, section_id: i.section_id, name: i.name,
+              quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+            }))));
+            if (isOnline) {
+              try { await replaceGroceryListAPI(toPayload(newSections)); } catch { /* queue */ }
+            }
+            settleMutation();
+          },
+        });
+        return;
+      }
+    }
 
     const prevName = item.name;
     const prevQuantity = item.quantity;
