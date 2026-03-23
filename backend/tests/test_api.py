@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from unittest.mock import patch, AsyncMock
 
-from app.models import MealNote, MealItem, PantrySection, PantryItem, MealIdea
+from app.models import MealNote, MealItem, PantrySection, PantryItem, MealIdea, GrocerySection, GroceryItem, ItemDefault, Store
 from app.schemas import CalendarEvent
 
 
@@ -625,3 +625,193 @@ class TestMealIdeasAPI:
         response = authenticated_client.delete("/api/meal-ideas/00000000-0000-0000-0000-000000000001")
         assert response.status_code == 404
         assert "Idea not found" in response.json()["detail"]
+
+
+class TestStoresAPI:
+    @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
+    def test_create_and_list_stores(self, mock_broadcast, authenticated_client: TestClient):
+        """Test creating a store applies title case and list returns it at position 0."""
+        response = authenticated_client.post("/api/stores", json={"name": "trader joes"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "Trader Joes"
+        assert data["position"] == 0
+
+        list_response = authenticated_client.get("/api/stores")
+        assert list_response.status_code == 200
+        stores = list_response.json()
+        assert len(stores) == 1
+        assert stores[0]["name"] == "Trader Joes"
+        mock_broadcast.assert_awaited()
+
+    @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
+    def test_create_duplicate_store_returns_existing(self, mock_broadcast, authenticated_client: TestClient):
+        """Test creating a store with a duplicate name (case-insensitive) returns existing store."""
+        first_response = authenticated_client.post("/api/stores", json={"name": "Whole Foods"})
+        assert first_response.status_code == 200
+        first_id = first_response.json()["id"]
+
+        second_response = authenticated_client.post("/api/stores", json={"name": "whole foods"})
+        assert second_response.status_code == 200
+        assert second_response.json()["id"] == first_id
+
+    @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
+    def test_rename_store(self, mock_broadcast, authenticated_client: TestClient):
+        """Test renaming a store updates its name."""
+        create_response = authenticated_client.post("/api/stores", json={"name": "Costco"})
+        store_id = create_response.json()["id"]
+
+        rename_response = authenticated_client.patch(f"/api/stores/{store_id}", json={"name": "costco wholesale"})
+        assert rename_response.status_code == 200
+        assert rename_response.json()["name"] == "Costco Wholesale"
+
+    @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_delete_store_nullifies_grocery_items(self, mock_grocery_broadcast, mock_stores_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test deleting a store sets store_id to None on associated grocery items."""
+        # Create store via API
+        create_response = authenticated_client.post("/api/stores", json={"name": "Target"})
+        assert create_response.status_code == 200
+        store_id = create_response.json()["id"]
+
+        # Create section and item directly in db
+        from uuid import UUID
+        section = GrocerySection(name="General", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+
+        item = GroceryItem(section_id=section.id, name="Milk", position=0, store_id=UUID(store_id))
+        db_session.add(item)
+        db_session.commit()
+        db_session.refresh(item)
+        assert str(item.store_id) == store_id
+
+        # Delete store
+        delete_response = authenticated_client.delete(f"/api/stores/{store_id}")
+        assert delete_response.status_code == 200
+
+        # Verify item's store_id is now None
+        db_session.refresh(item)
+        assert item.store_id is None
+
+    @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
+    def test_reorder_stores(self, mock_broadcast, authenticated_client: TestClient):
+        """Test reordering stores updates their positions."""
+        a_response = authenticated_client.post("/api/stores", json={"name": "Store A"})
+        b_response = authenticated_client.post("/api/stores", json={"name": "Store B"})
+        a_id = a_response.json()["id"]
+        b_id = b_response.json()["id"]
+
+        reorder_response = authenticated_client.patch("/api/stores/reorder", json={"store_ids": [b_id, a_id]})
+        assert reorder_response.status_code == 200
+
+        list_response = authenticated_client.get("/api/stores")
+        stores = list_response.json()
+        assert stores[0]["id"] == b_id
+        assert stores[1]["id"] == a_id
+
+
+class TestGroceryStoreDefaults:
+    @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_assign_store_creates_default(self, mock_grocery_broadcast, mock_stores_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test that assigning a store to an item via PATCH creates an ItemDefault row."""
+        from uuid import UUID
+        # Create store via API
+        store_resp = authenticated_client.post("/api/stores", json={"name": "Safeway"})
+        store_id = store_resp.json()["id"]
+
+        # Create section and item directly in db
+        section = GrocerySection(name="Produce", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+
+        item = GroceryItem(section_id=section.id, name="Apples", position=0)
+        db_session.add(item)
+        db_session.commit()
+        db_session.refresh(item)
+        item_id = str(item.id)
+
+        # Assign store to item
+        patch_resp = authenticated_client.patch(f"/api/grocery/items/{item_id}", json={"store_id": store_id})
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["store_id"] == store_id
+
+        # Verify ItemDefault row exists
+        default = db_session.query(ItemDefault).filter(ItemDefault.item_name == "apples").first()
+        assert default is not None
+        assert str(default.store_id) == store_id
+
+    @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_add_item_auto_populates_store(self, mock_grocery_broadcast, mock_stores_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test that adding an item with a known default auto-populates the store."""
+        from uuid import UUID
+        # Create store via API
+        store_resp = authenticated_client.post("/api/stores", json={"name": "Kroger"})
+        store_id = store_resp.json()["id"]
+
+        # Create section directly in db
+        section = GrocerySection(name="Dairy", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+        section_id = str(section.id)
+
+        # Add item and assign store (creates default)
+        add_resp = authenticated_client.post("/api/grocery/items", json={"section_id": section_id, "name": "Butter"})
+        assert add_resp.status_code == 200
+        item_id = add_resp.json()["id"]
+
+        patch_resp = authenticated_client.patch(f"/api/grocery/items/{item_id}", json={"store_id": store_id})
+        assert patch_resp.status_code == 200
+
+        # Delete the item
+        del_resp = authenticated_client.delete(f"/api/grocery/items/{item_id}")
+        assert del_resp.status_code == 200
+
+        # Re-add same item name — should auto-populate store
+        readd_resp = authenticated_client.post("/api/grocery/items", json={"section_id": section_id, "name": "Butter"})
+        assert readd_resp.status_code == 200
+        assert readd_resp.json()["store_id"] == store_id
+
+    @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_clear_store_clears_default(self, mock_grocery_broadcast, mock_stores_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test that clearing store_id via PATCH also clears the ItemDefault."""
+        from uuid import UUID
+        # Create store via API
+        store_resp = authenticated_client.post("/api/stores", json={"name": "Aldi"})
+        store_id = store_resp.json()["id"]
+
+        # Create section and item directly in db
+        section = GrocerySection(name="Snacks", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+
+        item = GroceryItem(section_id=section.id, name="Chips", position=0)
+        db_session.add(item)
+        db_session.commit()
+        db_session.refresh(item)
+        item_id = str(item.id)
+
+        # Assign store (creates default)
+        patch_resp = authenticated_client.patch(f"/api/grocery/items/{item_id}", json={"store_id": store_id})
+        assert patch_resp.status_code == 200
+
+        # Verify default was created
+        default = db_session.query(ItemDefault).filter(ItemDefault.item_name == "chips").first()
+        assert default is not None
+        assert str(default.store_id) == store_id
+
+        # Clear store_id
+        clear_resp = authenticated_client.patch(f"/api/grocery/items/{item_id}", json={"store_id": None})
+        assert clear_resp.status_code == 200
+        assert clear_resp.json()["store_id"] is None
+
+        # Verify ItemDefault.store_id is now None
+        db_session.refresh(default)
+        assert default.store_id is None
