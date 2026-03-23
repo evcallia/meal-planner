@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime, date
-from sqlalchemy import String, Text, Boolean, Integer, Date, DateTime, ForeignKey
+from sqlalchemy import String, Text, Boolean, Integer, Date, DateTime, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.database import Base
@@ -147,12 +148,47 @@ class GroceryItem(Base):
     quantity: Mapped[str | None] = mapped_column(Text, nullable=True)
     checked: Mapped[bool] = mapped_column(Boolean, default=False)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    store_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stores.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
     section: Mapped["GrocerySection"] = relationship("GrocerySection", back_populates="items")
+    store: Mapped["Store | None"] = relationship("Store")
+
+
+class Store(Base):
+    """Grocery stores (e.g., Whole Foods, Trader Joe's)."""
+    __tablename__ = "stores"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(Text)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('ix_stores_name_lower', func.lower(name), unique=True),
+    )
+
+
+class ItemDefault(Base):
+    """Per-item defaults (e.g., default store for an item name)."""
+    __tablename__ = "item_defaults"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    item_name: Mapped[str] = mapped_column(Text, unique=True)
+    store_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stores.id", ondelete="SET NULL"), nullable=True
+    )
+
+    store: Mapped["Store | None"] = relationship("Store")
 
 
 class HiddenCalendarEvent(Base):
