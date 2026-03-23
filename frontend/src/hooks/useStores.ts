@@ -12,7 +12,13 @@ import { saveLocalStores, getLocalStores } from '../db';
 import { useOnlineStatus } from './useOnlineStatus';
 import { useUndo } from '../contexts/UndoContext';
 
-export function useStores(grocerySections?: GrocerySection[]) {
+interface UseStoresOptions {
+  grocerySections?: GrocerySection[];
+  onItemsStoreChanged?: (itemIds: string[], storeId: string | null) => void;
+}
+
+export function useStores(options: UseStoresOptions = {}) {
+  const { grocerySections, onItemsStoreChanged } = options;
   const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState(true);
   const isOnline = useOnlineStatus();
@@ -21,6 +27,8 @@ export function useStores(grocerySections?: GrocerySection[]) {
   const deferredRef = useRef(false);
   const grocerySectionsRef = useRef(grocerySections);
   grocerySectionsRef.current = grocerySections;
+  const onItemsStoreChangedRef = useRef(onItemsStoreChanged);
+  onItemsStoreChangedRef.current = onItemsStoreChanged;
 
   const loadStores = useCallback(async () => {
     try {
@@ -125,6 +133,9 @@ export function useStores(grocerySections?: GrocerySection[]) {
       .filter(i => i.store_id === storeId)
       .map(i => i.id);
 
+    // Optimistically null out store_id on affected items
+    onItemsStoreChangedRef.current?.(affectedItemIds, null);
+
     pendingRef.current++;
     setStores(prev => {
       const updated = prev.filter(s => s.id !== storeId);
@@ -150,7 +161,10 @@ export function useStores(grocerySections?: GrocerySection[]) {
             return updated;
           });
 
-          // Re-assign store to affected items
+          // Optimistically restore store_id on affected items
+          onItemsStoreChangedRef.current?.(affectedItemIds, restored.id);
+
+          // Re-assign store to affected items on server
           for (const itemId of affectedItemIds) {
             try { await editGroceryItemAPI(itemId, { store_id: restored.id }); } catch {}
           }
@@ -159,6 +173,9 @@ export function useStores(grocerySections?: GrocerySection[]) {
       },
       redo: async () => {
         pendingRef.current++;
+        // Null out store_id on affected items again
+        onItemsStoreChangedRef.current?.(affectedItemIds, null);
+
         setStores(prev => {
           const updated = prev.filter(s => s.name.toLowerCase() !== deletedStore.name.toLowerCase());
           saveLocalStores(updated.map(s => ({ id: s.id, name: s.name, position: s.position })));
