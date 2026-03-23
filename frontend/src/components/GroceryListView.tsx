@@ -1,8 +1,10 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useGroceryList } from '../hooks/useGroceryList';
+import { useStores } from '../hooks/useStores';
 import { parseGroceryText } from '../utils/groceryParser';
-import { GrocerySection } from '../types';
+import { GrocerySection, Store } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
+import { StoreAutocomplete } from './StoreAutocomplete';
 
 interface GroceryListViewProps {
   compactView?: boolean;
@@ -10,6 +12,7 @@ interface GroceryListViewProps {
 
 export function GroceryListView({ compactView: _compactView }: GroceryListViewProps) {
   const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, moveItem } = useGroceryList();
+  const { stores, createStore } = useStores();
   const [showInputArea, setShowInputArea] = useState(false);
   const [inputText, setInputText] = useState('');
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
@@ -115,6 +118,10 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       return next;
     });
   }, []);
+
+  const handleStoreAssign = useCallback((itemId: string, storeId: string | null) => {
+    editItem(itemId, { store_id: storeId });
+  }, [editItem]);
 
   useEffect(() => {
     if (!showClearMenu) return;
@@ -317,6 +324,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 newItemName={newItemName}
                 onNewItemNameChange={setNewItemName}
                 onAddItem={handleAddItem}
+                stores={stores}
+                onStoreAssign={handleStoreAssign}
+                onCreateStore={createStore}
               />
             </div>
           );
@@ -337,6 +347,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 onToggle={toggleItem}
                 onDelete={deleteItem}
                 onEdit={editItem}
+                stores={stores}
+                onStoreAssign={handleStoreAssign}
+                onCreateStore={createStore}
               />
             ))}
           </div>
@@ -368,6 +381,9 @@ interface SectionCardProps {
   newItemName: string;
   onNewItemNameChange: (name: string) => void;
   onAddItem: (sectionId: string) => void;
+  stores: Store[];
+  onStoreAssign: (itemId: string, storeId: string | null) => void;
+  onCreateStore: (name: string) => Promise<Store | null>;
 }
 
 function SectionCard({
@@ -391,6 +407,9 @@ function SectionCard({
   newItemName,
   onNewItemNameChange,
   onAddItem,
+  stores,
+  onStoreAssign,
+  onCreateStore,
 }: SectionCardProps) {
   const uncheckedItems = section.items.filter(i => !i.checked);
   const itemContainerRef = useRef<HTMLDivElement>(null);
@@ -505,6 +524,9 @@ function SectionCard({
                   dragHandlers={getItemDragHandlers(index)}
                   handleMouseDown={getItemHandleMouseDown(index)}
                   isDragging={itemDragState.isDragging}
+                  stores={stores}
+                  onStoreAssign={onStoreAssign}
+                  onCreateStore={onCreateStore}
                 />
               </div>
             );
@@ -566,9 +588,12 @@ interface GroceryItemRowProps {
   dragHandlers?: ReturnType<ReturnType<typeof useDragReorder>['getDragHandlers']>;
   handleMouseDown?: (e: React.MouseEvent) => void;
   isDragging?: boolean;
+  stores: Store[];
+  onStoreAssign: (itemId: string, storeId: string | null) => void;
+  onCreateStore: (name: string) => Promise<Store | null>;
 }
 
-function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging }: GroceryItemRowProps) {
+function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging, stores, onStoreAssign, onCreateStore }: GroceryItemRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -577,6 +602,8 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
   const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const swipeModeRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+
+  const storeName = stores?.find(s => s.id === item.store_id)?.name;
 
   const SWIPE_THRESHOLD = 50;
   const SWIPE_MAX = 80;
@@ -654,6 +681,12 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
             className="flex-1 min-w-0 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
+        <StoreAutocomplete
+          stores={stores}
+          selectedStoreId={item.store_id}
+          onSelect={(storeId) => onStoreAssign(item.id, storeId)}
+          onCreate={onCreateStore}
+        />
         <div className="flex items-center justify-end gap-3">
           <button
             onClick={cancelEdit}
@@ -776,24 +809,30 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
         </button>
 
         {/* Item text -- tap to edit */}
-        <span
-          className={`
-            flex-1 min-w-0 break-words cursor-pointer
-            text-sm
-            ${item.checked
-              ? 'text-gray-400 dark:text-gray-500 line-through'
-              : 'text-gray-800 dark:text-gray-200'
-            }
-          `}
-          onClick={startEditing}
-        >
-          {item.quantity && (
-            <span className={`font-medium ${item.checked ? 'text-gray-400 dark:text-gray-500' : 'text-blue-600 dark:text-blue-400'}`}>
-              ({item.quantity}){' '}
-            </span>
+        <div className="flex flex-col min-w-0 flex-1" onClick={startEditing}>
+          <span
+            className={`
+              min-w-0 break-words cursor-pointer
+              text-sm
+              ${item.checked
+                ? 'text-gray-400 dark:text-gray-500 line-through'
+                : 'text-gray-800 dark:text-gray-200'
+              }
+            `}
+          >
+            {item.quantity && (
+              <span className={`font-medium ${item.checked ? 'text-gray-400 dark:text-gray-500' : 'text-blue-600 dark:text-blue-400'}`}>
+                ({item.quantity}){' '}
+              </span>
+            )}
+            {item.name}
+          </span>
+          {storeName && (
+            <div className="text-xs text-gray-400 dark:text-gray-500 leading-tight">
+              {storeName}
+            </div>
           )}
-          {item.name}
-        </span>
+        </div>
 
         {/* Desktop delete button */}
         <button
