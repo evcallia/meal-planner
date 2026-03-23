@@ -88,7 +88,7 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
             <button
               key={store.id}
               onClick={() => handleSelect(store)}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+              className="w-full text-left px-3 py-2 text-sm text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700"
             >
               {store.name}
             </button>

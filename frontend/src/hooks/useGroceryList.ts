@@ -644,6 +644,7 @@ export function useGroceryList() {
 
     const prevName = item.name;
     const prevQuantity = item.quantity;
+    const prevStoreId = item.store_id;
 
     optimisticVersionRef.current++;
     setSections(prev => prev.map(s => ({
@@ -652,6 +653,7 @@ export function useGroceryList() {
         ...i,
         ...(updates.name !== undefined ? { name: updates.name } : {}),
         ...(updates.quantity !== undefined ? { quantity: updates.quantity } : {}),
+        ...(updates.store_id !== undefined ? { store_id: updates.store_id } : {}),
       } : i),
     })));
 
@@ -661,7 +663,7 @@ export function useGroceryList() {
       name: updates.name ?? item.name,
       quantity: updates.quantity !== undefined ? updates.quantity : item.quantity,
       checked: item.checked, position: item.position,
-      store_id: item.store_id,
+      store_id: updates.store_id !== undefined ? updates.store_id : item.store_id,
       updated_at: new Date().toISOString(),
     });
 
@@ -677,9 +679,10 @@ export function useGroceryList() {
     pushAction({
       type: 'edit-grocery-item',
       undo: async () => {
-        const undoUpdates: { name?: string; quantity?: string | null } = {};
+        const undoUpdates: { name?: string; quantity?: string | null; store_id?: string | null } = {};
         if (updates.name !== undefined) undoUpdates.name = prevName;
         if (updates.quantity !== undefined) undoUpdates.quantity = prevQuantity;
+        if (updates.store_id !== undefined) undoUpdates.store_id = prevStoreId;
 
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
@@ -692,7 +695,7 @@ export function useGroceryList() {
           name: undoUpdates.name ?? item.name,
           quantity: undoUpdates.quantity !== undefined ? undoUpdates.quantity : item.quantity,
           checked: item.checked, position: item.position,
-          store_id: item.store_id,
+          store_id: undoUpdates.store_id !== undefined ? undoUpdates.store_id : item.store_id,
           updated_at: new Date().toISOString(),
         });
         if (isOnline) {
@@ -709,6 +712,7 @@ export function useGroceryList() {
             ...i,
             ...(updates.name !== undefined ? { name: updates.name } : {}),
             ...(updates.quantity !== undefined ? { quantity: updates.quantity } : {}),
+            ...(updates.store_id !== undefined ? { store_id: updates.store_id } : {}),
           } : i),
         })));
         await saveLocalGroceryItem({
@@ -716,7 +720,7 @@ export function useGroceryList() {
           name: updates.name ?? item.name,
           quantity: updates.quantity !== undefined ? updates.quantity : item.quantity,
           checked: item.checked, position: item.position,
-          store_id: item.store_id,
+          store_id: updates.store_id !== undefined ? updates.store_id : item.store_id,
           updated_at: new Date().toISOString(),
         });
         if (isOnline) {
