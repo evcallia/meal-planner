@@ -106,6 +106,7 @@ export function useGroceryList() {
           quantity: i.quantity,
           checked: i.checked,
           position: i.position,
+          store_id: i.store_id,
           updated_at: i.updated_at,
         })));
       } else {
@@ -178,6 +179,7 @@ export function useGroceryList() {
           quantity: item.quantity,
           checked: false,
           position: maxPos + ii,
+          store_id: null,
           updated_at: new Date().toISOString(),
         }));
         mergedSections[existingIndex] = {
@@ -198,6 +200,7 @@ export function useGroceryList() {
             quantity: item.quantity,
             checked: false,
             position: ii,
+            store_id: null,
             updated_at: new Date().toISOString(),
           })),
         });
@@ -211,7 +214,7 @@ export function useGroceryList() {
     await saveLocalGrocerySections(mergedSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
     await saveLocalGroceryItems(mergedSections.flatMap(s => s.items.map(i => ({
       id: i.id, section_id: i.section_id, name: i.name,
-      quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+      quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
     }))));
 
     // Sync — replace the full list on the server with the merged result
@@ -229,7 +232,7 @@ export function useGroceryList() {
         await saveLocalGrocerySections(result.map(s => ({ id: s.id, name: s.name, position: s.position })));
         await saveLocalGroceryItems(result.flatMap(s => s.items.map(i => ({
           id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+          quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
         }))));
       } catch {
         await queueChange('grocery-replace', '', { sections: mergedPayload });
@@ -247,7 +250,7 @@ export function useGroceryList() {
         await saveLocalGrocerySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
         await saveLocalGroceryItems(prevSections.flatMap(s => s.items.map(i => ({
           id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+          quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
         }))));
         if (isOnline) {
           try {
@@ -290,7 +293,7 @@ export function useGroceryList() {
     if (item) {
       await saveLocalGroceryItem({
         id: item.id, section_id: item.section_id, name: item.name,
-        quantity: item.quantity, checked, position: item.position, updated_at: checkedAt,
+        quantity: item.quantity, checked, position: item.position, store_id: item.store_id, updated_at: checkedAt,
       });
     }
 
@@ -312,7 +315,7 @@ export function useGroceryList() {
         if (item) {
           await saveLocalGroceryItem({
             id: item.id, section_id: item.section_id, name: item.name,
-            quantity: item.quantity, checked: !checked, position: item.position, updated_at: item.updated_at,
+            quantity: item.quantity, checked: !checked, position: item.position, store_id: item.store_id, updated_at: item.updated_at,
           });
         }
         if (isOnline) {
@@ -331,7 +334,7 @@ export function useGroceryList() {
         if (item) {
           await saveLocalGroceryItem({
             id: item.id, section_id: item.section_id, name: item.name,
-            quantity: item.quantity, checked, position: item.position, updated_at: checkedAt,
+            quantity: item.quantity, checked, position: item.position, store_id: item.store_id, updated_at: checkedAt,
           });
         }
         if (isOnline) {
@@ -371,7 +374,7 @@ export function useGroceryList() {
       await saveLocalGroceryItem({
         id: existingItem.id, section_id: existingItem.section_id, name: existingItem.name,
         quantity: mergedQty, checked: existingItem.checked, position: existingItem.position,
-        updated_at: new Date().toISOString(),
+        store_id: existingItem.store_id, updated_at: new Date().toISOString(),
       });
 
       if (isOnline) {
@@ -395,7 +398,7 @@ export function useGroceryList() {
           await saveLocalGroceryItem({
             id: existingItem.id, section_id: existingItem.section_id, name: existingItem.name,
             quantity: prevQuantity, checked: existingItem.checked, position: existingItem.position,
-            updated_at: new Date().toISOString(),
+            store_id: existingItem.store_id, updated_at: new Date().toISOString(),
           });
           if (isOnline) {
             try { await editGroceryItemAPI(existingItem.id, { quantity: prevQuantity }); } catch { /* queue */ }
@@ -427,6 +430,7 @@ export function useGroceryList() {
       quantity,
       checked: false,
       position: maxPos,
+      store_id: null,
       updated_at: new Date().toISOString(),
     };
 
@@ -438,7 +442,7 @@ export function useGroceryList() {
 
     await saveLocalGroceryItem({
       id: newItem.id, section_id: newItem.section_id, name: newItem.name,
-      quantity: newItem.quantity, checked: false, position: newItem.position, updated_at: newItem.updated_at,
+      quantity: newItem.quantity, checked: false, position: newItem.position, store_id: newItem.store_id, updated_at: newItem.updated_at,
     });
 
     if (isOnline) {
@@ -476,7 +480,7 @@ export function useGroceryList() {
         ));
         await saveLocalGroceryItem({
           id: newItem.id, section_id: newItem.section_id, name: newItem.name,
-          quantity: newItem.quantity, checked: false, position: newItem.position, updated_at: newItem.updated_at,
+          quantity: newItem.quantity, checked: false, position: newItem.position, store_id: newItem.store_id, updated_at: newItem.updated_at,
         });
         settleMutation();
       },
@@ -510,7 +514,7 @@ export function useGroceryList() {
         await saveLocalGrocerySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
         await saveLocalGroceryItems(prevSections.flatMap(s => s.items.map(i => ({
           id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+          quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
         }))));
         if (isOnline) {
           try { await replaceGroceryListAPI(toPayload(prevSections)); } catch { /* queue */ }
@@ -524,7 +528,7 @@ export function useGroceryList() {
         await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
         await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
           id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+          quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
         }))));
         if (isOnline) {
           try { await replaceGroceryListAPI(toPayload(newSections)); } catch { /* queue */ }
@@ -591,7 +595,7 @@ export function useGroceryList() {
         await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
         await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
           id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+          quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
         }))));
 
         if (isOnline) {
@@ -612,7 +616,7 @@ export function useGroceryList() {
             await saveLocalGrocerySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
             await saveLocalGroceryItems(prevSections.flatMap(s => s.items.map(i => ({
               id: i.id, section_id: i.section_id, name: i.name,
-              quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+              quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
             }))));
             if (isOnline) {
               try { await replaceGroceryListAPI(toPayload(prevSections)); } catch { /* queue */ }
@@ -626,7 +630,7 @@ export function useGroceryList() {
             await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
             await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
               id: i.id, section_id: i.section_id, name: i.name,
-              quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+              quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
             }))));
             if (isOnline) {
               try { await replaceGroceryListAPI(toPayload(newSections)); } catch { /* queue */ }
@@ -657,6 +661,7 @@ export function useGroceryList() {
       name: updates.name ?? item.name,
       quantity: updates.quantity !== undefined ? updates.quantity : item.quantity,
       checked: item.checked, position: item.position,
+      store_id: item.store_id,
       updated_at: new Date().toISOString(),
     });
 
@@ -687,6 +692,7 @@ export function useGroceryList() {
           name: undoUpdates.name ?? item.name,
           quantity: undoUpdates.quantity !== undefined ? undoUpdates.quantity : item.quantity,
           checked: item.checked, position: item.position,
+          store_id: item.store_id,
           updated_at: new Date().toISOString(),
         });
         if (isOnline) {
@@ -710,6 +716,7 @@ export function useGroceryList() {
           name: updates.name ?? item.name,
           quantity: updates.quantity !== undefined ? updates.quantity : item.quantity,
           checked: item.checked, position: item.position,
+          store_id: item.store_id,
           updated_at: new Date().toISOString(),
         });
         if (isOnline) {
@@ -738,7 +745,7 @@ export function useGroceryList() {
     await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
     await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
       id: i.id, section_id: i.section_id, name: i.name,
-      quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+      quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
     }))));
 
     if (isOnline) {
@@ -759,7 +766,7 @@ export function useGroceryList() {
         await saveLocalGrocerySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
         await saveLocalGroceryItems(prevSections.flatMap(s => s.items.map(i => ({
           id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+          quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
         }))));
         if (isOnline) {
           try {
@@ -812,7 +819,7 @@ export function useGroceryList() {
         await saveLocalGrocerySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
         await saveLocalGroceryItems(prevSections.flatMap(s => s.items.map(i => ({
           id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+          quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
         }))));
         if (isOnline) {
           try {
@@ -910,7 +917,7 @@ export function useGroceryList() {
 
     await saveLocalGroceryItems(updatedSections.flatMap(s => s.items.map(i => ({
       id: i.id, section_id: i.section_id, name: i.name,
-      quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+      quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
     }))));
 
     const itemIds = updatedItems.map(i => i.id);
@@ -933,7 +940,7 @@ export function useGroceryList() {
         setSections(prevSections);
         await saveLocalGroceryItems(prevSections.flatMap(s => s.items.map(i => ({
           id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+          quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
         }))));
         const prevUnchecked = prevSections.find(s => s.id === sectionId)?.items.filter(i => !i.checked) ?? [];
         if (isOnline) {
@@ -947,7 +954,7 @@ export function useGroceryList() {
         setSections(updatedSections);
         await saveLocalGroceryItems(updatedSections.flatMap(s => s.items.map(i => ({
           id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+          quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
         }))));
         if (isOnline) {
           try { await reorderGroceryItemsAPI(sectionId, itemIds); } catch { /* queue */ }
@@ -1050,7 +1057,7 @@ export function useGroceryList() {
         await saveLocalGrocerySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
         await saveLocalGroceryItems(prevSections.flatMap(s => s.items.map(i => ({
           id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+          quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
         }))));
         if (isOnline) {
           try { await replaceGroceryListAPI(toPayload(prevSections)); } catch { /* queue */ }
@@ -1064,7 +1071,7 @@ export function useGroceryList() {
         await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
         await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
           id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+          quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
         }))));
         if (isOnline) {
           try { await replaceGroceryListAPI(toPayload(newSections)); } catch { /* queue */ }
@@ -1079,7 +1086,7 @@ export function useGroceryList() {
     await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
     await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
       id: i.id, section_id: i.section_id, name: i.name,
-      quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+      quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
     }))));
 
     if (isOnline) {

@@ -510,7 +510,7 @@ function AppContent() {
       await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
       await saveLocalGroceryItems(data.flatMap(s => s.items.map(i => ({
         id: i.id, section_id: i.section_id, name: i.name,
-        quantity: i.quantity, checked: i.checked, position: i.position, updated_at: i.updated_at,
+        quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
       }))));
     }).catch(() => { /* best-effort */ });
   }, [user, isOnline]);
