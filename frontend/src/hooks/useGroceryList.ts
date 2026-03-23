@@ -448,7 +448,22 @@ export function useGroceryList() {
     if (isOnline) {
       pendingMutationsRef.current++;
       try {
-        await addGroceryItemAPI(sectionId, trimmedName, quantity);
+        const created = await addGroceryItemAPI(sectionId, trimmedName, quantity);
+        // Update temp item with server response (real ID, auto-populated store_id)
+        if (created.store_id || created.id !== tempId) {
+          optimisticVersionRef.current++;
+          setSections(prev => prev.map(s => s.id === sectionId
+            ? { ...s, items: s.items.map(i => i.id === tempId ? { ...i, id: created.id, store_id: created.store_id } : i) }
+            : s
+          ));
+          newItem.id = created.id;
+          newItem.store_id = created.store_id;
+          await saveLocalGroceryItem({
+            id: created.id, section_id: sectionId, name: trimmedName,
+            quantity, checked: false, position: newItem.position, store_id: created.store_id, updated_at: created.updated_at,
+          });
+          await deleteLocalGroceryItem(tempId);
+        }
       } catch {
         await queueChange('grocery-add', '', { id: tempId, sectionId, name: trimmedName, quantity });
       } finally { settleMutation(); }
