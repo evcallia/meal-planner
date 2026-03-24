@@ -461,24 +461,34 @@ export function usePantry() {
       await queueChange('pantry-reorder-sections', '', { sectionIds });
     }
 
+    const prevOrder = prevSections.map(s => s.id);
     pushAction({
       type: 'reorder-pantry-sections',
       undo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(prevSections);
-        await saveLocalPantrySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        const prevIds = prevSections.map(s => s.id);
+        setSections(prev => {
+          const byId = new Map(prev.map(s => [s.id, s]));
+          const reordered = prevOrder.filter(id => byId.has(id)).map((id, i) => ({ ...byId.get(id)!, position: i }));
+          const prevSet = new Set(prevOrder);
+          const extra = prev.filter(s => !prevSet.has(s.id)).map((s, i) => ({ ...s, position: reordered.length + i }));
+          return [...reordered, ...extra];
+        });
         if (isOnline) {
-          try { await reorderPantrySectionsAPI(prevIds); } catch { /* queue */ }
+          try { await reorderPantrySectionsAPI(prevOrder); } catch { /* queue */ }
         }
         settleMutation();
       },
       redo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(updated);
-        await saveLocalPantrySections(updated.map(s => ({ id: s.id, name: s.name, position: s.position })));
+        setSections(prev => {
+          const byId = new Map(prev.map(s => [s.id, s]));
+          const reordered = sectionIds.filter(id => byId.has(id)).map((id, i) => ({ ...byId.get(id)!, position: i }));
+          const newSet = new Set(sectionIds);
+          const extra = prev.filter(s => !newSet.has(s.id)).map((s, i) => ({ ...s, position: reordered.length + i }));
+          return [...reordered, ...extra];
+        });
         if (isOnline) {
           try { await reorderPantrySectionsAPI(sectionIds); } catch { /* queue */ }
         }
@@ -490,7 +500,6 @@ export function usePantry() {
   // Reorder items within a section
   const reorderItems = useCallback(async (sectionId: string, fromIndex: number, toIndex: number) => {
     if (fromIndex === toIndex) return;
-    const prevSections = sections;
     const section = sections.find(s => s.id === sectionId);
     if (!section) return;
 
@@ -520,30 +529,36 @@ export function usePantry() {
       await queueChange('pantry-reorder-items', '', { sectionId, itemIds });
     }
 
+    const prevItemOrder = section.items.map(i => i.id);
     pushAction({
       type: 'reorder-pantry-items',
       undo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(prevSections);
-        await saveLocalPantryItems(prevSections.flatMap(s => s.items.map(i => ({
-          id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-        }))));
-        const prevItems = prevSections.find(s => s.id === sectionId)?.items ?? [];
+        setSections(prev => prev.map(s => {
+          if (s.id !== sectionId) return s;
+          const byId = new Map(s.items.map(i => [i.id, i]));
+          const reordered = prevItemOrder.filter(id => byId.has(id)).map((id, i) => ({ ...byId.get(id)!, position: i }));
+          const prevSet = new Set(prevItemOrder);
+          const extra = s.items.filter(i => !prevSet.has(i.id)).map((i, idx) => ({ ...i, position: reordered.length + idx }));
+          return { ...s, items: [...reordered, ...extra] };
+        }));
         if (isOnline) {
-          try { await reorderPantryItemsAPI(sectionId, prevItems.map(i => i.id)); } catch { /* queue */ }
+          try { await reorderPantryItemsAPI(sectionId, prevItemOrder); } catch { /* queue */ }
         }
         settleMutation();
       },
       redo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(updatedSections);
-        await saveLocalPantryItems(updatedSections.flatMap(s => s.items.map(i => ({
-          id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-        }))));
+        setSections(prev => prev.map(s => {
+          if (s.id !== sectionId) return s;
+          const byId = new Map(s.items.map(i => [i.id, i]));
+          const reordered = itemIds.filter(id => byId.has(id)).map((id, i) => ({ ...byId.get(id)!, position: i }));
+          const newSet = new Set(itemIds);
+          const extra = s.items.filter(i => !newSet.has(i.id)).map((i, idx) => ({ ...i, position: reordered.length + idx }));
+          return { ...s, items: [...reordered, ...extra] };
+        }));
         if (isOnline) {
           try { await reorderPantryItemsAPI(sectionId, itemIds); } catch { /* queue */ }
         }
@@ -683,7 +698,6 @@ export function usePantry() {
   const renameSection = useCallback(async (sectionId: string, newName: string) => {
     const trimmed = newName.trim();
     if (!trimmed) return;
-    const prevSections = sections;
     const section = sections.find(s => s.id === sectionId);
     if (!section || section.name === trimmed) return;
 
@@ -704,23 +718,22 @@ export function usePantry() {
       await queueChange('pantry-rename-section', '', { sectionId, name: trimmed });
     }
 
+    const prevName = section.name;
     pushAction({
       type: 'rename-pantry-section',
       undo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(prevSections);
-        await saveLocalPantrySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+        setSections(prev => prev.map(s => s.id === sectionId ? { ...s, name: prevName } : s));
         if (isOnline) {
-          try { await renamePantrySectionAPI(sectionId, section.name); } catch { /* queue */ }
+          try { await renamePantrySectionAPI(sectionId, prevName); } catch { /* queue */ }
         }
         settleMutation();
       },
       redo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(updatedSections);
-        await saveLocalPantrySections(updatedSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+        setSections(prev => prev.map(s => s.id === sectionId ? { ...s, name: trimmed } : s));
         if (isOnline) {
           try { await renamePantrySectionAPI(sectionId, trimmed); } catch { /* queue */ }
         }
