@@ -116,6 +116,18 @@ export function usePantry() {
     }
   }, []);
 
+  // Helper: replace list on server and apply the response (which has new server IDs)
+  const replaceAndApply = async (payload: { name: string; items: { name: string; quantity: number }[] }[]) => {
+    const result = await replacePantryListAPI(payload);
+    optimisticVersionRef.current++;
+    setSections(result);
+    await saveLocalPantrySections(result.map(s => ({ id: s.id, name: s.name, position: s.position })));
+    await saveLocalPantryItems(result.flatMap(s => s.items.map(i => ({
+      id: i.id, section_id: i.section_id, name: i.name,
+      quantity: i.quantity, position: i.position, updated_at: i.updated_at,
+    }))));
+  };
+
   useEffect(() => {
     loadPantryList();
   }, [loadPantryList]);
@@ -179,15 +191,16 @@ export function usePantry() {
     pushAction({
       type: 'add-pantry-item',
       undo: async () => {
+        const currentId = newItem.id;
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prev => prev.map(s => s.id === sectionId
-          ? { ...s, items: s.items.filter(i => i.id !== tempId) }
+          ? { ...s, items: s.items.filter(i => i.id !== currentId) }
           : s
         ));
-        await deleteLocalPantryItem(tempId);
+        await deleteLocalPantryItem(currentId);
         if (isOnline) {
-          try { await deletePantryItemAPI(tempId); } catch { /* queue */ }
+          try { await deletePantryItemAPI(currentId); } catch { /* queue */ }
         }
         settleMutation();
       },
@@ -311,13 +324,8 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prevSections);
-        await saveLocalPantrySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        await saveLocalPantryItems(prevSections.flatMap(s => s.items.map(i => ({
-          id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-        }))));
         if (isOnline) {
-          try { await replacePantryListAPI(toPayload(prevSections)); } catch { /* queue */ }
+          try { await replaceAndApply(toPayload(prevSections)); } catch { /* queue */ }
         }
         settleMutation();
       },
@@ -325,13 +333,8 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(newSections);
-        await saveLocalPantrySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        await saveLocalPantryItems(newSections.flatMap(s => s.items.map(i => ({
-          id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-        }))));
         if (isOnline) {
-          try { await replacePantryListAPI(toPayload(newSections)); } catch { /* queue */ }
+          try { await replaceAndApply(toPayload(newSections)); } catch { /* queue */ }
         }
         settleMutation();
       },
@@ -372,23 +375,17 @@ export function usePantry() {
       await queueChange('pantry-replace', '', { sections: [] });
     }
 
+    const clearAllPayload = prevSections.map(s => ({
+      name: s.name, items: s.items.map(i => ({ name: i.name, quantity: i.quantity })),
+    }));
     pushAction({
       type: 'clear-all-pantry',
       undo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prevSections);
-        await saveLocalPantrySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        await saveLocalPantryItems(prevSections.flatMap(s => s.items.map(i => ({
-          id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-        }))));
         if (isOnline) {
-          try {
-            await replacePantryListAPI(prevSections.map(s => ({
-              name: s.name, items: s.items.map(i => ({ name: i.name, quantity: i.quantity })),
-            })));
-          } catch { /* queue */ }
+          try { await replaceAndApply(clearAllPayload); } catch { /* queue */ }
         }
         settleMutation();
       },
@@ -564,9 +561,8 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prevSections);
-        await saveLocalPantrySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
         if (isOnline) {
-          try { await replacePantryListAPI(toPayload(prevSections)); } catch { /* queue */ }
+          try { await replaceAndApply(toPayload(prevSections)); } catch { /* queue */ }
         }
         settleMutation();
       },
@@ -574,9 +570,8 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(updatedSections);
-        await saveLocalPantrySections(updatedSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
         if (isOnline) {
-          try { await replacePantryListAPI(toPayload(updatedSections)); } catch { /* queue */ }
+          try { await replaceAndApply(toPayload(updatedSections)); } catch { /* queue */ }
         }
         settleMutation();
       },
@@ -599,13 +594,8 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prevSections);
-        await saveLocalPantrySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        await saveLocalPantryItems(prevSections.flatMap(s => s.items.map(i => ({
-          id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-        }))));
         if (isOnline) {
-          try { await replacePantryListAPI(toPayload(prevSections)); } catch { /* queue */ }
+          try { await replaceAndApply(toPayload(prevSections)); } catch { /* queue */ }
         }
         settleMutation();
       },
@@ -613,13 +603,8 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(updatedSections);
-        await saveLocalPantrySections(updatedSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        await saveLocalPantryItems(updatedSections.flatMap(s => s.items.map(i => ({
-          id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-        }))));
         if (isOnline) {
-          try { await replacePantryListAPI(toPayload(updatedSections)); } catch { /* queue */ }
+          try { await replaceAndApply(toPayload(updatedSections)); } catch { /* queue */ }
         }
         settleMutation();
       },
@@ -733,13 +718,8 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prevSections);
-        await saveLocalPantrySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        await saveLocalPantryItems(prevSections.flatMap(s => s.items.map(i => ({
-          id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-        }))));
         if (isOnline) {
-          try { await replacePantryListAPI(toPayload(prevSections)); } catch { /* queue */ }
+          try { await replaceAndApply(toPayload(prevSections)); } catch { /* queue */ }
         }
         settleMutation();
       },
@@ -747,13 +727,8 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(newSections);
-        await saveLocalPantrySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        await saveLocalPantryItems(newSections.flatMap(s => s.items.map(i => ({
-          id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-        }))));
         if (isOnline) {
-          try { await replacePantryListAPI(toPayload(newSections)); } catch { /* queue */ }
+          try { await replaceAndApply(toPayload(newSections)); } catch { /* queue */ }
         }
         settleMutation();
       },
