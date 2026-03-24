@@ -698,7 +698,24 @@ export function useGroceryList() {
 
     if (isOnline) {
       pendingMutationsRef.current++;
-      try { await editGroceryItemAPI(itemId, updates); } catch {
+      try {
+        const serverItem = await editGroceryItemAPI(itemId, updates);
+        // If server returned a different store_id (e.g. from item_defaults), apply it
+        const optimisticStoreId = updates.store_id !== undefined ? updates.store_id : item.store_id;
+        if (serverItem.store_id !== optimisticStoreId) {
+          optimisticVersionRef.current++;
+          setSections(prev => prev.map(s => ({
+            ...s,
+            items: s.items.map(i => i.id === itemId ? { ...i, store_id: serverItem.store_id } : i),
+          })));
+          await saveLocalGroceryItem({
+            id: item.id, section_id: item.section_id,
+            name: serverItem.name, quantity: serverItem.quantity,
+            checked: serverItem.checked, position: item.position,
+            store_id: serverItem.store_id, updated_at: serverItem.updated_at,
+          });
+        }
+      } catch {
         await queueChange('grocery-edit', '', { id: itemId, ...updates });
       } finally { settleMutation(); }
     } else {
