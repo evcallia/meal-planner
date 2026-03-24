@@ -1,8 +1,7 @@
 import uuid
 from datetime import datetime, date
-from sqlalchemy import String, Text, Boolean, Integer, Date, DateTime, ForeignKey, Index
+from sqlalchemy import String, Text, Boolean, Integer, Date, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.database import Base
@@ -167,13 +166,9 @@ class Store(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    name: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text, unique=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    __table_args__ = (
-        Index('ix_stores_name_lower', func.lower(name), unique=True),
-    )
 
 
 class ItemDefault(Base):
