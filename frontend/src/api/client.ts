@@ -318,6 +318,33 @@ export async function clearGroceryItems(mode: 'checked' | 'all'): Promise<Grocer
   });
 }
 
+export async function moveGroceryItem(itemId: string, toSectionId: string, toPosition: number): Promise<GroceryItem> {
+  return fetchAPI<GroceryItem>(`/grocery/items/${itemId}/move`, {
+    method: 'PATCH',
+    body: JSON.stringify({ to_section_id: toSectionId, to_position: toPosition }),
+  });
+}
+
+export async function movePantryItem(itemId: string, toSectionId: string, toPosition: number): Promise<PantryItem> {
+  return fetchAPI<PantryItem>(`/pantry/items/${itemId}/move`, {
+    method: 'PATCH',
+    body: JSON.stringify({ to_section_id: toSectionId, to_position: toPosition }),
+  });
+}
+
+export async function createPantrySection(name: string): Promise<PantrySection> {
+  return fetchAPI<PantrySection>('/pantry/sections', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deletePantrySection(sectionId: string): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/pantry/sections/${sectionId}`, {
+    method: 'DELETE',
+  });
+}
+
 // Store API
 import type { Store } from '../types';
 
