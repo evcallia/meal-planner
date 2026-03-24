@@ -478,15 +478,17 @@ export function useGroceryList() {
     pushAction({
       type: 'add-grocery-item',
       undo: async () => {
+        // Use newItem.id (not tempId) — it's updated to the real server ID after creation
+        const currentId = newItem.id;
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prev => prev.map(s => s.id === sectionId
-          ? { ...s, items: s.items.filter(i => i.id !== tempId) }
+          ? { ...s, items: s.items.filter(i => i.id !== currentId) }
           : s
         ));
-        await deleteLocalGroceryItem(tempId);
+        await deleteLocalGroceryItem(currentId);
         if (isOnline) {
-          try { await deleteGroceryItemAPI(tempId); } catch { /* queue */ }
+          try { await deleteGroceryItemAPI(currentId); } catch { /* queue */ }
         }
         settleMutation();
       },
