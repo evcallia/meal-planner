@@ -520,60 +520,65 @@ export function useGroceryList() {
     });
   }, [sections, isOnline, pushAction]);
 
-  // Delete an item — follows the meal planner pattern:
-  // capture full before/after state, push undo before API call,
-  // undo/redo both use replaceGroceryListAPI for full state replacement.
+  // Delete an item — uses targeted POST/DELETE for undo/redo (not PUT)
+  // to avoid multi-user conflicts where PUT would overwrite other users' changes.
   const deleteItem = useCallback(async (itemId: string) => {
     const item = sections.flatMap(s => s.items).find(i => i.id === itemId);
     if (!item) return;
 
-    const prevSections = sections;
-    const newSections = sections.map(s => ({
-      ...s,
-      items: s.items.filter(i => i.id !== itemId),
-    }));
-    const toPayload = (secs: GrocerySection[]) => secs.map(s => ({
-      name: s.name,
-      items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked, store_id: i.store_id })),
-    }));
+    // Capture the deleted item's details for undo re-creation
+    const deletedItem = { ...item };
+    const deletedItemRef = { id: item.id };
 
     // Push undo action BEFORE API call so undo is available immediately
     pushAction({
       type: 'delete-grocery-item',
       undo: async () => {
+        // Re-add the specific item via POST (not PUT) — doesn't affect other users' items
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(prevSections);
+        const tempId = generateTempId();
+        const restoredItem: GroceryItem = { ...deletedItem, id: tempId };
+        setSections(prev => prev.map(s => s.id === deletedItem.section_id
+          ? { ...s, items: [...s.items.filter(i => !i.checked), restoredItem, ...s.items.filter(i => i.checked)] }
+          : s
+        ));
         if (isOnline) {
           try {
-            const result = await replaceGroceryListAPI(toPayload(prevSections));
-            // Replace creates new server IDs — apply them to local state
+            const created = await addGroceryItemAPI(deletedItem.section_id, deletedItem.name, deletedItem.quantity, deletedItem.store_id);
+            // Apply real ID
             optimisticVersionRef.current++;
-            setSections(result);
-            await saveLocalGrocerySections(result.map(s => ({ id: s.id, name: s.name, position: s.position })));
-            await saveLocalGroceryItems(result.flatMap(s => s.items.map(i => ({
-              id: i.id, section_id: i.section_id, name: i.name,
-              quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
-            }))));
+            setSections(prev => prev.map(s => s.id === deletedItem.section_id
+              ? { ...s, items: s.items.map(i => i.id === tempId ? { ...i, id: created.id } : i) }
+              : s
+            ));
+            deletedItemRef.id = created.id;
+            await saveLocalGroceryItem({
+              id: created.id, section_id: deletedItem.section_id, name: deletedItem.name,
+              quantity: deletedItem.quantity, checked: deletedItem.checked, position: deletedItem.position,
+              store_id: created.store_id, updated_at: created.updated_at,
+            });
+            await deleteLocalGroceryItem(tempId);
+            // If it was checked, toggle it
+            if (deletedItem.checked) {
+              await toggleGroceryItemAPI(created.id, true);
+            }
           } catch { /* queue */ }
         }
         settleMutation();
       },
       redo: async () => {
+        // Delete the specific item via DELETE (not PUT)
+        const currentId = deletedItemRef.id;
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(newSections);
+        setSections(prev => prev.map(s => ({
+          ...s,
+          items: s.items.filter(i => i.id !== currentId),
+        })));
+        await deleteLocalGroceryItem(currentId);
         if (isOnline) {
-          try {
-            const result = await replaceGroceryListAPI(toPayload(newSections));
-            optimisticVersionRef.current++;
-            setSections(result);
-            await saveLocalGrocerySections(result.map(s => ({ id: s.id, name: s.name, position: s.position })));
-            await saveLocalGroceryItems(result.flatMap(s => s.items.map(i => ({
-              id: i.id, section_id: i.section_id, name: i.name,
-              quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
-            }))));
-          } catch { /* queue */ }
+          try { await deleteGroceryItemAPI(currentId); } catch { /* queue */ }
         }
         settleMutation();
       },
@@ -581,7 +586,10 @@ export function useGroceryList() {
 
     // Optimistic update
     optimisticVersionRef.current++;
-    setSections(newSections);
+    setSections(prev => prev.map(s => ({
+      ...s,
+      items: s.items.filter(i => i.id !== itemId),
+    })));
 
     await deleteLocalGroceryItem(itemId);
 
@@ -629,53 +637,84 @@ export function useGroceryList() {
         const dupQty = parseInt(duplicate.quantity || '1') || 1;
         const mergedQty = String(editedQty + dupQty);
 
-        const prevSections = sections;
-        const newSections = sections.map(s => ({
+        // Capture state for targeted undo (not PUT-based)
+        const deletedItem = { ...item };
+        const deletedItemRef = { id: item.id };
+        const dupOriginalQty = duplicate.quantity;
+        const dupId = duplicate.id;
+
+        optimisticVersionRef.current++;
+        setSections(prev => prev.map(s => ({
           ...s,
           items: s.items
             .filter(i => i.id !== itemId)
-            .map(i => i.id === duplicate.id ? { ...i, quantity: mergedQty } : i),
-        }));
-        const toPayload = (secs: GrocerySection[]) => secs.map(s => ({
-          name: s.name,
-          items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked, store_id: i.store_id })),
-        }));
-
-        optimisticVersionRef.current++;
-        setSections(newSections);
-
-        await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
-          id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
-        }))));
+            .map(i => i.id === dupId ? { ...i, quantity: mergedQty } : i),
+        })));
 
         if (isOnline) {
           pendingMutationsRef.current++;
-          try { await replaceGroceryListAPI(toPayload(newSections)); } catch {
-            await queueChange('grocery-replace', '', { sections: toPayload(newSections) });
+          try {
+            // Targeted: update duplicate's qty + delete the edited item
+            await editGroceryItemAPI(dupId, { quantity: mergedQty });
+            await deleteGroceryItemAPI(itemId);
+          } catch {
+            await queueChange('grocery-edit', '', { id: dupId, quantity: mergedQty });
+            await queueChange('grocery-delete', '', { id: itemId });
           } finally { settleMutation(); }
         } else {
-          await queueChange('grocery-replace', '', { sections: toPayload(newSections) });
+          await queueChange('grocery-edit', '', { id: dupId, quantity: mergedQty });
+          await queueChange('grocery-delete', '', { id: itemId });
         }
 
         pushAction({
           type: 'edit-merge-grocery-item',
           undo: async () => {
+            // Targeted undo: restore duplicate's qty + re-add the deleted item
             optimisticVersionRef.current++;
             pendingMutationsRef.current++;
-            setSections(prevSections);
+            // Restore duplicate quantity
+            setSections(prev => prev.map(s => ({
+              ...s,
+              items: s.items.map(i => i.id === dupId ? { ...i, quantity: dupOriginalQty } : i),
+            })));
+            // Re-add deleted item
+            const tempId = generateTempId();
+            const restoredItem: GroceryItem = { ...deletedItem, id: tempId };
+            setSections(prev => prev.map(s => s.id === deletedItem.section_id
+              ? { ...s, items: [...s.items.filter(i => !i.checked), restoredItem, ...s.items.filter(i => i.checked)] }
+              : s
+            ));
             if (isOnline) {
-              try { await replaceAndApply(toPayload(prevSections)); } catch { /* queue */ }
+              try {
+                await editGroceryItemAPI(dupId, { quantity: dupOriginalQty });
+                const created = await addGroceryItemAPI(deletedItem.section_id, deletedItem.name, deletedItem.quantity, deletedItem.store_id);
+                optimisticVersionRef.current++;
+                setSections(prev => prev.map(s => s.id === deletedItem.section_id
+                  ? { ...s, items: s.items.map(i => i.id === tempId ? { ...i, id: created.id } : i) }
+                  : s
+                ));
+                deletedItemRef.id = created.id;
+                await deleteLocalGroceryItem(tempId);
+              } catch { /* queue */ }
             }
             settleMutation();
           },
           redo: async () => {
+            // Targeted redo: merge again
+            const currentId = deletedItemRef.id;
             optimisticVersionRef.current++;
             pendingMutationsRef.current++;
-            setSections(newSections);
+            setSections(prev => prev.map(s => ({
+              ...s,
+              items: s.items
+                .filter(i => i.id !== currentId)
+                .map(i => i.id === dupId ? { ...i, quantity: mergedQty } : i),
+            })));
             if (isOnline) {
-              try { await replaceAndApply(toPayload(newSections)); } catch { /* queue */ }
+              try {
+                await editGroceryItemAPI(dupId, { quantity: mergedQty });
+                await deleteGroceryItemAPI(currentId);
+              } catch { /* queue */ }
             }
             settleMutation();
           },

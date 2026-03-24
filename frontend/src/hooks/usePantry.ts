@@ -322,40 +322,56 @@ export function usePantry() {
     }
     delete pendingUpdatesRef.current[itemId];
 
-    const prevSections = sections;
-    const newSections = sections.map(s => ({
-      ...s,
-      items: s.items.filter(i => i.id !== itemId),
-    }));
-    const toPayload = (secs: PantrySection[]) => secs.map(s => ({
-      name: s.name,
-      items: s.items.map(i => ({ name: i.name, quantity: i.quantity })),
-    }));
+    const deletedItem = { ...item };
+    const deletedItemRef = { id: item.id };
 
     pushAction({
       type: 'delete-pantry-item',
       undo: async () => {
+        // Re-add the specific item via POST (not PUT) — doesn't affect other users' items
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(prevSections);
+        const tempId = generateTempId();
+        const restoredItem: PantryItem = { ...deletedItem, id: tempId };
+        setSections(prev => prev.map(s => s.id === deletedItem.section_id
+          ? { ...s, items: [...s.items, restoredItem] }
+          : s
+        ));
         if (isOnline) {
-          try { await replaceAndApply(toPayload(prevSections)); } catch { /* queue */ }
+          try {
+            const created = await addPantryItemAPI(deletedItem.section_id, deletedItem.name, deletedItem.quantity);
+            optimisticVersionRef.current++;
+            setSections(prev => prev.map(s => s.id === deletedItem.section_id
+              ? { ...s, items: s.items.map(i => i.id === tempId ? { ...i, id: created.id } : i) }
+              : s
+            ));
+            deletedItemRef.id = created.id;
+            await deleteLocalPantryItem(tempId);
+          } catch { /* queue */ }
         }
         settleMutation();
       },
       redo: async () => {
+        const currentId = deletedItemRef.id;
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(newSections);
+        setSections(prev => prev.map(s => ({
+          ...s,
+          items: s.items.filter(i => i.id !== currentId),
+        })));
+        await deleteLocalPantryItem(currentId);
         if (isOnline) {
-          try { await replaceAndApply(toPayload(newSections)); } catch { /* queue */ }
+          try { await deletePantryItemAPI(currentId); } catch { /* queue */ }
         }
         settleMutation();
       },
     });
 
     optimisticVersionRef.current++;
-    setSections(newSections);
+    setSections(prev => prev.map(s => ({
+      ...s,
+      items: s.items.filter(i => i.id !== itemId),
+    })));
 
     await deleteLocalPantryItem(itemId);
 
