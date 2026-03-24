@@ -1,17 +1,17 @@
 # Meal Planner — Claude Instructions
 
 ## Running Commands
-The shell working directory may not be the project root. Always use `--prefix` or `cd` with `&&` to ensure correct directory. On macOS with Homebrew, Node/npm may not be in the default PATH.
+On macOS with Homebrew, Node/npm may not be in the default PATH.
 
 ```bash
 # Frontend tests
-cd <project-root>/frontend && npm run test:run 2>&1
+npm run test:run 2>&1
 
 # Frontend build
 npm run build --prefix <project-root>/frontend 2>&1
 
 # Backend tests
-cd <project-root>/backend && .venv/bin/python -m pytest tests/ 2>&1
+.venv/bin/python -m pytest tests/ 2>&1
 
 # Run all tests
 bash <project-root>/run-tests.sh
