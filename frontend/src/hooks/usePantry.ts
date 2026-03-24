@@ -180,7 +180,21 @@ export function usePantry() {
     if (isOnline) {
       pendingMutationsRef.current++;
       try {
-        await addPantryItemAPI(sectionId, toTitleCase(name.trim()), quantity);
+        const created = await addPantryItemAPI(sectionId, toTitleCase(name.trim()), quantity);
+        // Update temp item with server response (real ID)
+        if (created.id !== tempId) {
+          optimisticVersionRef.current++;
+          setSections(prev => prev.map(s => s.id === sectionId
+            ? { ...s, items: s.items.map(i => i.id === tempId ? { ...i, id: created.id } : i) }
+            : s
+          ));
+          newItem.id = created.id;
+          await saveLocalPantryItem({
+            id: created.id, section_id: sectionId, name: newItem.name,
+            quantity: newItem.quantity, position: newItem.position, updated_at: created.updated_at,
+          });
+          await deleteLocalPantryItem(tempId);
+        }
       } catch {
         await queueChange('pantry-add', '', { id: tempId, sectionId, name: toTitleCase(name.trim()), quantity });
       } finally { settleMutation(); }
