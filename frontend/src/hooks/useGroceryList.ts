@@ -583,6 +583,16 @@ export function useGroceryList() {
       updates = { ...updates, name: toTitleCase(updates.name) };
     }
 
+    // If name changed and item has no store, look up store from existing items with the new name
+    if (updates.name !== undefined && updates.store_id === undefined && !item.store_id) {
+      const match = sections.flatMap(s => s.items).find(
+        i => i.name.toLowerCase() === updates.name!.toLowerCase() && i.store_id
+      );
+      if (match) {
+        updates = { ...updates, store_id: match.store_id };
+      }
+    }
+
     // Check for duplicate: if name is changing to match another unchecked item in the same section, merge
     const finalName = updates.name ?? item.name;
     const section = sections.find(s => s.id === item.section_id);

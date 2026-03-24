@@ -21,9 +21,7 @@ async def list_stores(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    stores = db.query(Store).order_by(Store.position.asc(), Store.name.asc()).all()
-    print(f"[Stores] GET /api/stores returning {len(stores)} stores")
-    return stores
+    return db.query(Store).order_by(Store.position.asc(), Store.name.asc()).all()
 
 
 @router.post("", response_model=StoreSchema)

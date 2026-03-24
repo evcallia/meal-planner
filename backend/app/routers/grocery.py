@@ -162,6 +162,13 @@ async def update_grocery_item(
         item.checked = payload.checked
     if payload.name is not None:
         item.name = payload.name.strip()
+        # If item has no store and name changed, check item_defaults for the new name
+        if 'store_id' not in payload.model_fields_set and item.store_id is None:
+            default = db.query(ItemDefault).filter(
+                ItemDefault.item_name == item.name.strip().lower()
+            ).first()
+            if default and default.store_id:
+                item.store_id = default.store_id
     if 'quantity' in payload.model_fields_set:
         item.quantity = payload.quantity if payload.quantity else None
     if 'store_id' in payload.model_fields_set:
