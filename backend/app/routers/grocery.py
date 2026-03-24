@@ -55,13 +55,21 @@ async def replace_grocery(
         db.add(section)
         db.flush()
         for j, item in enumerate(sec.items):
+            # Auto-populate store from item_defaults if not provided
+            store_id = item.store_id
+            if store_id is None:
+                default = db.query(ItemDefault).filter(
+                    ItemDefault.item_name == item.name.strip().lower()
+                ).first()
+                if default and default.store_id:
+                    store_id = default.store_id
             grocery_item = GroceryItem(
                 section_id=section.id,
                 name=item.name,
                 quantity=item.quantity,
                 checked=item.checked,
                 position=j,
-                store_id=item.store_id,
+                store_id=store_id,
             )
             db.add(grocery_item)
         db.flush()
