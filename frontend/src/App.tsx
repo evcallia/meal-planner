@@ -382,7 +382,7 @@ function AppContent() {
     setCurrentPage(page);
     sessionStorage.setItem('meal-planner-tab', page);
   }, []);
-  const { status, pendingCount, clearAllPendingChanges } = useSync();
+  const { status, pendingCount, clearAllPendingChanges, fetchPendingChanges, getSyncErrors, skipPendingChange } = useSync();
   const { isDark, toggle: toggleDarkMode } = useDarkMode();
   const { settings, updateSettings } = useSettings();
   const isOnline = useOnlineStatus();
@@ -623,6 +623,9 @@ function AppContent() {
           updating={updating}
           pendingCount={pendingCount}
           onClearPendingChanges={clearAllPendingChanges}
+          onFetchPendingChanges={fetchPendingChanges}
+          onGetSyncErrors={getSyncErrors}
+          onSkipPendingChange={skipPendingChange}
         />
       )}
 

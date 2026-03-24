@@ -87,11 +87,17 @@ export function useGroceryList() {
     return loadGroceryFromLocalStorage();
   };
 
+  // Use a ref so loadGroceryList doesn't depend on isOnline directly.
+  // This prevents the load function from being recreated (and re-triggered)
+  // when going online→offline, which would overwrite in-memory optimistic state.
+  const isOnlineRef = useRef(isOnline);
+  isOnlineRef.current = isOnline;
+
   // Load grocery list
   const loadGroceryList = useCallback(async () => {
     const fetchVersion = optimisticVersionRef.current;
     try {
-      if (isOnline) {
+      if (isOnlineRef.current) {
         const data = await getGroceryList();
         // If an optimistic update happened while we were fetching, discard this result
         if (optimisticVersionRef.current !== fetchVersion) return;
@@ -111,14 +117,18 @@ export function useGroceryList() {
           updated_at: i.updated_at,
         })));
       } else {
-        setSections(await loadFromLocal());
+        const localData = await loadFromLocal();
+        if (optimisticVersionRef.current !== fetchVersion) return;
+        setSections(localData);
       }
     } catch {
-      setSections(await loadFromLocal());
+      const localData = await loadFromLocal();
+      if (optimisticVersionRef.current !== fetchVersion) return;
+      setSections(localData);
     } finally {
       setLoading(false);
     }
-  }, [isOnline]);
+  }, []);
 
   // Keep a stable ref to loadGroceryList for use in mutation settle callbacks
   const loadGroceryListRef = useRef(loadGroceryList);
@@ -143,6 +153,17 @@ export function useGroceryList() {
       quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
     }))));
   };
+
+  // Load on mount, and reload when coming back online (but not when going offline)
+  const prevOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+    if (isOnline && wasOffline) {
+      // Coming back online — refresh from server
+      loadGroceryList();
+    }
+  }, [isOnline, loadGroceryList]);
 
   useEffect(() => {
     loadGroceryList();

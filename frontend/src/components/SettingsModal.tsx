@@ -12,6 +12,18 @@ import {
   getPendingChanges,
   removePendingChange,
   getCalendarCacheTimestamp,
+  getLocalGroceryItems,
+  getLocalPantryItems,
+  getLocalMealIdeas,
+  getLocalGrocerySections,
+  getLocalPantrySections,
+  PendingChange,
+  ChangeType,
+  LocalGroceryItem,
+  LocalPantryItem,
+  LocalMealIdea,
+  LocalGrocerySection,
+  LocalPantrySection,
 } from '../db';
 
 interface SettingsModalProps {
@@ -25,6 +37,179 @@ interface SettingsModalProps {
   updating?: boolean;
   pendingCount?: number;
   onClearPendingChanges?: () => void;
+  onFetchPendingChanges?: () => Promise<PendingChange[]>;
+  onGetSyncErrors?: () => Map<number, string>;
+  onSkipPendingChange?: (id: number) => Promise<void>;
+}
+
+interface EnrichedPendingChange extends PendingChange {
+  operation: string;
+  detail: string;
+  error?: string;
+}
+
+const typeLabels: Record<ChangeType, string> = {
+  'notes': 'Update notes',
+  'itemized': 'Toggle itemized',
+  'pantry-add': 'Add to pantry',
+  'pantry-update': 'Update pantry item',
+  'pantry-delete': 'Delete from pantry',
+  'pantry-replace': 'Replace pantry list',
+  'pantry-reorder-sections': 'Reorder pantry sections',
+  'pantry-reorder-items': 'Reorder pantry items',
+  'pantry-rename-section': 'Rename pantry section',
+  'meal-idea-add': 'Add meal idea',
+  'meal-idea-update': 'Update meal idea',
+  'meal-idea-delete': 'Delete meal idea',
+  'calendar-hide': 'Hide calendar event',
+  'calendar-unhide': 'Unhide calendar event',
+  'grocery-replace': 'Replace grocery list',
+  'grocery-check': 'Check grocery item',
+  'grocery-add': 'Add to grocery list',
+  'grocery-delete': 'Delete from grocery list',
+  'grocery-edit': 'Edit grocery item',
+  'grocery-clear': 'Clear grocery items',
+  'grocery-reorder-sections': 'Reorder grocery sections',
+  'grocery-reorder-items': 'Reorder grocery items',
+  'grocery-rename-section': 'Rename grocery section',
+  'grocery-move-item': 'Move grocery item',
+  'pantry-move-item': 'Move pantry item',
+};
+
+async function enrichPendingChanges(changes: PendingChange[]): Promise<EnrichedPendingChange[]> {
+  // Build lookup maps for resolving IDs to names — each wrapped so one failure doesn't break all
+  const safe = async <T,>(fn: () => Promise<T[]>): Promise<T[]> => {
+    try { return await fn(); } catch { return []; }
+  };
+  const groceryItemMap = new Map((await safe<LocalGroceryItem>(getLocalGroceryItems)).map(i => [i.id, i.name]));
+  const pantryItemMap = new Map((await safe<LocalPantryItem>(getLocalPantryItems)).map(i => [i.id, i.name]));
+  const mealIdeaMap = new Map((await safe<LocalMealIdea>(getLocalMealIdeas)).map(i => [i.id, i.title]));
+  const grocerySectionMap = new Map((await safe<LocalGrocerySection>(getLocalGrocerySections)).map(s => [s.id, s.name]));
+  const pantrySectionMap = new Map((await safe<LocalPantrySection>(getLocalPantrySections)).map(s => [s.id, s.name]));
+
+  return changes.map(change => {
+    const payload = change.payload as Record<string, unknown>;
+    const operation = typeLabels[change.type] || change.type;
+    let detail = '';
+
+    try { switch (change.type) {
+      case 'notes':
+        detail = change.date;
+        break;
+      case 'itemized':
+        detail = `${change.date}, line ${(payload?.lineIndex as number) + 1}`;
+        break;
+      case 'pantry-add':
+        detail = payload?.name as string || '';
+        if (payload?.quantity) detail += ` (x${payload.quantity})`;
+        break;
+      case 'pantry-update': {
+        const pName = pantryItemMap.get(payload?.id as string) || (payload?.name as string) || '';
+        const fields: string[] = [];
+        if (payload?.name) fields.push(`name: ${payload.name}`);
+        if (payload?.quantity !== undefined) fields.push(`qty: ${payload.quantity}`);
+        detail = pName + (fields.length ? ` — ${fields.join(', ')}` : '');
+        break;
+      }
+      case 'pantry-delete':
+        detail = pantryItemMap.get(payload?.id as string) || (payload?.id as string) || '';
+        break;
+      case 'pantry-replace': {
+        const sections = payload?.sections as { name: string; items: unknown[] }[] | undefined;
+        if (sections) {
+          const itemCount = sections.reduce((sum, s) => sum + s.items.length, 0);
+          detail = `${sections.length} section${sections.length === 1 ? '' : 's'}, ${itemCount} item${itemCount === 1 ? '' : 's'}`;
+        }
+        break;
+      }
+      case 'pantry-rename-section':
+        detail = payload?.name as string || '';
+        break;
+      case 'pantry-reorder-sections':
+        detail = `${((payload?.sectionIds as string[]) || []).length} sections`;
+        break;
+      case 'pantry-reorder-items': {
+        const secName = pantrySectionMap.get(payload?.sectionId as string) || '';
+        const count = ((payload?.itemIds as string[]) || []).length;
+        detail = secName ? `${secName} (${count} items)` : `${count} items`;
+        break;
+      }
+      case 'pantry-move-item':
+        detail = pantryItemMap.get(payload?.id as string) || '';
+        break;
+      case 'meal-idea-add':
+        detail = payload?.title as string || '';
+        break;
+      case 'meal-idea-update': {
+        const ideaName = mealIdeaMap.get(payload?.id as string) || '';
+        detail = payload?.title as string || ideaName;
+        break;
+      }
+      case 'meal-idea-delete':
+        detail = mealIdeaMap.get(payload?.id as string) || '';
+        break;
+      case 'calendar-hide':
+        detail = payload?.title as string || '';
+        break;
+      case 'calendar-unhide':
+        detail = payload?.hiddenId as string || '';
+        break;
+      case 'grocery-add':
+        detail = payload?.name as string || '';
+        if (payload?.quantity) detail += ` (${payload.quantity})`;
+        break;
+      case 'grocery-delete':
+        detail = groceryItemMap.get(payload?.id as string) || '';
+        break;
+      case 'grocery-check': {
+        const itemName = groceryItemMap.get(payload?.id as string) || '';
+        const checked = payload?.checked ? 'check' : 'uncheck';
+        detail = itemName ? `${checked} "${itemName}"` : checked;
+        break;
+      }
+      case 'grocery-edit': {
+        const gName = groceryItemMap.get(payload?.id as string) || '';
+        const edits: string[] = [];
+        if (payload?.name) edits.push(`name: ${payload.name}`);
+        if (payload?.quantity !== undefined) edits.push(`qty: ${payload.quantity || 'none'}`);
+        if (payload?.store_id !== undefined) edits.push('store changed');
+        detail = gName + (edits.length ? ` — ${edits.join(', ')}` : '');
+        break;
+      }
+      case 'grocery-replace': {
+        const gSections = payload?.sections as { name: string; items: unknown[] }[] | undefined;
+        if (gSections) {
+          const gItemCount = gSections.reduce((sum, s) => sum + s.items.length, 0);
+          detail = `${gSections.length} section${gSections.length === 1 ? '' : 's'}, ${gItemCount} item${gItemCount === 1 ? '' : 's'}`;
+        }
+        break;
+      }
+      case 'grocery-clear':
+        detail = (payload?.mode as string) === 'checked' ? 'checked items' : 'all items';
+        break;
+      case 'grocery-rename-section':
+        detail = payload?.name as string || '';
+        break;
+      case 'grocery-reorder-sections':
+        detail = `${((payload?.sectionIds as string[]) || []).length} sections`;
+        break;
+      case 'grocery-reorder-items': {
+        const gSecName = grocerySectionMap.get(payload?.sectionId as string) || '';
+        const gCount = ((payload?.itemIds as string[]) || []).length;
+        detail = gSecName ? `${gSecName} (${gCount} items)` : `${gCount} items`;
+        break;
+      }
+      case 'grocery-move-item':
+        detail = groceryItemMap.get(payload?.id as string) || '';
+        break;
+      case 'pantry-move-item':
+        detail = pantryItemMap.get(payload?.id as string) || '';
+        break;
+    }
+    } catch { /* detail stays empty on error */ }
+
+    return { ...change, operation, detail };
+  });
 }
 
 function formatRelativeTime(dateString: string | null): string {
@@ -43,13 +228,15 @@ function formatRelativeTime(dateString: string | null): string {
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 }
 
-export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode, updateAvailable, onApplyUpdate, updating, pendingCount, onClearPendingChanges }: SettingsModalProps) {
+export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode, updateAvailable, onApplyUpdate, updating, pendingCount, onClearPendingChanges, onFetchPendingChanges, onGetSyncErrors, onSkipPendingChange }: SettingsModalProps) {
   const [cacheStatus, setCacheStatus] = useState<CalendarCacheStatus | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const [hiddenEvents, setHiddenEvents] = useState<HiddenCalendarEvent[]>([]);
   const [hiddenLoading, setHiddenLoading] = useState(false);
   const [hiddenError, setHiddenError] = useState<string | null>(null);
+  const [pendingChanges, setPendingChanges] = useState<EnrichedPendingChange[]>([]);
+  const [showPendingList, setShowPendingList] = useState(false);
   const isOnline = useOnlineStatus();
 
   // Load cache status on mount
@@ -543,14 +730,81 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
                     {pendingCount} change{pendingCount === 1 ? '' : 's'} waiting to sync
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={onClearPendingChanges}
-                  className="px-3 py-1.5 text-sm font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
-                >
-                  Clear
-                </button>
+                <div className="flex items-center gap-2">
+                  {onFetchPendingChanges && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (showPendingList) {
+                          setShowPendingList(false);
+                        } else {
+                          const changes = await onFetchPendingChanges();
+                          const errors = onGetSyncErrors ? onGetSyncErrors() : new Map<number, string>();
+                          let enriched: EnrichedPendingChange[];
+                          try {
+                            enriched = await enrichPendingChanges(changes);
+                          } catch {
+                            enriched = changes.map(c => ({
+                              ...c,
+                              operation: typeLabels[c.type] || c.type,
+                              detail: '',
+                            }));
+                          }
+                          enriched = enriched.map(c => ({
+                            ...c,
+                            error: c.id != null ? errors.get(c.id) : undefined,
+                          }));
+                          setPendingChanges(enriched);
+                          setShowPendingList(true);
+                        }
+                      }}
+                      className="px-3 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                    >
+                      {showPendingList ? 'Hide' : 'View'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClearPendingChanges();
+                      setShowPendingList(false);
+                      setPendingChanges([]);
+                    }}
+                    className="px-3 py-1.5 text-sm font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
+                  >
+                    Clear All
+                  </button>
+                </div>
               </div>
+              {showPendingList && pendingChanges.length > 0 && onSkipPendingChange && (
+                <div className="mt-3 space-y-2">
+                  {pendingChanges.map(change => (
+                      <div key={change.id} className={`flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg ${change.error ? 'bg-red-50 dark:bg-red-900/20' : 'bg-gray-50 dark:bg-gray-700/50'}`}>
+                        <div className="min-w-0">
+                          <p className="text-sm text-gray-900 dark:text-gray-100">{change.operation}</p>
+                          {change.detail && (
+                            <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{change.detail}</p>
+                          )}
+                          {change.error && (
+                            <p className="text-xs text-red-600 dark:text-red-400 mt-0.5">{change.error}</p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (change.id != null) {
+                              await onSkipPendingChange(change.id);
+                              setPendingChanges(prev => prev.filter(c => c.id !== change.id));
+                            }
+                          }}
+                          className="shrink-0 px-2 py-1 text-xs font-medium text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/30 rounded hover:bg-orange-100 dark:hover:bg-orange-900/50 transition-colors"
+                        >
+                          Skip
+                        </button>
+                      </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

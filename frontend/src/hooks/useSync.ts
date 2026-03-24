@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useOnlineStatus } from './useOnlineStatus';
 import {
   getPendingChanges,
@@ -13,6 +13,7 @@ import {
   saveLocalMealIdea,
   updateLocalHiddenEventId,
   deleteLocalHiddenEvent,
+  PendingChange,
 } from '../db';
 import {
   updateNotes,
@@ -41,10 +42,26 @@ import {
 } from '../api/client';
 import { ConnectionStatus } from '../types';
 
+function extractErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    // Try to extract HTTP status from common patterns
+    const msg = error.message;
+    if (msg.includes('404')) return '404 Not Found — item may have been deleted';
+    if (msg.includes('409')) return '409 Conflict — item was modified elsewhere';
+    if (msg.includes('422')) return '422 Unprocessable — invalid data';
+    if (msg.includes('500')) return '500 Server Error';
+    if (msg.includes('403')) return '403 Forbidden';
+    if (msg.includes('401')) return '401 Unauthorized — session may have expired';
+    return msg;
+  }
+  return String(error);
+}
+
 export function useSync() {
   const isOnline = useOnlineStatus();
   const [status, setStatus] = useState<ConnectionStatus>(isOnline ? 'online' : 'offline');
   const [pendingCount, setPendingCount] = useState(0);
+  const syncErrorsRef = useRef<Map<number, string>>(new Map());
 
   const syncPendingChanges = useCallback(async () => {
     if (!isOnline) return;
@@ -346,6 +363,9 @@ export function useSync() {
         setPendingCount(prev => prev - 1);
       } catch (error) {
         console.error('Failed to sync change:', error);
+        if (change.id) {
+          syncErrorsRef.current.set(change.id, extractErrorMessage(error));
+        }
         // If change is older than 1 hour, discard it — it's likely stale
         const ONE_HOUR = 60 * 60 * 1000;
         if (change.createdAt && Date.now() - change.createdAt > ONE_HOUR) {
@@ -391,8 +411,27 @@ export function useSync() {
   const clearAllPendingChanges = useCallback(async () => {
     await clearPendingChanges();
     setPendingCount(0);
+    syncErrorsRef.current.clear();
     setStatus(isOnline ? 'online' : 'offline');
   }, [isOnline]);
 
-  return { status, pendingCount, syncPendingChanges, clearAllPendingChanges };
+  const fetchPendingChanges = useCallback(async (): Promise<PendingChange[]> => {
+    return getPendingChanges();
+  }, []);
+
+  const getSyncErrors = useCallback((): Map<number, string> => {
+    return new Map(syncErrorsRef.current);
+  }, []);
+
+  const skipPendingChange = useCallback(async (id: number) => {
+    await removePendingChange(id);
+    syncErrorsRef.current.delete(id);
+    const remaining = await getPendingChanges();
+    setPendingCount(remaining.length);
+    if (remaining.length === 0) {
+      setStatus(isOnline ? 'online' : 'offline');
+    }
+  }, [isOnline]);
+
+  return { status, pendingCount, syncPendingChanges, clearAllPendingChanges, fetchPendingChanges, getSyncErrors, skipPendingChange };
 }
