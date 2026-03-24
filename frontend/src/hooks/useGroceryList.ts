@@ -11,6 +11,7 @@ import {
   reorderGrocerySections as reorderGrocerySectionsAPI,
   reorderGroceryItems as reorderGroceryItemsAPI,
   renameGrocerySection as renameGrocerySectionAPI,
+  moveGroceryItem as moveGroceryItemAPI,
 } from '../api/client';
 import {
   saveLocalGrocerySections,
@@ -1126,7 +1127,7 @@ export function useGroceryList() {
     const item = unchecked[fromIndex];
     if (!item) return;
 
-    const prevSections = sections;
+    // Optimistic local update
     const newSections = sections.map(s => {
       if (s.id === fromSectionId) {
         const items = s.items.filter(i => i.id !== item.id).map((i, idx) => ({ ...i, position: idx }));
@@ -1143,28 +1144,56 @@ export function useGroceryList() {
       return s;
     });
 
-    const toPayload = (secs: GrocerySection[]) => secs.map(s => ({
-      name: s.name,
-      items: s.items.map(i => ({ name: i.name, quantity: i.quantity, checked: i.checked, store_id: i.store_id })),
-    }));
-
     pushAction({
       type: 'move-grocery-item',
       undo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(prevSections);
+        // Move back: reverse the operation locally
+        setSections(prev => {
+          const currentToSection = prev.find(s => s.id === toSectionId);
+          const movedItem = currentToSection?.items.find(i => i.id === item.id);
+          if (!movedItem) return prev;
+          return prev.map(s => {
+            if (s.id === toSectionId) {
+              return { ...s, items: s.items.filter(i => i.id !== item.id).map((i, idx) => ({ ...i, position: idx })) };
+            }
+            if (s.id === fromSectionId) {
+              const unc = s.items.filter(i => !i.checked);
+              const chk = s.items.filter(i => i.checked);
+              unc.splice(fromIndex, 0, { ...movedItem, section_id: fromSectionId });
+              return { ...s, items: [...unc, ...chk].map((i, idx) => ({ ...i, position: idx })) };
+            }
+            return s;
+          });
+        });
         if (isOnline) {
-          try { await replaceAndApply(toPayload(prevSections)); } catch { /* queue */ }
+          try { await moveGroceryItemAPI(item.id, fromSectionId, fromIndex); } catch { /* queue */ }
         }
         settleMutation();
       },
       redo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(newSections);
+        setSections(prev => {
+          const currentFromSection = prev.find(s => s.id === fromSectionId);
+          const movedItem = currentFromSection?.items.find(i => i.id === item.id);
+          if (!movedItem) return prev;
+          return prev.map(s => {
+            if (s.id === fromSectionId) {
+              return { ...s, items: s.items.filter(i => i.id !== item.id).map((i, idx) => ({ ...i, position: idx })) };
+            }
+            if (s.id === toSectionId) {
+              const unc = s.items.filter(i => !i.checked);
+              const chk = s.items.filter(i => i.checked);
+              unc.splice(toIndex, 0, { ...movedItem, section_id: toSectionId });
+              return { ...s, items: [...unc, ...chk].map((i, idx) => ({ ...i, position: idx })) };
+            }
+            return s;
+          });
+        });
         if (isOnline) {
-          try { await replaceAndApply(toPayload(newSections)); } catch { /* queue */ }
+          try { await moveGroceryItemAPI(item.id, toSectionId, toIndex); } catch { /* queue */ }
         }
         settleMutation();
       },
@@ -1181,11 +1210,11 @@ export function useGroceryList() {
 
     if (isOnline) {
       pendingMutationsRef.current++;
-      try { await replaceGroceryListAPI(toPayload(newSections)); } catch {
-        await queueChange('grocery-replace', '', { sections: toPayload(newSections) });
+      try { await moveGroceryItemAPI(item.id, toSectionId, toIndex); } catch {
+        await queueChange('grocery-move-item', '', { id: item.id, toSectionId, toPosition: toIndex });
       } finally { settleMutation(); }
     } else {
-      await queueChange('grocery-replace', '', { sections: toPayload(newSections) });
+      await queueChange('grocery-move-item', '', { id: item.id, toSectionId, toPosition: toIndex });
     }
   }, [sections, isOnline, pushAction, settleMutation]);
 
