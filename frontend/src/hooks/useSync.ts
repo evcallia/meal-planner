@@ -240,7 +240,7 @@ export function useSync() {
           await unhideCalendarEvent(realId);
           await deleteLocalHiddenEvent(realId);
         } else if (change.type === 'grocery-replace') {
-          const payload = change.payload as { sections: { name: string; items: { name: string; quantity: string | null }[] }[] };
+          const payload = change.payload as { sections: { name: string; items: { name: string; quantity: string | null; store_id?: string | null }[] }[] };
           await replaceGroceryList(payload.sections);
         } else if (change.type === 'grocery-check') {
           const payload = change.payload as { id: string; checked: boolean };
@@ -257,13 +257,13 @@ export function useSync() {
           }
           await toggleGroceryItem(realId, payload.checked);
         } else if (change.type === 'grocery-add') {
-          const payload = change.payload as { id: string; sectionId: string; name: string; quantity: string | null };
+          const payload = change.payload as { id: string; sectionId: string; name: string; quantity: string | null; store_id?: string | null };
           let realSectionId = payload.sectionId;
           if (isTempId(payload.sectionId)) {
             const mapped = await getTempIdMapping(payload.sectionId);
             if (mapped) realSectionId = mapped;
           }
-          const created = await addGroceryItem(realSectionId, payload.name, payload.quantity);
+          const created = await addGroceryItem(realSectionId, payload.name, payload.quantity, payload.store_id ?? null);
           if (isTempId(payload.id)) {
             await saveTempIdMapping(payload.id, created.id);
           }
@@ -282,7 +282,7 @@ export function useSync() {
           }
           await deleteGroceryItemAPI(realId);
         } else if (change.type === 'grocery-edit') {
-          const payload = change.payload as { id: string; name?: string; quantity?: string | null };
+          const payload = change.payload as { id: string; name?: string; quantity?: string | null; store_id?: string | null };
           let realId = payload.id;
           if (isTempId(payload.id)) {
             const mapped = await getTempIdMapping(payload.id);
@@ -294,9 +294,10 @@ export function useSync() {
               continue;
             }
           }
-          const updates: { name?: string; quantity?: string | null } = {};
+          const updates: { name?: string; quantity?: string | null; store_id?: string | null } = {};
           if (payload.name !== undefined) updates.name = payload.name;
           if (payload.quantity !== undefined) updates.quantity = payload.quantity;
+          if (payload.store_id !== undefined) updates.store_id = payload.store_id;
           await editGroceryItemAPI(realId, updates);
         } else if (change.type === 'grocery-clear') {
           const payload = change.payload as { mode: 'checked' | 'all' };

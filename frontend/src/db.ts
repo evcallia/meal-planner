@@ -31,7 +31,9 @@ export type ChangeType =
   | 'grocery-clear'
   | 'grocery-reorder-sections'
   | 'grocery-reorder-items'
-  | 'grocery-rename-section';
+  | 'grocery-rename-section'
+  | 'grocery-move-item'
+  | 'pantry-move-item';
 
 export interface PendingChange {
   id?: number;
@@ -68,6 +70,12 @@ export interface LocalGrocerySection {
   position: number;
 }
 
+export interface LocalStore {
+  id: string;
+  name: string;
+  position: number;
+}
+
 export interface LocalGroceryItem {
   id: string;
   section_id: string;
@@ -75,6 +83,7 @@ export interface LocalGroceryItem {
   quantity: string | null;
   checked: boolean;
   position: number;
+  store_id: string | null;
   updated_at: string;
 }
 
@@ -117,6 +126,7 @@ class MealPlannerDB extends Dexie {
   hiddenCalendarEvents!: Table<LocalHiddenCalendarEvent, string>;
   grocerySections!: Table<LocalGrocerySection, string>;
   groceryItems!: Table<LocalGroceryItem, string>;
+  stores!: Table<LocalStore, string>;
 
   constructor() {
     super('MealPlannerDB');
@@ -171,6 +181,19 @@ class MealPlannerDB extends Dexie {
       grocerySections: 'id',
       groceryItems: 'id, section_id'
     });
+    this.version(7).stores({
+      mealNotes: 'date',
+      pendingChanges: '++id, date, type',
+      pantryItems: 'id, section_id',
+      pantrySections: 'id',
+      mealIdeas: 'id',
+      tempIdMap: 'tempId',
+      calendarDays: 'date',
+      hiddenCalendarEvents: 'id',
+      grocerySections: 'id',
+      groceryItems: 'id, section_id',
+      stores: 'id',
+    });
     // Ensure table properties are initialized for both runtime and tests.
     this.mealNotes = this.table('mealNotes');
     this.pendingChanges = this.table('pendingChanges');
@@ -182,6 +205,7 @@ class MealPlannerDB extends Dexie {
     this.hiddenCalendarEvents = this.table('hiddenCalendarEvents');
     this.grocerySections = this.table('grocerySections');
     this.groceryItems = this.table('groceryItems');
+    this.stores = this.table('stores');
   }
 }
 
@@ -456,4 +480,14 @@ export async function deleteLocalGroceryItem(id: string) {
 
 export async function saveLocalGrocerySection(section: LocalGrocerySection) {
   await db.grocerySections.put(section);
+}
+
+// Store persistence
+export async function saveLocalStores(stores: LocalStore[]): Promise<void> {
+  await db.stores.clear();
+  if (stores.length > 0) await db.stores.bulkPut(stores);
+}
+
+export async function getLocalStores(): Promise<LocalStore[]> {
+  return db.stores.orderBy('position').toArray();
 }

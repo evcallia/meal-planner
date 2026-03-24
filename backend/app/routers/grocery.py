@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import GrocerySection, GroceryItem
+from app.models import GrocerySection, GroceryItem, Store, ItemDefault
 from app.schemas import (
     GrocerySectionSchema,
     GroceryItemSchema,
@@ -15,6 +15,7 @@ from app.schemas import (
     GroceryReorderSections,
     GroceryReorderItems,
     GrocerySectionUpdate,
+    GroceryMoveItem,
 )
 from app.realtime import broadcast_event
 
@@ -55,12 +56,21 @@ async def replace_grocery(
         db.add(section)
         db.flush()
         for j, item in enumerate(sec.items):
+            # Auto-populate store from item_defaults if not provided
+            store_id = item.store_id
+            if store_id is None:
+                default = db.query(ItemDefault).filter(
+                    ItemDefault.item_name == item.name.strip().lower()
+                ).first()
+                if default and default.store_id:
+                    store_id = default.store_id
             grocery_item = GroceryItem(
                 section_id=section.id,
                 name=item.name,
                 quantity=item.quantity,
                 checked=item.checked,
                 position=j,
+                store_id=store_id,
             )
             db.add(grocery_item)
         db.flush()
@@ -153,8 +163,34 @@ async def update_grocery_item(
         item.checked = payload.checked
     if payload.name is not None:
         item.name = payload.name.strip()
+        # If item has no store and name changed, check item_defaults for the new name
+        if 'store_id' not in payload.model_fields_set and item.store_id is None:
+            default = db.query(ItemDefault).filter(
+                ItemDefault.item_name == item.name.strip().lower()
+            ).first()
+            if default and default.store_id:
+                item.store_id = default.store_id
     if 'quantity' in payload.model_fields_set:
         item.quantity = payload.quantity if payload.quantity else None
+    if 'store_id' in payload.model_fields_set:
+        item.store_id = payload.store_id
+        # Upsert item_defaults
+        normalized_name = item.name.strip().lower()
+        if payload.store_id is not None:
+            default = db.query(ItemDefault).filter(
+                ItemDefault.item_name == normalized_name
+            ).first()
+            if default:
+                default.store_id = payload.store_id
+            else:
+                db.add(ItemDefault(item_name=normalized_name, store_id=payload.store_id))
+        else:
+            # Clearing store — also clear the default
+            default = db.query(ItemDefault).filter(
+                ItemDefault.item_name == normalized_name
+            ).first()
+            if default:
+                default.store_id = None
     db.commit()
     db.refresh(item)
     await broadcast_event("grocery.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
@@ -177,13 +213,62 @@ async def add_grocery_item(
     ).order_by(GroceryItem.position.desc()).first()
     next_pos = (max_pos[0] + 1) if max_pos else 0
 
+    # Auto-populate store from item_defaults if not provided
+    store_id = payload.store_id
+    if store_id is None:
+        default = db.query(ItemDefault).filter(
+            ItemDefault.item_name == payload.name.strip().lower()
+        ).first()
+        if default and default.store_id:
+            store_id = default.store_id
+
     item = GroceryItem(
         section_id=payload.section_id,
         name=payload.name.strip(),
         quantity=payload.quantity,
         position=next_pos,
+        store_id=store_id,
     )
     db.add(item)
+    db.commit()
+    db.refresh(item)
+    await broadcast_event("grocery.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
+    return item
+
+
+@router.patch("/items/{item_id}/move", response_model=GroceryItemSchema)
+async def move_grocery_item(
+    item_id: UUID,
+    payload: GroceryMoveItem,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    item = db.query(GroceryItem).filter(GroceryItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    target = db.query(GrocerySection).filter(GrocerySection.id == payload.to_section_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Target section not found")
+
+    old_section_id = item.section_id
+    item.section_id = payload.to_section_id
+    item.position = payload.to_position
+
+    # Reposition items in source section (fill the gap)
+    source_items = db.query(GroceryItem).filter(
+        GroceryItem.section_id == old_section_id
+    ).order_by(GroceryItem.position).all()
+    for i, si in enumerate(source_items):
+        si.position = i
+
+    # Reposition items in target section (make room)
+    target_items = db.query(GroceryItem).filter(
+        GroceryItem.section_id == payload.to_section_id
+    ).order_by(GroceryItem.position).all()
+    for i, ti in enumerate(target_items):
+        ti.position = i
+
     db.commit()
     db.refresh(item)
     await broadcast_event("grocery.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))

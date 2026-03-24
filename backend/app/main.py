@@ -19,7 +19,7 @@ from app.config import get_settings
 get_settings.cache_clear()
 from app.database import engine, Base, SessionLocal
 from app.models import MealNote, CachedCalendarEvent, PantrySection, PantryItem
-from app.routers import days, auth, pantry, meal_ideas, realtime, calendar, grocery
+from app.routers import days, auth, pantry, meal_ideas, realtime, calendar, grocery, stores
 from app.ical_service import initialize_cache, shutdown_cache
 from app.realtime import broadcaster, shutdown_event
 
@@ -122,6 +122,53 @@ def run_migrations():
             finally:
                 db.close()
 
+    # Ensure stores and item_defaults tables exist (create_all may have failed
+    # on initial deploy if the functional index was invalid)
+    if not inspector.has_table("stores"):
+        print("Creating stores table...")
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE stores (
+                    id UUID PRIMARY KEY,
+                    name TEXT UNIQUE NOT NULL,
+                    position INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.commit()
+        print("Migration complete: created stores table")
+
+    if not inspector.has_table("item_defaults"):
+        print("Creating item_defaults table...")
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE item_defaults (
+                    id UUID PRIMARY KEY,
+                    item_name TEXT UNIQUE NOT NULL,
+                    store_id UUID REFERENCES stores(id) ON DELETE SET NULL
+                )
+            """))
+            conn.commit()
+        print("Migration complete: created item_defaults table")
+
+    # Drop the broken functional index if it exists (replaced with simple unique constraint)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("DROP INDEX IF EXISTS ix_stores_name_lower"))
+            conn.commit()
+    except Exception:
+        pass
+
+    # Add store_id column to grocery_items if missing
+    if inspector.has_table("grocery_items"):
+        grocery_columns = [col["name"] for col in inspector.get_columns("grocery_items")]
+        if "store_id" not in grocery_columns:
+            print("Adding store_id column to grocery_items...")
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE grocery_items ADD COLUMN store_id UUID REFERENCES stores(id) ON DELETE SET NULL"))
+                conn.commit()
+            print("Migration complete: added store_id column")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -178,6 +225,7 @@ app.include_router(pantry.router)
 app.include_router(meal_ideas.router)
 app.include_router(realtime.router)
 app.include_router(calendar.router)
+app.include_router(stores.router)
 app.include_router(grocery.router)
 
 

@@ -257,7 +257,7 @@ export async function getGroceryList(): Promise<GrocerySection[]> {
   return fetchAPI<GrocerySection[]>('/grocery');
 }
 
-export async function replaceGroceryList(sections: { name: string; items: { name: string; quantity: string | null; checked?: boolean }[] }[]): Promise<GrocerySection[]> {
+export async function replaceGroceryList(sections: { name: string; items: { name: string; quantity: string | null; checked?: boolean; store_id?: string | null }[] }[]): Promise<GrocerySection[]> {
   return fetchAPI<GrocerySection[]>('/grocery', {
     method: 'PUT',
     body: JSON.stringify({ sections }),
@@ -271,10 +271,10 @@ export async function toggleGroceryItem(itemId: string, checked: boolean): Promi
   });
 }
 
-export async function addGroceryItem(sectionId: string, name: string, quantity: string | null = null): Promise<GroceryItem> {
+export async function addGroceryItem(sectionId: string, name: string, quantity: string | null = null, storeId: string | null = null): Promise<GroceryItem> {
   return fetchAPI<GroceryItem>('/grocery/items', {
     method: 'POST',
-    body: JSON.stringify({ section_id: sectionId, name, quantity }),
+    body: JSON.stringify({ section_id: sectionId, name, quantity, store_id: storeId }),
   });
 }
 
@@ -305,7 +305,7 @@ export async function renameGrocerySection(sectionId: string, name: string): Pro
   });
 }
 
-export async function editGroceryItem(itemId: string, updates: { name?: string; quantity?: string | null }): Promise<GroceryItem> {
+export async function editGroceryItem(itemId: string, updates: { name?: string; quantity?: string | null; store_id?: string | null }): Promise<GroceryItem> {
   return fetchAPI<GroceryItem>(`/grocery/items/${itemId}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
@@ -315,5 +315,66 @@ export async function editGroceryItem(itemId: string, updates: { name?: string; 
 export async function clearGroceryItems(mode: 'checked' | 'all'): Promise<GrocerySection[]> {
   return fetchAPI<GrocerySection[]>(`/grocery/items?mode=${mode}`, {
     method: 'DELETE',
+  });
+}
+
+export async function moveGroceryItem(itemId: string, toSectionId: string, toPosition: number): Promise<GroceryItem> {
+  return fetchAPI<GroceryItem>(`/grocery/items/${itemId}/move`, {
+    method: 'PATCH',
+    body: JSON.stringify({ to_section_id: toSectionId, to_position: toPosition }),
+  });
+}
+
+export async function movePantryItem(itemId: string, toSectionId: string, toPosition: number): Promise<PantryItem> {
+  return fetchAPI<PantryItem>(`/pantry/items/${itemId}/move`, {
+    method: 'PATCH',
+    body: JSON.stringify({ to_section_id: toSectionId, to_position: toPosition }),
+  });
+}
+
+export async function createPantrySection(name: string): Promise<PantrySection> {
+  return fetchAPI<PantrySection>('/pantry/sections', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deletePantrySection(sectionId: string): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/pantry/sections/${sectionId}`, {
+    method: 'DELETE',
+  });
+}
+
+// Store API
+import type { Store } from '../types';
+
+export async function getStores(): Promise<Store[]> {
+  return fetchAPI<Store[]>('/stores');
+}
+
+export async function createStore(name: string): Promise<Store> {
+  return fetchAPI<Store>('/stores', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function updateStore(storeId: string, updates: { name?: string; position?: number }): Promise<Store> {
+  return fetchAPI<Store>(`/stores/${storeId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function deleteStore(storeId: string): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/stores/${storeId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function reorderStores(storeIds: string[]): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>('/stores/reorder', {
+    method: 'PATCH',
+    body: JSON.stringify({ store_ids: storeIds }),
   });
 }

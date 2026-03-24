@@ -1,20 +1,29 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useGroceryList } from '../hooks/useGroceryList';
+import { useStores } from '../hooks/useStores';
 import { parseGroceryText } from '../utils/groceryParser';
-import { GrocerySection } from '../types';
+import { GrocerySection, Store } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
+import { StoreAutocomplete } from './StoreAutocomplete';
+import { StoreFilterBar } from './StoreFilterBar';
 
 interface GroceryListViewProps {
   compactView?: boolean;
 }
 
 export function GroceryListView({ compactView: _compactView }: GroceryListViewProps) {
-  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, moveItem } = useGroceryList();
+  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, moveItem, batchUpdateStoreId } = useGroceryList();
+  const { stores, createStore, renameStore, removeStore, reorderStores } = useStores({
+    grocerySections: sections,
+    onItemsStoreChanged: batchUpdateStoreId,
+  });
   const [showInputArea, setShowInputArea] = useState(false);
   const [inputText, setInputText] = useState('');
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
   const [newItemName, setNewItemName] = useState('');
   const [showClearMenu, setShowClearMenu] = useState(false);
+  const [filterStoreId, setFilterStoreId] = useState<string | null>(null);
+  const [sortByStore, setSortByStore] = useState(false);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -22,8 +31,29 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   const sectionContainerRef = useRef<HTMLDivElement>(null);
 
   const visibleSections = useMemo(() => {
-    return sections.filter(s => s.items.some(i => !i.checked));
-  }, [sections]);
+    let filtered = sections.filter(s => s.items.some(i => !i.checked));
+    if (filterStoreId) {
+      filtered = filtered
+        .map(s => ({
+          ...s,
+          items: s.items.filter(i => !i.checked && i.store_id === filterStoreId),
+        }))
+        .filter(s => s.items.length > 0);
+    }
+    if (sortByStore) {
+      const storeOrder = new Map(stores.map(s => [s.id, s.position]));
+      filtered = filtered.map(s => ({
+        ...s,
+        items: [...s.items].sort((a, b) => {
+          const aPos = a.store_id ? (storeOrder.get(a.store_id) ?? Infinity) : Infinity;
+          const bPos = b.store_id ? (storeOrder.get(b.store_id) ?? Infinity) : Infinity;
+          if (aPos !== bPos) return aPos - bPos;
+          return a.position - b.position;
+        }),
+      }));
+    }
+    return filtered;
+  }, [sections, filterStoreId, sortByStore, stores]);
 
   const handleSectionReorder = useCallback((from: number, to: number) => {
     const fromSection = visibleSections[from];
@@ -115,6 +145,29 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       return next;
     });
   }, []);
+
+  const handleStoreAssign = useCallback((itemId: string, storeId: string | null) => {
+    editItem(itemId, { store_id: storeId });
+  }, [editItem]);
+
+  // When sort-by-store is active, drag indices correspond to the sorted visibleSections,
+  // not the unsorted sections. Map sorted indices to the item IDs and use reorderItemsByIds.
+  const handleReorderItems = useCallback((sectionId: string, from: number, to: number) => {
+    if (!sortByStore && !filterStoreId) {
+      reorderItems(sectionId, from, to);
+      return;
+    }
+    // Get items in the order they're displayed (sorted/filtered)
+    const visSection = visibleSections.find(s => s.id === sectionId);
+    if (!visSection) return;
+    const displayedItems = visSection.items.filter(i => !i.checked);
+    // Apply the drag to the displayed order
+    const reordered = [...displayedItems];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(to, 0, moved);
+    // Pass the new ID order to the hook
+    reorderItems(sectionId, from, to, reordered.map(i => i.id));
+  }, [sortByStore, filterStoreId, visibleSections, reorderItems]);
 
   useEffect(() => {
     if (!showClearMenu) return;
@@ -234,6 +287,19 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
               Add items
             </button>
 
+            {/* Sort by store toggle */}
+            {stores.length > 0 && (
+              <button
+                onClick={() => setSortByStore(prev => !prev)}
+                className={`p-2 rounded ${sortByStore ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'}`}
+                title={sortByStore ? 'Unsort' : 'Sort by store'}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M3 3a1 1 0 000 2h11a1 1 0 100-2H3zM3 7a1 1 0 000 2h7a1 1 0 100-2H3zM3 11a1 1 0 100 2h4a1 1 0 100-2H3z" />
+                </svg>
+              </button>
+            )}
+
             {/* Clear menu */}
             {hasItems && (
               <div className="relative" ref={clearMenuRef}>
@@ -278,6 +344,16 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
         )}
       </div>
 
+      {/* Store filter bar */}
+      <StoreFilterBar
+        stores={stores}
+        activeStoreId={filterStoreId}
+        onFilterChange={setFilterStoreId}
+        onRename={renameStore}
+        onDelete={removeStore}
+        onReorder={reorderStores}
+      />
+
       {/* Sections with unchecked items */}
       <div ref={sectionContainerRef}>
         {visibleSections.map((section, sectionIndex) => {
@@ -307,7 +383,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 onDelete={deleteItem}
                 onEdit={editItem}
                 onRenameSection={renameSection}
-                onReorderItems={(from, to) => reorderItems(section.id, from, to)}
+                onReorderItems={(from, to) => handleReorderItems(section.id, from, to)}
                 onItemDropOutside={(fromIndex, clientY) => handleItemDropOutside(section.id, fromIndex, clientY)}
                 onItemDragMove={(fromIndex, clientY) => handleItemDragMove(section.id, fromIndex, clientY)}
                 onItemDragEnd={handleItemDragEnd}
@@ -317,6 +393,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 newItemName={newItemName}
                 onNewItemNameChange={setNewItemName}
                 onAddItem={handleAddItem}
+                stores={stores}
+                onStoreAssign={handleStoreAssign}
+                onCreateStore={createStore}
               />
             </div>
           );
@@ -337,6 +416,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 onToggle={toggleItem}
                 onDelete={deleteItem}
                 onEdit={editItem}
+                stores={stores}
+                onStoreAssign={handleStoreAssign}
+                onCreateStore={createStore}
               />
             ))}
           </div>
@@ -368,6 +450,9 @@ interface SectionCardProps {
   newItemName: string;
   onNewItemNameChange: (name: string) => void;
   onAddItem: (sectionId: string) => void;
+  stores: Store[];
+  onStoreAssign: (itemId: string, storeId: string | null) => void;
+  onCreateStore: (name: string) => Promise<Store | null>;
 }
 
 function SectionCard({
@@ -391,6 +476,9 @@ function SectionCard({
   newItemName,
   onNewItemNameChange,
   onAddItem,
+  stores,
+  onStoreAssign,
+  onCreateStore,
 }: SectionCardProps) {
   const uncheckedItems = section.items.filter(i => !i.checked);
   const itemContainerRef = useRef<HTMLDivElement>(null);
@@ -505,6 +593,9 @@ function SectionCard({
                   dragHandlers={getItemDragHandlers(index)}
                   handleMouseDown={getItemHandleMouseDown(index)}
                   isDragging={itemDragState.isDragging}
+                  stores={stores}
+                  onStoreAssign={onStoreAssign}
+                  onCreateStore={onCreateStore}
                 />
               </div>
             );
@@ -566,9 +657,12 @@ interface GroceryItemRowProps {
   dragHandlers?: ReturnType<ReturnType<typeof useDragReorder>['getDragHandlers']>;
   handleMouseDown?: (e: React.MouseEvent) => void;
   isDragging?: boolean;
+  stores: Store[];
+  onStoreAssign: (itemId: string, storeId: string | null) => void;
+  onCreateStore: (name: string) => Promise<Store | null>;
 }
 
-function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging }: GroceryItemRowProps) {
+function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging, stores, onStoreAssign, onCreateStore }: GroceryItemRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -577,6 +671,8 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
   const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const swipeModeRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+
+  const storeName = stores?.find(s => s.id === item.store_id)?.name;
 
   const SWIPE_THRESHOLD = 50;
   const SWIPE_MAX = 80;
@@ -654,6 +750,12 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
             className="flex-1 min-w-0 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
+        <StoreAutocomplete
+          stores={stores}
+          selectedStoreId={item.store_id}
+          onSelect={(storeId) => onStoreAssign(item.id, storeId)}
+          onCreate={onCreateStore}
+        />
         <div className="flex items-center justify-end gap-3">
           <button
             onClick={cancelEdit}
@@ -776,24 +878,30 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
         </button>
 
         {/* Item text -- tap to edit */}
-        <span
-          className={`
-            flex-1 min-w-0 break-words cursor-pointer
-            text-sm
-            ${item.checked
-              ? 'text-gray-400 dark:text-gray-500 line-through'
-              : 'text-gray-800 dark:text-gray-200'
-            }
-          `}
-          onClick={startEditing}
-        >
-          {item.quantity && (
-            <span className={`font-medium ${item.checked ? 'text-gray-400 dark:text-gray-500' : 'text-blue-600 dark:text-blue-400'}`}>
-              ({item.quantity}){' '}
-            </span>
+        <div className="flex flex-col min-w-0 flex-1" onClick={startEditing}>
+          <span
+            className={`
+              min-w-0 break-words cursor-pointer
+              text-sm
+              ${item.checked
+                ? 'text-gray-400 dark:text-gray-500 line-through'
+                : 'text-gray-800 dark:text-gray-200'
+              }
+            `}
+          >
+            {item.quantity && (
+              <span className={`font-medium ${item.checked ? 'text-gray-400 dark:text-gray-500' : 'text-blue-600 dark:text-blue-400'}`}>
+                ({item.quantity}){' '}
+              </span>
+            )}
+            {item.name}
+          </span>
+          {storeName && (
+            <div className="text-xs text-gray-400 dark:text-gray-500 leading-tight">
+              {storeName}
+            </div>
           )}
-          {item.name}
-        </span>
+        </div>
 
         {/* Desktop delete button */}
         <button

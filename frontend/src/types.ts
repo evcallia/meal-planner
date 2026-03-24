@@ -35,6 +35,12 @@ export interface UserInfo {
 
 export type ConnectionStatus = 'online' | 'offline' | 'syncing';
 
+export interface Store {
+  id: string;
+  name: string;
+  position: number;
+}
+
 export interface PantryItem {
   id: string;
   section_id: string;
@@ -64,6 +70,7 @@ export interface GroceryItem {
   quantity: string | null;
   checked: boolean;
   position: number;
+  store_id: string | null;
   updated_at: string;
 }
 

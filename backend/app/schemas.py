@@ -89,6 +89,11 @@ class PantryReorderItems(BaseModel):
     item_ids: list[UUID]
 
 
+class PantryMoveItem(BaseModel):
+    to_section_id: UUID
+    to_position: int
+
+
 class MealIdeaSchema(BaseModel):
     id: UUID
     title: str
@@ -137,6 +142,7 @@ class GroceryItemSchema(BaseModel):
     quantity: str | None = None
     checked: bool
     position: int
+    store_id: UUID | None = None
     updated_at: datetime
 
     class Config:
@@ -157,6 +163,7 @@ class GroceryItemCreate(BaseModel):
     section_id: UUID
     name: str = Field(..., min_length=1)
     quantity: str | None = None
+    store_id: UUID | None = None
 
 
 class GroceryItemToggle(BaseModel):
@@ -167,12 +174,14 @@ class GroceryItemUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1)
     quantity: str | None = None
     checked: bool | None = None
+    store_id: UUID | None = None
 
 
 class GroceryReplaceItem(BaseModel):
     name: str
     quantity: str | None = None
     checked: bool = False
+    store_id: UUID | None = None
 
 
 class GroceryReplaceSection(BaseModel):
@@ -194,6 +203,34 @@ class GroceryReorderSections(BaseModel):
 
 class GroceryReorderItems(BaseModel):
     item_ids: list[UUID]
+
+
+class GroceryMoveItem(BaseModel):
+    to_section_id: UUID
+    to_position: int
+
+
+class StoreSchema(BaseModel):
+    id: UUID
+    name: str
+    position: int
+
+    class Config:
+        from_attributes = True
+
+
+class StoreCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    position: int | None = None
+
+
+class StoreUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    position: int | None = None
+
+
+class StoreReorder(BaseModel):
+    store_ids: list[UUID]
 
 
 class DayData(BaseModel):
