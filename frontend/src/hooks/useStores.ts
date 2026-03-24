@@ -25,28 +25,36 @@ export function useStores(options: UseStoresOptions = {}) {
   const { pushAction } = useUndo();
   const pendingRef = useRef(0);
   const deferredRef = useRef(false);
+  const optimisticVersionRef = useRef(0);
   const grocerySectionsRef = useRef(grocerySections);
   grocerySectionsRef.current = grocerySections;
   const onItemsStoreChangedRef = useRef(onItemsStoreChanged);
   onItemsStoreChangedRef.current = onItemsStoreChanged;
 
+  const isOnlineRef = useRef(isOnline);
+  isOnlineRef.current = isOnline;
+
   const loadStores = useCallback(async () => {
+    const fetchVersion = optimisticVersionRef.current;
     try {
-      if (isOnline) {
+      if (isOnlineRef.current) {
         const data = await getStoresAPI();
+        if (optimisticVersionRef.current !== fetchVersion) return;
         setStores(data);
         await saveLocalStores(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
       } else {
         const local = await getLocalStores();
+        if (optimisticVersionRef.current !== fetchVersion) return;
         setStores(local);
       }
     } catch {
       const local = await getLocalStores();
+      if (optimisticVersionRef.current !== fetchVersion) return;
       setStores(local);
     } finally {
       setLoading(false);
     }
-  }, [isOnline]);
+  }, []);
 
   const loadStoresRef = useRef(loadStores);
   loadStoresRef.current = loadStores;
@@ -58,6 +66,15 @@ export function useStores(options: UseStoresOptions = {}) {
       loadStoresRef.current();
     }
   }, []);
+
+  const prevOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+    if (isOnline && wasOffline) {
+      loadStores();
+    }
+  }, [isOnline, loadStores]);
 
   useEffect(() => { loadStores(); }, [loadStores]);
 
@@ -78,6 +95,7 @@ export function useStores(options: UseStoresOptions = {}) {
 
   const createStore = useCallback(async (name: string): Promise<Store | null> => {
     try {
+      optimisticVersionRef.current++;
       pendingRef.current++;
       const store = await createStoreAPI(name);
       setStores(prev => {
@@ -99,6 +117,7 @@ export function useStores(options: UseStoresOptions = {}) {
     const prevName = stores.find(s => s.id === storeId)?.name;
     if (!prevName || prevName === name) return;
 
+    optimisticVersionRef.current++;
     pendingRef.current++;
     setStores(prev => prev.map(s => s.id === storeId ? { ...s, name } : s));
     try {
@@ -109,12 +128,14 @@ export function useStores(options: UseStoresOptions = {}) {
     pushAction({
       type: 'rename-store',
       undo: async () => {
+        optimisticVersionRef.current++;
         pendingRef.current++;
         setStores(prev => prev.map(s => s.id === storeId ? { ...s, name: prevName } : s));
         try { await updateStoreAPI(storeId, { name: prevName }); } catch {}
         finally { settleMutation(); }
       },
       redo: async () => {
+        optimisticVersionRef.current++;
         pendingRef.current++;
         setStores(prev => prev.map(s => s.id === storeId ? { ...s, name } : s));
         try { await updateStoreAPI(storeId, { name }); } catch {}
@@ -136,6 +157,7 @@ export function useStores(options: UseStoresOptions = {}) {
     // Optimistically null out store_id on affected items
     onItemsStoreChangedRef.current?.(affectedItemIds, null);
 
+    optimisticVersionRef.current++;
     pendingRef.current++;
     setStores(prev => {
       const updated = prev.filter(s => s.id !== storeId);
@@ -147,6 +169,7 @@ export function useStores(options: UseStoresOptions = {}) {
     pushAction({
       type: 'delete-store',
       undo: async () => {
+        optimisticVersionRef.current++;
         pendingRef.current++;
         try {
           // Re-create the store (API deduplicates by name, returns existing or new)
@@ -172,6 +195,7 @@ export function useStores(options: UseStoresOptions = {}) {
         finally { settleMutation(); }
       },
       redo: async () => {
+        optimisticVersionRef.current++;
         pendingRef.current++;
         // Null out store_id on affected items again
         onItemsStoreChangedRef.current?.(affectedItemIds, null);
@@ -203,6 +227,7 @@ export function useStores(options: UseStoresOptions = {}) {
     updated.splice(toIndex, 0, moved);
     const reordered = updated.map((s, i) => ({ ...s, position: i }));
 
+    optimisticVersionRef.current++;
     setStores(reordered);
     await saveLocalStores(reordered.map(s => ({ id: s.id, name: s.name, position: s.position })));
 

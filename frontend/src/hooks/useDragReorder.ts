@@ -143,7 +143,7 @@ export function useDragReorder({ onReorder, containerRef, onDragStart, onDragEnd
     const rect = ref.itemRects[index];
     if (!rect) { ref.phase = 'idle'; return; }
 
-    ref.offsetY = clientY - rect.top;
+    ref.offsetY = rect.height / 2;
     ref.currentOverIndex = index;
     ref.lastClientY = clientY;
 

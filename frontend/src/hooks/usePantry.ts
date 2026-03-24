@@ -84,10 +84,13 @@ export function usePantry() {
     return loadPantryFromLocalStorage();
   };
 
+  const isOnlineRef = useRef(isOnline);
+  isOnlineRef.current = isOnline;
+
   const loadPantryList = useCallback(async () => {
     const fetchVersion = optimisticVersionRef.current;
     try {
-      if (isOnline) {
+      if (isOnlineRef.current) {
         const data = await getPantryList();
         if (optimisticVersionRef.current !== fetchVersion) return;
         setSections(data);
@@ -99,14 +102,18 @@ export function usePantry() {
           quantity: i.quantity, position: i.position, updated_at: i.updated_at,
         })));
       } else {
-        setSections(await loadFromLocal());
+        const localData = await loadFromLocal();
+        if (optimisticVersionRef.current !== fetchVersion) return;
+        setSections(localData);
       }
     } catch {
-      setSections(await loadFromLocal());
+      const localData = await loadFromLocal();
+      if (optimisticVersionRef.current !== fetchVersion) return;
+      setSections(localData);
     } finally {
       setLoading(false);
     }
-  }, [isOnline]);
+  }, []);
 
   const loadPantryListRef = useRef(loadPantryList);
   loadPantryListRef.current = loadPantryList;
@@ -130,6 +137,15 @@ export function usePantry() {
       quantity: i.quantity, position: i.position, updated_at: i.updated_at,
     }))));
   };
+
+  const prevOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+    if (isOnline && wasOffline) {
+      loadPantryList();
+    }
+  }, [isOnline, loadPantryList]);
 
   useEffect(() => {
     loadPantryList();
