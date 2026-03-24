@@ -423,6 +423,10 @@ export function useGroceryList() {
 
     const tempId = generateTempId();
     const maxPos = section.items.length > 0 ? Math.max(...section.items.map(i => i.position)) + 1 : 0;
+    // Look up store_id from any existing item with the same name (including checked items in any section)
+    const existingWithStore = sections.flatMap(s => s.items).find(
+      i => i.name.toLowerCase() === trimmedName.toLowerCase() && i.store_id
+    );
     const newItem: GroceryItem = {
       id: tempId,
       section_id: sectionId,
@@ -430,7 +434,7 @@ export function useGroceryList() {
       quantity,
       checked: false,
       position: maxPos,
-      store_id: null,
+      store_id: existingWithStore?.store_id ?? null,
       updated_at: new Date().toISOString(),
     };
 
