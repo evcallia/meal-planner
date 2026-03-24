@@ -89,6 +89,11 @@ class PantryReorderItems(BaseModel):
     item_ids: list[UUID]
 
 
+class PantryMoveItem(BaseModel):
+    to_section_id: UUID
+    to_position: int
+
+
 class MealIdeaSchema(BaseModel):
     id: UUID
     title: str
@@ -198,6 +203,11 @@ class GroceryReorderSections(BaseModel):
 
 class GroceryReorderItems(BaseModel):
     item_ids: list[UUID]
+
+
+class GroceryMoveItem(BaseModel):
+    to_section_id: UUID
+    to_position: int
 
 
 class StoreSchema(BaseModel):

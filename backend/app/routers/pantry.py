@@ -15,6 +15,7 @@ from app.schemas import (
     PantryReorderSections,
     PantryReorderItems,
     PantrySectionUpdate,
+    PantryMoveItem,
 )
 from app.realtime import broadcast_event
 
@@ -187,6 +188,78 @@ async def update_pantry_item(
     db.refresh(item)
     await broadcast_event("pantry.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
     return item
+
+
+@router.patch("/items/{item_id}/move", response_model=PantryItemSchema)
+async def move_pantry_item(
+    item_id: UUID,
+    payload: PantryMoveItem,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    item = db.query(PantryItem).filter(PantryItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    target = db.query(PantrySection).filter(PantrySection.id == payload.to_section_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Target section not found")
+
+    old_section_id = item.section_id
+    item.section_id = payload.to_section_id
+    item.position = payload.to_position
+
+    # Reposition items in source section (fill the gap)
+    source_items = db.query(PantryItem).filter(
+        PantryItem.section_id == old_section_id
+    ).order_by(PantryItem.position).all()
+    for i, si in enumerate(source_items):
+        si.position = i
+
+    # Reposition items in target section (make room)
+    target_items = db.query(PantryItem).filter(
+        PantryItem.section_id == payload.to_section_id
+    ).order_by(PantryItem.position).all()
+    for i, ti in enumerate(target_items):
+        ti.position = i
+
+    db.commit()
+    db.refresh(item)
+    await broadcast_event("pantry.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
+    return item
+
+
+@router.post("/sections", response_model=PantrySectionSchema)
+async def create_pantry_section(
+    payload: PantrySectionUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    max_pos = db.query(PantrySection.position).order_by(PantrySection.position.desc()).first()
+    next_pos = (max_pos[0] + 1) if max_pos else 0
+    section = PantrySection(name=payload.name.strip(), position=next_pos)
+    db.add(section)
+    db.commit()
+    db.refresh(section)
+    await broadcast_event("pantry.updated", {}, source_id=request.headers.get("x-source-id"))
+    return section
+
+
+@router.delete("/sections/{section_id}")
+async def delete_pantry_section(
+    section_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    section = db.query(PantrySection).filter(PantrySection.id == section_id).first()
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    db.delete(section)
+    db.commit()
+    await broadcast_event("pantry.updated", {"id": str(section_id), "deleted": True}, source_id=request.headers.get("x-source-id"))
+    return {"status": "deleted"}
 
 
 @router.delete("/items/{item_id}")

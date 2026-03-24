@@ -15,6 +15,7 @@ from app.schemas import (
     GroceryReorderSections,
     GroceryReorderItems,
     GrocerySectionUpdate,
+    GroceryMoveItem,
 )
 from app.realtime import broadcast_event
 
@@ -229,6 +230,45 @@ async def add_grocery_item(
         store_id=store_id,
     )
     db.add(item)
+    db.commit()
+    db.refresh(item)
+    await broadcast_event("grocery.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
+    return item
+
+
+@router.patch("/items/{item_id}/move", response_model=GroceryItemSchema)
+async def move_grocery_item(
+    item_id: UUID,
+    payload: GroceryMoveItem,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    item = db.query(GroceryItem).filter(GroceryItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    target = db.query(GrocerySection).filter(GrocerySection.id == payload.to_section_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Target section not found")
+
+    old_section_id = item.section_id
+    item.section_id = payload.to_section_id
+    item.position = payload.to_position
+
+    # Reposition items in source section (fill the gap)
+    source_items = db.query(GroceryItem).filter(
+        GroceryItem.section_id == old_section_id
+    ).order_by(GroceryItem.position).all()
+    for i, si in enumerate(source_items):
+        si.position = i
+
+    # Reposition items in target section (make room)
+    target_items = db.query(GroceryItem).filter(
+        GroceryItem.section_id == payload.to_section_id
+    ).order_by(GroceryItem.position).all()
+    for i, ti in enumerate(target_items):
+        ti.position = i
+
     db.commit()
     db.refresh(item)
     await broadcast_event("grocery.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
