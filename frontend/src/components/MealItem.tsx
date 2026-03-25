@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { autoLinkUrls } from '../utils/autolink';
 import { decodeHtmlEntities } from '../utils/html';
+import { sanitizeHtml } from '../utils/sanitize';
 
 interface MealItemProps {
   html: string;
@@ -39,7 +40,7 @@ export function MealItem({
   onDragEnd,
 }: MealItemProps) {
   const decodedHtml = decodeHtmlEntities(html);
-  const linkedHtml = autoLinkUrls(decodedHtml);
+  const linkedHtml = sanitizeHtml(autoLinkUrls(decodedHtml));
   const dragRef = useRef<HTMLDivElement>(null);
   const touchStartRef = useRef<{ x: number; y: number; timeout: ReturnType<typeof setTimeout> | null }>({
     x: 0,

@@ -110,6 +110,7 @@ vi.mock('../db', () => ({
   clearLocalMealIdeas: vi.fn(() => Promise.resolve()),
   saveLocalGrocerySections: vi.fn(() => Promise.resolve()),
   saveLocalGroceryItems: vi.fn(() => Promise.resolve()),
+  clearAllLocalData: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('../utils/scroll', () => ({

@@ -61,7 +61,7 @@ export function useStores(options: UseStoresOptions = {}) {
 
   const settleMutation = useCallback(() => {
     pendingRef.current--;
-    if (pendingRef.current === 0 && deferredRef.current) {
+    if (pendingRef.current === 0) {
       deferredRef.current = false;
       loadStoresRef.current();
     }

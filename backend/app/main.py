@@ -41,6 +41,30 @@ class TimingMiddleware(BaseHTTPMiddleware):
         print(f"[API] {request.method} {request.url.path} completed in {duration:.3f}s")
         return response
 
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add Content-Security-Policy and other security headers to HTML responses."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        # Only add CSP to HTML page responses, not API JSON
+        if not request.url.path.startswith("/api"):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; "
+                "font-src 'self'; "
+                "connect-src 'self'; "
+                "frame-ancestors 'none'; "
+                "base-uri 'self'; "
+                "form-action 'self'"
+            )
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
 # Path to static files (built React app)
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
@@ -208,6 +232,9 @@ app = FastAPI(title="Meal Planner", lifespan=lifespan)
 # Timing middleware (must be added first to wrap all other middleware)
 app.add_middleware(TimingMiddleware)
 
+# Security headers (CSP, X-Frame-Options, etc.) for HTML responses
+app.add_middleware(SecurityHeadersMiddleware)
+
 # Session middleware for auth
 # When using tunnels (ngrok), use same_site="none" to allow cross-site cookies
 app.add_middleware(
@@ -260,7 +287,12 @@ if STATIC_DIR.exists():
     async def serve_spa(full_path: str):
         """Serve React SPA for all non-API routes."""
         # Try to serve the exact file
-        file_path = STATIC_DIR / full_path
+        file_path = (STATIC_DIR / full_path).resolve()
+        # Prevent path traversal outside STATIC_DIR
+        if not str(file_path).startswith(str(STATIC_DIR.resolve())):
+            resp = FileResponse(STATIC_DIR / "index.html")
+            resp.headers.update(NO_CACHE_HEADERS)
+            return resp
         if file_path.is_file():
             resp = FileResponse(file_path)
             if file_path.name in NO_CACHE_FILES:

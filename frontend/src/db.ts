@@ -491,3 +491,19 @@ export async function saveLocalStores(stores: LocalStore[]): Promise<void> {
 export async function getLocalStores(): Promise<LocalStore[]> {
   return db.stores.orderBy('position').toArray();
 }
+
+export async function clearAllLocalData(): Promise<void> {
+  await Promise.all([
+    db.mealNotes.clear(),
+    db.pendingChanges.clear(),
+    db.pantryItems.clear(),
+    db.pantrySections.clear(),
+    db.mealIdeas.clear(),
+    db.tempIdMap.clear(),
+    db.calendarDays.clear(),
+    db.hiddenCalendarEvents.clear(),
+    db.grocerySections.clear(),
+    db.groceryItems.clear(),
+    db.stores.clear(),
+  ]);
+}

@@ -15,7 +15,7 @@ import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryLi
 import { UserInfo } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
-import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems } from './db';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, clearAllLocalData } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'pantry' | 'grocery';
@@ -528,6 +528,9 @@ function AppContent() {
   const handleLogout = useCallback(async () => {
     await logout();
     localStorage.removeItem('meal-planner-user');
+    localStorage.removeItem('meal-planner-grocery');
+    localStorage.removeItem('meal-planner-settings');
+    await clearAllLocalData().catch(() => {});
     setUser(null);
   }, []);
 

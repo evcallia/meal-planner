@@ -22,9 +22,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies (use lockfile for reproducible builds)
+COPY backend/requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
 
 # Copy backend code
 COPY backend/app ./app
@@ -35,6 +35,10 @@ COPY --from=frontend-builder /frontend/dist ./static
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash appuser
+USER appuser
 
 # Expose port
 EXPOSE 8000

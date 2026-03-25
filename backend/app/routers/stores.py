@@ -13,7 +13,10 @@ router = APIRouter(prefix="/api/stores", tags=["stores"])
 
 
 def to_title_case(name: str) -> str:
-    return name.strip().title()
+    # Python's str.title() capitalizes after any non-alpha char (e.g. "joe's" → "Joe'S").
+    # Only capitalize after whitespace/start of string to preserve apostrophes.
+    import re  # noqa: PLC0415
+    return re.sub(r"(^|\s)(\S)", lambda m: m.group(1) + m.group(2).upper(), name.strip())
 
 
 @router.get("", response_model=list[StoreSchema])

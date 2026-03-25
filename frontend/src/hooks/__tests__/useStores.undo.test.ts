@@ -64,6 +64,9 @@ describe('useStores undo/redo', () => {
 
   it('renameStore undo restores original name', async () => {
     mockUpdateStoreAPI.mockResolvedValue({ id: 'st1', name: 'New Costco', position: 0 });
+    // After settle, loadStores re-fetches — match expected state at each step
+    mockGetStoresAPI.mockResolvedValueOnce(sampleStores); // initial load
+    mockGetStoresAPI.mockResolvedValueOnce([{ id: 'st1', name: 'New Costco', position: 0 }, sampleStores[1]]); // after rename
 
     const { result } = renderHook(() => useStores());
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -74,12 +77,19 @@ describe('useStores undo/redo', () => {
 
     // Undo
     mockUpdateStoreAPI.mockResolvedValue({ id: 'st1', name: 'Costco', position: 0 });
+    mockGetStoresAPI.mockResolvedValue(sampleStores); // after undo
     await act(async () => { await pushActionCalls[0].undo(); });
     expect(result.current.stores[0].name).toBe('Costco');
   });
 
   it('renameStore redo re-applies the rename', async () => {
     mockUpdateStoreAPI.mockResolvedValue({ id: 'st1', name: 'New Costco', position: 0 });
+    const renamedStores = [{ id: 'st1', name: 'New Costco', position: 0 }, sampleStores[1]];
+    // Sequence: initial load → rename settle → undo settle → redo settle
+    mockGetStoresAPI.mockResolvedValueOnce(sampleStores);     // initial load
+    mockGetStoresAPI.mockResolvedValueOnce(renamedStores);     // after rename
+    mockGetStoresAPI.mockResolvedValueOnce(sampleStores);      // after undo
+    mockGetStoresAPI.mockResolvedValue(renamedStores);         // after redo
 
     const { result } = renderHook(() => useStores());
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -94,6 +104,10 @@ describe('useStores undo/redo', () => {
     mockDeleteStoreAPI.mockResolvedValue({ status: 'ok' });
     mockCreateStoreAPI.mockResolvedValue({ id: 'st1-new', name: 'Costco', position: 0 });
     mockUpdateStoreAPI.mockResolvedValue({ id: 'st1-new', name: 'Costco', position: 0 });
+    // Sequence: initial → delete settle → undo settle
+    mockGetStoresAPI.mockResolvedValueOnce(sampleStores);    // initial load
+    mockGetStoresAPI.mockResolvedValueOnce([sampleStores[1]]); // after delete
+    mockGetStoresAPI.mockResolvedValue([{ id: 'st1-new', name: 'Costco', position: 0 }, sampleStores[1]]); // after undo
 
     const { result } = renderHook(() => useStores());
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -111,6 +125,13 @@ describe('useStores undo/redo', () => {
     mockDeleteStoreAPI.mockResolvedValue({ status: 'ok' });
     mockCreateStoreAPI.mockResolvedValue({ id: 'st1-new', name: 'Costco', position: 0 });
     mockUpdateStoreAPI.mockResolvedValue({ id: 'st1-new', name: 'Costco', position: 0 });
+    const undoneStores = [{ id: 'st1-new', name: 'Costco', position: 0 }, sampleStores[1]];
+    // Sequence: initial → delete settle → undo settle → redo (getStores for match) → redo settle
+    mockGetStoresAPI.mockResolvedValueOnce(sampleStores);      // initial load
+    mockGetStoresAPI.mockResolvedValueOnce([sampleStores[1]]);  // after delete
+    mockGetStoresAPI.mockResolvedValueOnce(undoneStores);       // after undo
+    mockGetStoresAPI.mockResolvedValueOnce(undoneStores);       // redo's getStores call to find match
+    mockGetStoresAPI.mockResolvedValue([sampleStores[1]]);      // after redo settle
 
     const { result } = renderHook(() => useStores());
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -122,7 +143,6 @@ describe('useStores undo/redo', () => {
     expect(result.current.stores).toHaveLength(2);
 
     // Redo: the redo function fetches current stores from API, finds the match, and deletes
-    mockGetStoresAPI.mockResolvedValue([{ id: 'st1-new', name: 'Costco', position: 0 }, sampleStores[1]]);
     mockDeleteStoreAPI.mockResolvedValue({ status: 'ok' });
     await act(async () => { await pushActionCalls[0].redo(); });
 
@@ -132,6 +152,8 @@ describe('useStores undo/redo', () => {
 
   it('removeStore with grocery items nulls out store_id via callback', async () => {
     mockDeleteStoreAPI.mockResolvedValue({ status: 'ok' });
+    mockGetStoresAPI.mockResolvedValueOnce(sampleStores);    // initial load
+    mockGetStoresAPI.mockResolvedValue([sampleStores[1]]);   // after delete
 
     const onItemsStoreChanged = vi.fn();
     const grocerySections = [
