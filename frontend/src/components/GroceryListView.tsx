@@ -30,6 +30,18 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   const clearMenuRef = useRef<HTMLDivElement>(null);
   const sectionContainerRef = useRef<HTMLDivElement>(null);
 
+  const storeCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const section of sections) {
+      for (const item of section.items) {
+        if (!item.checked && item.store_id) {
+          counts.set(item.store_id, (counts.get(item.store_id) ?? 0) + 1);
+        }
+      }
+    }
+    return counts;
+  }, [sections]);
+
   const visibleSections = useMemo(() => {
     let filtered = sections.filter(s => s.items.some(i => !i.checked));
     if (filterStoreId) {
@@ -374,6 +386,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
         onRename={renameStore}
         onDelete={removeStore}
         onReorder={reorderStores}
+        storeCounts={storeCounts}
       />
 
       {/* Sections with unchecked items */}
@@ -533,10 +546,10 @@ function SectionCard({
   });
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
       {/* Section Header -- long-press to drag section */}
       <div
-        className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 touch-none"
+        className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 touch-none rounded-t-lg"
         {...sectionDragHandlers}
       >
         <div className="flex items-center gap-2">
