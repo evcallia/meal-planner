@@ -8,9 +8,10 @@ interface StoreFilterBarProps {
   onRename: (storeId: string, name: string) => void;
   onDelete: (storeId: string) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
+  storeCounts?: Map<string, number>;
 }
 
-export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename, onDelete, onReorder }: StoreFilterBarProps) {
+export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename, onDelete, onReorder, storeCounts }: StoreFilterBarProps) {
   const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -295,6 +296,15 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
               `}
             >
               {store.name}
+              {storeCounts && (storeCounts.get(store.id) ?? 0) > 0 && (
+                <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center ${
+                  activeStoreId === store.id
+                    ? 'bg-blue-400/30 text-white'
+                    : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
+                }`}>
+                  {storeCounts.get(store.id)}
+                </span>
+              )}
             </button>
           );
         })}
