@@ -58,6 +58,17 @@ export function usePantry() {
   const pendingMutationsRef = useRef(0);
   const deferredLoadRef = useRef(false);
 
+  // When delete+undo re-creates an item, it gets a new server ID.
+  // This map lets older undo entries resolve the original ID → current ID.
+  const idRemapRef = useRef(new Map<string, string>());
+  const resolveId = (originalId: string): string => {
+    let id = originalId;
+    while (idRemapRef.current.has(id)) {
+      id = idRemapRef.current.get(id)!;
+    }
+    return id;
+  };
+
   // Debounce state for updateItem
   const updateTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingUpdatesRef = useRef<Record<string, { name?: string; quantity?: number }>>({});
@@ -323,10 +334,10 @@ export function usePantry() {
     pushAction({
       type: 'adjust-pantry-qty',
       undo: async () => {
-        updateItem(id, { quantity: prevQty });
+        updateItem(resolveId(id), { quantity: prevQty });
       },
       redo: async () => {
-        updateItem(id, { quantity: nextQty });
+        updateItem(resolveId(id), { quantity: nextQty });
       },
     });
   }, [sections, updateItem, pushAction]);
@@ -348,6 +359,7 @@ export function usePantry() {
       type: 'delete-pantry-item',
       undo: async () => {
         // Re-add the specific item via POST (not PUT) — doesn't affect other users' items
+        const prevId = deletedItemRef.id;
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         const tempId = generateTempId();
@@ -365,6 +377,8 @@ export function usePantry() {
               : s
             ));
             deletedItemRef.id = created.id;
+            // Record old→new so older undo entries can find the item
+            idRemapRef.current.set(prevId, created.id);
             await deleteLocalPantryItem(tempId);
           } catch { /* queue */ }
         }

@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react';
+import { sanitizeHtml } from '../utils/sanitize';
 
 interface RichTextEditorProps {
   value: string;
@@ -26,7 +27,7 @@ export function RichTextEditor({ value, onChange, onBlur, placeholder, autoFocus
         !isUserEditing.current;
         
       if (shouldUpdateContent && editorRef.current.innerHTML !== value) {
-        editorRef.current.innerHTML = value;
+        editorRef.current.innerHTML = sanitizeHtml(value);
       }
       
       // Auto-focus if requested (only on initial mount)

@@ -276,6 +276,28 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                   Cancel
                 </button>
               )}
+              <button
+                onClick={() => {
+                  const ta = textareaRef.current;
+                  if (!ta) return;
+                  const pos = ta.selectionStart;
+                  const before = inputText.slice(0, pos);
+                  const after = inputText.slice(pos);
+                  // Insert on its own line
+                  const needsNewline = before.length > 0 && !before.endsWith('\n');
+                  const insert = (needsNewline ? '\n' : '') + '[]';
+                  const newText = before + insert + after;
+                  const cursorPos = pos + insert.length - 1; // between the brackets
+                  setInputText(newText);
+                  requestAnimationFrame(() => {
+                    ta.focus();
+                    ta.setSelectionRange(cursorPos, cursorPos);
+                  });
+                }}
+                className="ml-auto text-sm text-blue-500 hover:text-blue-700 dark:hover:text-blue-300"
+              >
+                Add section
+              </button>
             </div>
           </div>
         ) : (

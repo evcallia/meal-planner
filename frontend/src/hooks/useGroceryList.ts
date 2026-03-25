@@ -60,6 +60,17 @@ export function useGroceryList() {
     window.dispatchEvent(new CustomEvent('grocery-count-changed', { detail: count }));
   }, [sections]);
 
+  // When delete+undo re-creates an item, it gets a new server ID.
+  // This map lets older undo entries resolve the original ID → current ID.
+  const idRemapRef = useRef(new Map<string, string>());
+  const resolveId = (originalId: string): string => {
+    let id = originalId;
+    while (idRemapRef.current.has(id)) {
+      id = idRemapRef.current.get(id)!;
+    }
+    return id;
+  };
+
   // Version counter: incremented on every optimistic update.
   // loadGroceryList checks this before applying fetched data to avoid
   // overwriting newer optimistic state with a stale server response.
@@ -200,43 +211,78 @@ export function useGroceryList() {
         s => s.name.toLowerCase() === parsedSection.name.toLowerCase()
       );
 
+      // Helper: find store_id from any existing item with matching name
+      const lookupStoreId = (name: string): string | null => {
+        const match = mergedSections.flatMap(s => s.items).find(
+          i => i.name.toLowerCase() === name.toLowerCase() && i.store_id
+        );
+        return match?.store_id ?? null;
+      };
+
       if (existingIndex >= 0) {
-        // Append new items to existing section
+        // Merge items into existing section — dedup by name
         const existing = mergedSections[existingIndex];
-        const maxPos = existing.items.length > 0
+        let maxPos = existing.items.length > 0
           ? Math.max(...existing.items.map(i => i.position)) + 1
           : 0;
-        const newItems: GroceryItem[] = parsedSection.items.map((item, ii) => ({
-          id: generateTempId(),
-          section_id: existing.id,
-          name: toTitleCase(item.name),
-          quantity: item.quantity,
-          checked: false,
-          position: maxPos + ii,
-          store_id: null,
-          updated_at: new Date().toISOString(),
-        }));
-        mergedSections[existingIndex] = {
-          ...existing,
-          items: [...existing.items, ...newItems],
-        };
+        const updatedItems = [...existing.items];
+
+        for (const item of parsedSection.items) {
+          const trimmedName = toTitleCase(item.name);
+          const existingItem = updatedItems.find(
+            i => !i.checked && i.name.toLowerCase() === trimmedName.toLowerCase()
+          );
+          if (existingItem) {
+            // Dedup: merge quantities
+            const existingQty = parseInt(existingItem.quantity || '1') || 1;
+            const addingQty = parseInt(item.quantity || '1') || 1;
+            existingItem.quantity = String(existingQty + addingQty);
+          } else {
+            updatedItems.push({
+              id: generateTempId(),
+              section_id: existing.id,
+              name: trimmedName,
+              quantity: item.quantity,
+              checked: false,
+              position: maxPos++,
+              store_id: lookupStoreId(trimmedName),
+              updated_at: new Date().toISOString(),
+            });
+          }
+        }
+        mergedSections[existingIndex] = { ...existing, items: updatedItems };
       } else {
-        // Create new section
+        // Create new section — still dedup within the parsed items and look up stores
         const sectionId = generateTempId();
+        const dedupedItems: GroceryItem[] = [];
+        let pos = 0;
+        for (const item of parsedSection.items) {
+          const trimmedName = toTitleCase(item.name);
+          const existingItem = dedupedItems.find(
+            i => i.name.toLowerCase() === trimmedName.toLowerCase()
+          );
+          if (existingItem) {
+            const existingQty = parseInt(existingItem.quantity || '1') || 1;
+            const addingQty = parseInt(item.quantity || '1') || 1;
+            existingItem.quantity = String(existingQty + addingQty);
+          } else {
+            dedupedItems.push({
+              id: generateTempId(),
+              section_id: sectionId,
+              name: trimmedName,
+              quantity: item.quantity,
+              checked: false,
+              position: pos++,
+              store_id: lookupStoreId(trimmedName),
+              updated_at: new Date().toISOString(),
+            });
+          }
+        }
         mergedSections.push({
           id: sectionId,
           name: parsedSection.name,
           position: mergedSections.length,
-          items: parsedSection.items.map((item, ii) => ({
-            id: generateTempId(),
-            section_id: sectionId,
-            name: toTitleCase(item.name),
-            quantity: item.quantity,
-            checked: false,
-            position: ii,
-            store_id: null,
-            updated_at: new Date().toISOString(),
-          })),
+          items: dedupedItems,
         });
       }
     }
@@ -561,6 +607,7 @@ export function useGroceryList() {
       type: 'delete-grocery-item',
       undo: async () => {
         // Re-add the specific item via POST (not PUT) — doesn't affect other users' items
+        const prevId = deletedItemRef.id;
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         const tempId = generateTempId();
@@ -579,6 +626,8 @@ export function useGroceryList() {
               : s
             ));
             deletedItemRef.id = created.id;
+            // Record old→new so older undo entries can find the item
+            idRemapRef.current.set(prevId, created.id);
             await saveLocalGroceryItem({
               id: created.id, section_id: deletedItem.section_id, name: deletedItem.name,
               quantity: deletedItem.quantity, checked: deletedItem.checked, position: deletedItem.position,
@@ -803,6 +852,7 @@ export function useGroceryList() {
     pushAction({
       type: 'edit-grocery-item',
       undo: async () => {
+        const currentId = resolveId(itemId);
         const undoUpdates: { name?: string; quantity?: string | null; store_id?: string | null } = {};
         if (updates.name !== undefined) undoUpdates.name = prevName;
         if (updates.quantity !== undefined) undoUpdates.quantity = prevQuantity;
@@ -812,10 +862,10 @@ export function useGroceryList() {
         pendingMutationsRef.current++;
         setSections(prev => prev.map(s => ({
           ...s,
-          items: s.items.map(i => i.id === itemId ? { ...i, ...undoUpdates } : i),
+          items: s.items.map(i => i.id === currentId ? { ...i, ...undoUpdates } : i),
         })));
         await saveLocalGroceryItem({
-          id: item.id, section_id: item.section_id,
+          id: currentId, section_id: item.section_id,
           name: undoUpdates.name ?? item.name,
           quantity: undoUpdates.quantity !== undefined ? undoUpdates.quantity : item.quantity,
           checked: item.checked, position: item.position,
@@ -823,16 +873,17 @@ export function useGroceryList() {
           updated_at: new Date().toISOString(),
         });
         if (isOnline) {
-          try { await editGroceryItemAPI(itemId, undoUpdates); } catch { /* queue */ }
+          try { await editGroceryItemAPI(currentId, undoUpdates); } catch { /* queue */ }
         }
         settleMutation();
       },
       redo: async () => {
+        const currentId = resolveId(itemId);
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prev => prev.map(s => ({
           ...s,
-          items: s.items.map(i => i.id === itemId ? {
+          items: s.items.map(i => i.id === currentId ? {
             ...i,
             ...(updates.name !== undefined ? { name: updates.name } : {}),
             ...(updates.quantity !== undefined ? { quantity: updates.quantity } : {}),
@@ -840,7 +891,7 @@ export function useGroceryList() {
           } : i),
         })));
         await saveLocalGroceryItem({
-          id: item.id, section_id: item.section_id,
+          id: currentId, section_id: item.section_id,
           name: updates.name ?? item.name,
           quantity: updates.quantity !== undefined ? updates.quantity : item.quantity,
           checked: item.checked, position: item.position,
@@ -848,7 +899,7 @@ export function useGroceryList() {
           updated_at: new Date().toISOString(),
         });
         if (isOnline) {
-          try { await editGroceryItemAPI(itemId, updates); } catch { /* queue */ }
+          try { await editGroceryItemAPI(currentId, updates); } catch { /* queue */ }
         }
         settleMutation();
       },

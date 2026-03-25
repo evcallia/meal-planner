@@ -92,6 +92,9 @@ describe('useStores', () => {
   it('createStore calls API and adds to state', async () => {
     const newStore: Store = { id: 'st3', name: 'Whole Foods', position: 2 };
     mockCreateStoreAPI.mockResolvedValue(newStore);
+    // After settle, loadStores will re-fetch — return updated list
+    mockGetStoresAPI.mockResolvedValueOnce(sampleStores); // initial load
+    mockGetStoresAPI.mockResolvedValue([...sampleStores, newStore]);
 
     const { result } = renderHook(() => useStores());
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -122,6 +125,9 @@ describe('useStores', () => {
 
   it('renameStore optimistically updates name', async () => {
     mockUpdateStoreAPI.mockResolvedValue({ id: 'st1', name: 'New Costco', position: 0 });
+    // After settle, loadStores will re-fetch — return renamed store
+    mockGetStoresAPI.mockResolvedValueOnce(sampleStores); // initial load
+    mockGetStoresAPI.mockResolvedValue([{ id: 'st1', name: 'New Costco', position: 0 }, sampleStores[1]]);
 
     const { result } = renderHook(() => useStores());
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -136,6 +142,9 @@ describe('useStores', () => {
 
   it('removeStore removes from state and calls API', async () => {
     mockDeleteStoreAPI.mockResolvedValue({ status: 'ok' });
+    // After settle, loadStores will re-fetch — return without deleted store
+    mockGetStoresAPI.mockResolvedValueOnce(sampleStores); // initial load
+    mockGetStoresAPI.mockResolvedValue([sampleStores[1]]);
 
     const { result } = renderHook(() => useStores());
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -151,6 +160,12 @@ describe('useStores', () => {
 
   it('reorderStores reorders optimistically', async () => {
     mockReorderStoresAPI.mockResolvedValue({ status: 'ok' });
+    // After settle, loadStores will re-fetch — return reordered
+    mockGetStoresAPI.mockResolvedValueOnce(sampleStores); // initial load
+    mockGetStoresAPI.mockResolvedValue([
+      { id: 'st2', name: "Trader Joe's", position: 0 },
+      { id: 'st1', name: 'Costco', position: 1 },
+    ]);
 
     const { result } = renderHook(() => useStores());
     await waitFor(() => expect(result.current.loading).toBe(false));

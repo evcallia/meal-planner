@@ -38,7 +38,7 @@ services:
       # App
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8000}
-      SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      SECURE_COOKIES: ${SECURE_COOKIES:-true}
       DEBUG_TIMING: ${DEBUG_TIMING:-false}
     depends_on:
       db:
