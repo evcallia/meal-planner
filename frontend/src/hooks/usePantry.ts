@@ -59,6 +59,13 @@ export function usePantry() {
   const pendingMutationsRef = useRef(0);
   const deferredLoadRef = useRef(false);
 
+  // Keep localStorage in sync for reliable offline access
+  useEffect(() => {
+    if (sections.length > 0) {
+      savePantryToLocalStorage(sections);
+    }
+  }, [sections]);
+
   // When delete+undo re-creates an item, it gets a new server ID.
   // This map lets older undo entries resolve the original ID → current ID.
   const idRemapRef = useRef(new Map<string, string>());

@@ -56,9 +56,13 @@ export function useGroceryList() {
   const { pushAction } = useUndo();
 
   // Broadcast unchecked item count for the bottom nav badge
+  // and keep localStorage in sync for reliable offline access
   useEffect(() => {
     const count = sections.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0);
     window.dispatchEvent(new CustomEvent('grocery-count-changed', { detail: count }));
+    if (sections.length > 0) {
+      saveGroceryToLocalStorage(sections);
+    }
   }, [sections]);
 
   // When delete+undo re-creates an item, it gets a new server ID.
