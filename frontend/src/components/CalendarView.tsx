@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { CalendarEvent, DayData } from '../types';
 import { DayCard } from './DayCard';
-import { getDays, getEvents, updateNotes, toggleItemized, hideCalendarEvent, unhideCalendarEvent } from '../api/client';
+import { getDays, getEvents, updateNotes, toggleItemized, hideCalendarEvent, unhideCalendarEvent, getHiddenCalendarEvents } from '../api/client';
 import {
   saveLocalNote,
   queueChange,
@@ -12,6 +12,8 @@ import {
   LocalCalendarEvent,
   getLocalHiddenEvents,
   saveLocalHiddenEvent,
+  saveLocalHiddenEvents,
+  clearLocalHiddenEvents,
   deleteLocalHiddenEvent,
   generateTempId,
   isTempId,
@@ -395,6 +397,16 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             }
           });
           enqueueRenderLog('calendar.days.render', renderStart, { count: data.length });
+
+          // Sync hidden events from server to IndexedDB for offline use
+          try {
+            const remoteHidden = await getHiddenCalendarEvents();
+            await clearLocalHiddenEvents();
+            await saveLocalHiddenEvents(remoteHidden);
+            hiddenEventKeysRef.current = new Set(
+              remoteHidden.map(item => buildHiddenKey(item.event_uid, item.calendar_name, item.start_time)),
+            );
+          } catch { /* hidden events sync failed — keep local */ }
 
           loadEventsForRange(displayStartRef.current, displayEndRef.current, true);
           setTimeout(() => prefetchCacheRange(), 500);
