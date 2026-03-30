@@ -376,6 +376,23 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                         Clear checked ({checkedItems.length})
                       </button>
                     )}
+                    {visibleSections.length > 1 && (
+                      collapsedSections.size > 0 ? (
+                        <button
+                          onClick={() => { setCollapsedSections(new Set()); try { localStorage.setItem('meal-planner-grocery-collapsed', '[]'); } catch {} setShowClearMenu(false); }}
+                          className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        >
+                          Expand all sections
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => { const all = new Set(sections.map(s => s.name)); setCollapsedSections(all); try { localStorage.setItem('meal-planner-grocery-collapsed', JSON.stringify([...all])); } catch {} setShowClearMenu(false); }}
+                          className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        >
+                          Collapse all sections
+                        </button>
+                      )
+                    )}
                     <button
                       onClick={handleClearAll}
                       className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
