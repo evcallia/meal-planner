@@ -7,6 +7,8 @@ import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { StoreAutocomplete } from './StoreAutocomplete';
 import { StoreFilterBar } from './StoreFilterBar';
 
+export const NONE_STORE_ID = '__none__';
+
 interface GroceryListViewProps {
   compactView?: boolean;
 }
@@ -36,6 +38,8 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       for (const item of section.items) {
         if (!item.checked && item.store_id) {
           counts.set(item.store_id, (counts.get(item.store_id) ?? 0) + 1);
+        } else if (!item.checked && !item.store_id) {
+          counts.set(NONE_STORE_ID, (counts.get(NONE_STORE_ID) ?? 0) + 1);
         }
       }
     }
@@ -48,7 +52,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       filtered = filtered
         .map(s => ({
           ...s,
-          items: s.items.filter(i => !i.checked && i.store_id === filterStoreId),
+          items: s.items.filter(i => !i.checked && (filterStoreId === NONE_STORE_ID
+            ? !i.store_id
+            : i.store_id === filterStoreId)),
         }))
         .filter(s => s.items.length > 0);
     }
@@ -387,6 +393,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
         onDelete={removeStore}
         onReorder={reorderStores}
         storeCounts={storeCounts}
+        noneCount={storeCounts.get(NONE_STORE_ID) ?? 0}
       />
 
       {/* Sections with unchecked items */}
