@@ -100,8 +100,20 @@ export function usePantry() {
 
   const loadPantryList = useCallback(async () => {
     const fetchVersion = optimisticVersionRef.current;
+
+    // 1. Load from cache immediately
     try {
-      if (isOnlineRef.current) {
+      const localData = await loadFromLocal();
+      if (optimisticVersionRef.current !== fetchVersion) return;
+      if (localData.length > 0) {
+        setSections(localData);
+        setLoading(false);
+      }
+    } catch { /* cache failed — continue to API */ }
+
+    // 2. If online, fetch from API in background
+    if (isOnlineRef.current) {
+      try {
         const data = await getPantryList();
         if (optimisticVersionRef.current !== fetchVersion) return;
         setSections(data);
@@ -112,18 +124,10 @@ export function usePantry() {
           id: i.id, section_id: i.section_id, name: i.name,
           quantity: i.quantity, position: i.position, updated_at: i.updated_at,
         })));
-      } else {
-        const localData = await loadFromLocal();
-        if (optimisticVersionRef.current !== fetchVersion) return;
-        setSections(localData);
-      }
-    } catch {
-      const localData = await loadFromLocal();
-      if (optimisticVersionRef.current !== fetchVersion) return;
-      setSections(localData);
-    } finally {
-      setLoading(false);
+      } catch { /* API failed — keep cached data */ }
     }
+
+    setLoading(false);
   }, []);
 
   const loadPantryListRef = useRef(loadPantryList);
