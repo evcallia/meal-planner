@@ -15,7 +15,7 @@ import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryLi
 import { UserInfo } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
-import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, clearAllLocalData } from './db';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'pantry' | 'grocery';
@@ -561,6 +561,48 @@ function AppContent() {
             await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
             try { localStorage.setItem('meal-planner-stores', JSON.stringify(stores)); } catch {}
           } catch {}
+        }
+
+        // Meals tab — save realtime data directly to IndexedDB (no API call needed,
+        // the payload carries the data inline)
+        if (currentPageRef.current !== 'meals') {
+          if (detail.type === 'notes.updated') {
+            const payload = detail.payload as { date?: string; meal_note?: { notes: string; items: { line_index: number; itemized: boolean }[] } | null };
+            if (payload?.date && payload.meal_note) {
+              try { saveLocalNote(payload.date, payload.meal_note.notes, payload.meal_note.items); } catch {}
+            }
+          }
+          if (detail.type === 'calendar.refreshed') {
+            const payload = detail.payload as { events_by_date?: Record<string, any[]> };
+            if (payload?.events_by_date) {
+              for (const [date, events] of Object.entries(payload.events_by_date)) {
+                try { saveLocalCalendarEvents(date, events); } catch {}
+              }
+            }
+          }
+          if (detail.type === 'calendar.hidden') {
+            const payload = detail.payload as { hidden_id?: string; event_uid?: string; calendar_name?: string; title?: string; start_time?: string; end_time?: string | null; all_day?: boolean };
+            if (payload?.hidden_id && payload.start_time && payload.title) {
+              try {
+                saveLocalHiddenEvent({
+                  id: payload.hidden_id,
+                  event_uid: payload.event_uid ?? '',
+                  event_date: payload.start_time.split('T')[0],
+                  calendar_name: payload.calendar_name ?? '',
+                  title: payload.title,
+                  start_time: payload.start_time,
+                  end_time: payload.end_time ?? null,
+                  all_day: Boolean(payload.all_day),
+                });
+              } catch {}
+            }
+          }
+          if (detail.type === 'calendar.unhidden') {
+            const payload = detail.payload as { hidden_id?: string };
+            if (payload?.hidden_id) {
+              try { deleteLocalHiddenEvent(payload.hidden_id); } catch {}
+            }
+          }
         }
       } catch {}
     };
