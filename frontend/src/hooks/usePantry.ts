@@ -22,6 +22,7 @@ import {
   saveLocalPantryItem,
   deleteLocalPantryItem,
   queueChange,
+  getPendingChanges,
   generateTempId,
 } from '../db';
 import { useOnlineStatus } from './useOnlineStatus';
@@ -57,6 +58,13 @@ export function usePantry() {
   const optimisticVersionRef = useRef(0);
   const pendingMutationsRef = useRef(0);
   const deferredLoadRef = useRef(false);
+
+  // Keep localStorage in sync for reliable offline access
+  useEffect(() => {
+    if (sections.length > 0) {
+      savePantryToLocalStorage(sections);
+    }
+  }, [sections]);
 
   // When delete+undo re-creates an item, it gets a new server ID.
   // This map lets older undo entries resolve the original ID → current ID.
@@ -100,30 +108,38 @@ export function usePantry() {
 
   const loadPantryList = useCallback(async () => {
     const fetchVersion = optimisticVersionRef.current;
+
+    // 1. Load from cache immediately
     try {
-      if (isOnlineRef.current) {
-        const data = await getPantryList();
-        if (optimisticVersionRef.current !== fetchVersion) return;
-        setSections(data);
-        savePantryToLocalStorage(data);
-        await saveLocalPantrySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        const allItems = data.flatMap(s => s.items);
-        await saveLocalPantryItems(allItems.map(i => ({
-          id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-        })));
-      } else {
-        const localData = await loadFromLocal();
-        if (optimisticVersionRef.current !== fetchVersion) return;
-        setSections(localData);
-      }
-    } catch {
       const localData = await loadFromLocal();
       if (optimisticVersionRef.current !== fetchVersion) return;
-      setSections(localData);
-    } finally {
-      setLoading(false);
+      if (localData.length > 0) {
+        setSections(localData);
+        setLoading(false);
+      }
+    } catch { /* cache failed — continue to API */ }
+
+    // 2. If online, fetch from API in background (skip if pending offline changes exist)
+    if (isOnlineRef.current) {
+      const pending = await getPendingChanges();
+      const hasPantryChanges = pending.some(c => c.type.startsWith('pantry-'));
+      if (!hasPantryChanges) {
+        try {
+          const data = await getPantryList();
+          if (optimisticVersionRef.current !== fetchVersion) return;
+          setSections(data);
+          savePantryToLocalStorage(data);
+          await saveLocalPantrySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+          const allItems = data.flatMap(s => s.items);
+          await saveLocalPantryItems(allItems.map(i => ({
+            id: i.id, section_id: i.section_id, name: i.name,
+            quantity: i.quantity, position: i.position, updated_at: i.updated_at,
+          })));
+        } catch { /* API failed — keep cached data */ }
+      }
     }
+
+    setLoading(false);
   }, []);
 
   const loadPantryListRef = useRef(loadPantryList);

@@ -21,6 +21,7 @@ import {
   saveLocalGroceryItem,
   deleteLocalGroceryItem,
   queueChange,
+  getPendingChanges,
   generateTempId,
 } from '../db';
 import { useOnlineStatus } from './useOnlineStatus';
@@ -55,9 +56,13 @@ export function useGroceryList() {
   const { pushAction } = useUndo();
 
   // Broadcast unchecked item count for the bottom nav badge
+  // and keep localStorage in sync for reliable offline access
   useEffect(() => {
     const count = sections.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0);
     window.dispatchEvent(new CustomEvent('grocery-count-changed', { detail: count }));
+    if (sections.length > 0) {
+      saveGroceryToLocalStorage(sections);
+    }
   }, [sections]);
 
   // When delete+undo re-creates an item, it gets a new server ID.
@@ -104,41 +109,47 @@ export function useGroceryList() {
   const isOnlineRef = useRef(isOnline);
   isOnlineRef.current = isOnline;
 
-  // Load grocery list
+  // Load grocery list (cache-first: show cached data immediately, then refresh from API)
   const loadGroceryList = useCallback(async () => {
     const fetchVersion = optimisticVersionRef.current;
+
+    // 1. Load from cache immediately
     try {
-      if (isOnlineRef.current) {
-        const data = await getGroceryList();
-        // If an optimistic update happened while we were fetching, discard this result
-        if (optimisticVersionRef.current !== fetchVersion) return;
-        setSections(data);
-        // Cache locally (IndexedDB + localStorage backup)
-        saveGroceryToLocalStorage(data);
-        await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        const allItems = data.flatMap(s => s.items);
-        await saveLocalGroceryItems(allItems.map(i => ({
-          id: i.id,
-          section_id: i.section_id,
-          name: i.name,
-          quantity: i.quantity,
-          checked: i.checked,
-          position: i.position,
-          store_id: i.store_id,
-          updated_at: i.updated_at,
-        })));
-      } else {
-        const localData = await loadFromLocal();
-        if (optimisticVersionRef.current !== fetchVersion) return;
-        setSections(localData);
-      }
-    } catch {
       const localData = await loadFromLocal();
       if (optimisticVersionRef.current !== fetchVersion) return;
-      setSections(localData);
-    } finally {
-      setLoading(false);
+      if (localData.length > 0) {
+        setSections(localData);
+        setLoading(false);
+      }
+    } catch { /* cache failed — continue to API */ }
+
+    // 2. If online, fetch from API in background (skip if pending offline changes exist)
+    if (isOnlineRef.current) {
+      const pending = await getPendingChanges();
+      const hasGroceryChanges = pending.some(c => c.type.startsWith('grocery-'));
+      if (!hasGroceryChanges) {
+        try {
+          const data = await getGroceryList();
+          if (optimisticVersionRef.current !== fetchVersion) return;
+          setSections(data);
+          saveGroceryToLocalStorage(data);
+          await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+          const allItems = data.flatMap(s => s.items);
+          await saveLocalGroceryItems(allItems.map(i => ({
+            id: i.id,
+            section_id: i.section_id,
+            name: i.name,
+            quantity: i.quantity,
+            checked: i.checked,
+            position: i.position,
+            store_id: i.store_id,
+            updated_at: i.updated_at,
+          })));
+        } catch { /* API failed — keep cached data */ }
+      }
     }
+
+    setLoading(false);
   }, []);
 
   // Keep a stable ref to loadGroceryList for use in mutation settle callbacks
@@ -671,10 +682,10 @@ export function useGroceryList() {
     if (isOnline) {
       pendingMutationsRef.current++;
       try { await deleteGroceryItemAPI(itemId); } catch {
-        await queueChange('grocery-delete', '', { id: itemId });
+        await queueChange('grocery-delete', '', { id: itemId, name: deletedItem.name });
       } finally { settleMutation(); }
     } else {
-      await queueChange('grocery-delete', '', { id: itemId });
+      await queueChange('grocery-delete', '', { id: itemId, name: deletedItem.name });
     }
   }, [sections, isOnline, pushAction]);
 
@@ -734,11 +745,11 @@ export function useGroceryList() {
             await deleteGroceryItemAPI(itemId);
           } catch {
             await queueChange('grocery-edit', '', { id: dupId, quantity: mergedQty });
-            await queueChange('grocery-delete', '', { id: itemId });
+            await queueChange('grocery-delete', '', { id: itemId, name: deletedItem.name });
           } finally { settleMutation(); }
         } else {
           await queueChange('grocery-edit', '', { id: dupId, quantity: mergedQty });
-          await queueChange('grocery-delete', '', { id: itemId });
+          await queueChange('grocery-delete', '', { id: itemId, name: deletedItem.name });
         }
 
         pushAction({

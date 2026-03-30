@@ -39,8 +39,11 @@ export function useOnlineStatus() {
     };
     const handleOffline = () => setIsOnline(false);
 
+    const handleApiSuccess = () => setIsOnline(true);
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('api-request-succeeded', handleApiSuccess);
 
     // Initial check
     if (navigator.onLine) {
@@ -57,6 +60,7 @@ export function useOnlineStatus() {
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('api-request-succeeded', handleApiSuccess);
       clearInterval(interval);
     };
   }, [checkConnectivity]);

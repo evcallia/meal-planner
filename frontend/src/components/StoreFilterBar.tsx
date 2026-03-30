@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Store } from '../types';
+import { NONE_STORE_ID } from './GroceryListView';
 
 interface StoreFilterBarProps {
   stores: Store[];
@@ -9,9 +10,10 @@ interface StoreFilterBarProps {
   onDelete: (storeId: string) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   storeCounts?: Map<string, number>;
+  noneCount?: number;
 }
 
-export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename, onDelete, onReorder, storeCounts }: StoreFilterBarProps) {
+export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename, onDelete, onReorder, storeCounts, noneCount = 0 }: StoreFilterBarProps) {
   const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -245,7 +247,7 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
     setEditingStoreId(null);
   };
 
-  if (stores.length === 0) return null;
+  if (stores.length === 0 && noneCount === 0) return null;
 
   return (
     <div className="relative">
@@ -308,6 +310,33 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
             </button>
           );
         })}
+        {noneCount > 0 && (
+          <button
+            onPointerDown={(e) => {
+              // Short tap only — no long-press/drag for None chip
+              e.stopPropagation();
+            }}
+            onPointerUp={() => {
+              onFilterChange(activeStoreId === NONE_STORE_ID ? null : NONE_STORE_ID);
+            }}
+            className={`
+              px-3 py-1 rounded-full text-sm font-medium transition-colors select-none touch-none
+              ${activeStoreId === NONE_STORE_ID
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+              }
+            `}
+          >
+            None
+            <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center ${
+              activeStoreId === NONE_STORE_ID
+                ? 'bg-blue-400/30 text-white'
+                : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
+            }`}>
+              {noneCount}
+            </span>
+          </button>
+        )}
       </div>
 
       {editingStoreId && (

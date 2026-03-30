@@ -58,7 +58,7 @@ vi.mock('../DayCard', () => ({
 }));
 
 import { getDays, getEvents, updateNotes, toggleItemized, hideCalendarEvent } from '../../api/client';
-import { saveLocalNote, queueChange, getLocalCalendarEventsForRange, getLocalHiddenEvents } from '../../db';
+import { saveLocalNote, queueChange, getLocalNotesForRange, getLocalCalendarEventsForRange, getLocalHiddenEvents } from '../../db';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { DayCard } from '../DayCard';
 
@@ -121,6 +121,7 @@ const mockToggleItemized = vi.mocked(toggleItemized);
 const mockHideCalendarEvent = vi.mocked(hideCalendarEvent);
 const mockSaveLocalNote = vi.mocked(saveLocalNote);
 const mockQueueChange = vi.mocked(queueChange);
+const mockGetLocalNotesForRange = vi.mocked(getLocalNotesForRange);
 const mockGetLocalCalendarEventsForRange = vi.mocked(getLocalCalendarEventsForRange);
 const mockGetLocalHiddenEvents = vi.mocked(getLocalHiddenEvents);
 const mockUseOnlineStatus = vi.mocked(useOnlineStatus);
@@ -226,6 +227,11 @@ describe('CalendarView', () => {
 
   it('should queue notes changes when offline', async () => {
     mockUseOnlineStatus.mockReturnValue(false);
+    mockGetLocalNotesForRange.mockResolvedValue([
+      { date: todayStr, notes: 'Breakfast notes', items: [], updatedAt: Date.now() },
+      { date: day2Str, notes: '', items: [], updatedAt: Date.now() },
+      { date: day3Str, notes: '', items: [], updatedAt: Date.now() },
+    ]);
 
     render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
 
@@ -259,6 +265,11 @@ describe('CalendarView', () => {
 
   it('should queue itemized changes when offline', async () => {
     mockUseOnlineStatus.mockReturnValue(false);
+    mockGetLocalNotesForRange.mockResolvedValue([
+      { date: todayStr, notes: 'Breakfast notes', items: [], updatedAt: Date.now() },
+      { date: day2Str, notes: '', items: [], updatedAt: Date.now() },
+      { date: day3Str, notes: '', items: [], updatedAt: Date.now() },
+    ]);
 
     render(<CalendarView onTodayRefReady={mockOnTodayRefReady} showItemizedColumn={true} />);
 
@@ -336,7 +347,7 @@ describe('CalendarView', () => {
     render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
 
     await waitFor(() => {
-      expect(consoleSpy).toHaveBeenCalledWith('Failed to load days from API, trying local cache:', expect.any(Error));
+      expect(consoleSpy).toHaveBeenCalledWith('Failed to load days from API:', expect.any(Error));
     });
 
     consoleSpy.mockRestore();
@@ -349,7 +360,7 @@ describe('CalendarView', () => {
     render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
 
     await waitFor(() => {
-      expect(consoleSpy).toHaveBeenCalledWith('Failed to load events from API, trying local cache:', expect.any(Error));
+      expect(consoleSpy).toHaveBeenCalledWith('Failed to load events from API:', expect.any(Error));
     });
 
     consoleSpy.mockRestore();
@@ -536,6 +547,9 @@ describe('CalendarView', () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     mockUseOnlineStatus.mockReturnValue(false);
     mockGetDays.mockRejectedValue(new Error('offline'));
+    mockGetLocalNotesForRange.mockResolvedValue([
+      { date: todayStr, notes: 'Breakfast notes', items: [], updatedAt: Date.now() },
+    ]);
     mockGetLocalCalendarEventsForRange.mockResolvedValue({
       [todayStr]: [
         {

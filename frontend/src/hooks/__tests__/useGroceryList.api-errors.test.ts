@@ -26,6 +26,7 @@ vi.mock('../../db', () => ({
   getLocalGroceryItems: vi.fn(() => Promise.resolve([])),
   saveLocalGroceryItem: vi.fn(),
   deleteLocalGroceryItem: vi.fn(),
+  getPendingChanges: vi.fn(() => Promise.resolve([])),
 }));
 
 vi.mock('../useOnlineStatus', () => ({
@@ -119,7 +120,7 @@ describe('useGroceryList - API error handling', () => {
       await result.current.deleteItem('i1');
     });
 
-    expect(mockQueueChange).toHaveBeenCalledWith('grocery-delete', '', { id: 'i1' });
+    expect(mockQueueChange).toHaveBeenCalledWith('grocery-delete', '', { id: 'i1', name: 'Bananas' });
   });
 
   it('editItem queues on API error', async () => {

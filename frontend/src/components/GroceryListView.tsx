@@ -7,6 +7,8 @@ import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { StoreAutocomplete } from './StoreAutocomplete';
 import { StoreFilterBar } from './StoreFilterBar';
 
+export const NONE_STORE_ID = '__none__';
+
 interface GroceryListViewProps {
   compactView?: boolean;
 }
@@ -25,7 +27,12 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   const [filterStoreId, setFilterStoreId] = useState<string | null>(null);
   const [sortByStore, setSortByStore] = useState(false);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('meal-planner-grocery-collapsed');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const clearMenuRef = useRef<HTMLDivElement>(null);
   const sectionContainerRef = useRef<HTMLDivElement>(null);
@@ -36,6 +43,8 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       for (const item of section.items) {
         if (!item.checked && item.store_id) {
           counts.set(item.store_id, (counts.get(item.store_id) ?? 0) + 1);
+        } else if (!item.checked && !item.store_id) {
+          counts.set(NONE_STORE_ID, (counts.get(NONE_STORE_ID) ?? 0) + 1);
         }
       }
     }
@@ -48,7 +57,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       filtered = filtered
         .map(s => ({
           ...s,
-          items: s.items.filter(i => !i.checked && i.store_id === filterStoreId),
+          items: s.items.filter(i => !i.checked && (filterStoreId === NONE_STORE_ID
+            ? !i.store_id
+            : i.store_id === filterStoreId)),
         }))
         .filter(s => s.items.length > 0);
     }
@@ -154,6 +165,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       const next = new Set(prev);
       if (next.has(sectionName)) next.delete(sectionName);
       else next.add(sectionName);
+      try { localStorage.setItem('meal-planner-grocery-collapsed', JSON.stringify([...next])); } catch {}
       return next;
     });
   }, []);
@@ -364,6 +376,23 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                         Clear checked ({checkedItems.length})
                       </button>
                     )}
+                    {visibleSections.length > 1 && (
+                      collapsedSections.size > 0 ? (
+                        <button
+                          onClick={() => { setCollapsedSections(new Set()); try { localStorage.setItem('meal-planner-grocery-collapsed', '[]'); } catch {} setShowClearMenu(false); }}
+                          className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        >
+                          Expand all sections
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => { const all = new Set(sections.map(s => s.name)); setCollapsedSections(all); try { localStorage.setItem('meal-planner-grocery-collapsed', JSON.stringify([...all])); } catch {} setShowClearMenu(false); }}
+                          className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        >
+                          Collapse all sections
+                        </button>
+                      )
+                    )}
                     <button
                       onClick={handleClearAll}
                       className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
@@ -387,6 +416,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
         onDelete={removeStore}
         onReorder={reorderStores}
         storeCounts={storeCounts}
+        noneCount={storeCounts.get(NONE_STORE_ID) ?? 0}
       />
 
       {/* Sections with unchecked items */}
@@ -549,7 +579,7 @@ function SectionCard({
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
       {/* Section Header -- long-press to drag section */}
       <div
-        className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 touch-none rounded-t-lg"
+        className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 rounded-t-lg"
         {...sectionDragHandlers}
       >
         <div className="flex items-center gap-2">

@@ -11,11 +11,11 @@ import { useSync } from './hooks/useSync';
 import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
 import { useRealtime } from './hooks/useRealtime';
-import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryList } from './api/client';
+import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryList, getStores as getStoresAPI, getPantryList } from './api/client';
 import { UserInfo } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
-import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, clearAllLocalData } from './db';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'pantry' | 'grocery';
@@ -467,31 +467,26 @@ function AppContent() {
     const checkAuth = async () => {
       const cached = localStorage.getItem('meal-planner-user');
 
+      // 1. Load cached user immediately for instant offline startup
+      if (cached) {
+        try {
+          setUser(JSON.parse(cached));
+          setLoading(false);
+        } catch { /* invalid cache — continue to API */ }
+      }
+
+      // 2. Verify with server in background
       try {
         const currentUser = await getCurrentUser();
         if (currentUser) {
           localStorage.setItem('meal-planner-user', JSON.stringify(currentUser));
           setUser(currentUser);
-        } else {
-          if (cached) {
-            try {
-              setUser(JSON.parse(cached));
-            } catch {
-              setUser(null);
-            }
-          } else {
-            setUser(null);
-          }
+        } else if (!cached) {
+          setUser(null);
         }
       } catch (error) {
         console.error('Auth check failed:', error);
-        if (cached) {
-          try {
-            setUser(JSON.parse(cached));
-          } catch {
-            setUser(null);
-          }
-        } else {
+        if (!cached) {
           setUser(null);
         }
       } finally {
@@ -501,7 +496,7 @@ function AppContent() {
     checkAuth();
   }, []);
 
-  // Pre-cache grocery list for offline use (IndexedDB + localStorage backup)
+  // Pre-cache grocery list and stores for offline use
   useEffect(() => {
     if (!user || !isOnline) return;
     getGroceryList().then(async (data) => {
@@ -513,7 +508,107 @@ function AppContent() {
         quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
       }))));
     }).catch(() => { /* best-effort */ });
+    getStoresAPI().then(async (stores) => {
+      await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
+    }).catch(() => { /* best-effort */ });
   }, [user, isOnline]);
+
+  // Keep local cache fresh from realtime events for inactive tabs.
+  // When the active tab's hook handles its own events, this also pre-warms
+  // the cache for other tabs so data is instant on tab switch.
+  const currentPageRef = useRef(currentPage);
+  currentPageRef.current = currentPage;
+  useEffect(() => {
+    if (!user) return;
+    const handler = async (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.type) return;
+
+      // Skip if there are pending offline changes — don't overwrite local edits
+      try {
+        const pending = await getPendingChanges();
+
+        if (detail.type === 'grocery.updated' && currentPageRef.current !== 'grocery') {
+          if (pending.some(c => c.type.startsWith('grocery-'))) return;
+          try {
+            const data = await getGroceryList();
+            try { localStorage.setItem('meal-planner-grocery', JSON.stringify(data)); } catch {}
+            setGroceryCount(data.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0));
+            await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+            await saveLocalGroceryItems(data.flatMap(s => s.items.map(i => ({
+              id: i.id, section_id: i.section_id, name: i.name,
+              quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
+            }))));
+          } catch {}
+        }
+
+        if (detail.type === 'pantry.updated' && currentPageRef.current !== 'pantry') {
+          if (pending.some(c => c.type.startsWith('pantry-'))) return;
+          try {
+            const data = await getPantryList();
+            try { localStorage.setItem('meal-planner-pantry-sections', JSON.stringify(data)); } catch {}
+            await saveLocalPantrySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+            await saveLocalPantryItems(data.flatMap(s => s.items.map(i => ({
+              id: i.id, section_id: i.section_id, name: i.name,
+              quantity: i.quantity, position: i.position, updated_at: i.updated_at,
+            }))));
+          } catch {}
+        }
+
+        if (detail.type === 'stores.updated') {
+          try {
+            const stores = await getStoresAPI();
+            await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
+            try { localStorage.setItem('meal-planner-stores', JSON.stringify(stores)); } catch {}
+          } catch {}
+        }
+
+        // Meals tab — save realtime data directly to IndexedDB (no API call needed,
+        // the payload carries the data inline)
+        if (currentPageRef.current !== 'meals') {
+          if (detail.type === 'notes.updated') {
+            const payload = detail.payload as { date?: string; meal_note?: { notes: string; items: { line_index: number; itemized: boolean }[] } | null };
+            if (payload?.date && payload.meal_note) {
+              try { saveLocalNote(payload.date, payload.meal_note.notes, payload.meal_note.items); } catch {}
+            }
+          }
+          if (detail.type === 'calendar.refreshed') {
+            const payload = detail.payload as { events_by_date?: Record<string, any[]> };
+            if (payload?.events_by_date) {
+              for (const [date, events] of Object.entries(payload.events_by_date)) {
+                try { saveLocalCalendarEvents(date, events); } catch {}
+              }
+            }
+          }
+          if (detail.type === 'calendar.hidden') {
+            const payload = detail.payload as { hidden_id?: string; event_uid?: string; calendar_name?: string; title?: string; start_time?: string; end_time?: string | null; all_day?: boolean };
+            if (payload?.hidden_id && payload.start_time && payload.title) {
+              try {
+                saveLocalHiddenEvent({
+                  id: payload.hidden_id,
+                  event_uid: payload.event_uid ?? '',
+                  event_date: payload.start_time.split('T')[0],
+                  calendar_name: payload.calendar_name ?? '',
+                  title: payload.title,
+                  start_time: payload.start_time,
+                  end_time: payload.end_time ?? null,
+                  all_day: Boolean(payload.all_day),
+                });
+              } catch {}
+            }
+          }
+          if (detail.type === 'calendar.unhidden') {
+            const payload = detail.payload as { hidden_id?: string };
+            if (payload?.hidden_id) {
+              try { deleteLocalHiddenEvent(payload.hidden_id); } catch {}
+            }
+          }
+        }
+      } catch {}
+    };
+    window.addEventListener('meal-planner-realtime', handler);
+    return () => window.removeEventListener('meal-planner-realtime', handler);
+  }, [user]);
 
   useEffect(() => {
     const scale = settings.compactView ? settings.textScaleCompact : settings.textScaleStandard;

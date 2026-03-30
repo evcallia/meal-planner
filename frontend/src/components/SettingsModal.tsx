@@ -159,7 +159,7 @@ async function enrichPendingChanges(changes: PendingChange[]): Promise<EnrichedP
         if (payload?.quantity) detail += ` (${payload.quantity})`;
         break;
       case 'grocery-delete':
-        detail = groceryItemMap.get(payload?.id as string) || '';
+        detail = groceryItemMap.get(payload?.id as string) || (payload?.name as string) || '';
         break;
       case 'grocery-check': {
         const itemName = groceryItemMap.get(payload?.id as string) || '';
@@ -271,22 +271,28 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
 
   const loadHiddenEvents = useCallback(async () => {
     setHiddenLoading(true);
+    setHiddenError(null);
+
+    // 1. Load from cache immediately
     try {
-      if (!isOnline) {
-        const localHidden = await getLocalHiddenEvents();
+      const localHidden = await getLocalHiddenEvents();
+      if (localHidden.length > 0) {
         setHiddenEvents(localHidden);
-        return;
+        setHiddenLoading(false);
       }
-      const remoteHidden = await getHiddenCalendarEvents();
-      setHiddenEvents(remoteHidden);
-      await clearLocalHiddenEvents();
-      await saveLocalHiddenEvents(remoteHidden);
-    } catch (error) {
-      console.error('Failed to load hidden events:', error);
-      setHiddenError('Failed to load hidden events');
-    } finally {
-      setHiddenLoading(false);
+    } catch { /* cache failed — continue to API */ }
+
+    // 2. If online, fetch from API in background
+    if (isOnline) {
+      try {
+        const remoteHidden = await getHiddenCalendarEvents();
+        setHiddenEvents(remoteHidden);
+        await clearLocalHiddenEvents();
+        await saveLocalHiddenEvents(remoteHidden);
+      } catch { /* API failed — keep cached data */ }
     }
+
+    setHiddenLoading(false);
   }, [isOnline]);
 
   useEffect(() => {

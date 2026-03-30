@@ -10,7 +10,12 @@ export function PantryPanel() {
   const [newItemQty, setNewItemQty] = useState('1');
   const [showClearMenu, setShowClearMenu] = useState(false);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('meal-planner-pantry-collapsed');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
   const [isAddingSection, setIsAddingSection] = useState(false);
   const [newSectionName, setNewSectionName] = useState('');
   const clearMenuRef = useRef<HTMLDivElement>(null);
@@ -111,6 +116,7 @@ export function PantryPanel() {
       const next = new Set(prev);
       if (next.has(sectionName)) next.delete(sectionName);
       else next.add(sectionName);
+      try { localStorage.setItem('meal-planner-pantry-collapsed', JSON.stringify([...next])); } catch {}
       return next;
     });
   }, []);
@@ -207,6 +213,23 @@ export function PantryPanel() {
               </button>
               {showClearMenu && (
                 <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-20 min-w-[180px]">
+                  {sections.length > 1 && (
+                    collapsedSections.size > 0 ? (
+                      <button
+                        onClick={() => { setCollapsedSections(new Set()); try { localStorage.setItem('meal-planner-pantry-collapsed', '[]'); } catch {} setShowClearMenu(false); }}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        Expand all sections
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => { const all = new Set(sections.map(s => s.name)); setCollapsedSections(all); try { localStorage.setItem('meal-planner-pantry-collapsed', JSON.stringify([...all])); } catch {} setShowClearMenu(false); }}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        Collapse all sections
+                      </button>
+                    )
+                  )}
                   <button
                     onClick={handleClearAll}
                     className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
@@ -359,7 +382,7 @@ function PantrySectionCard({
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
       {/* Section Header */}
       <div
-        className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 touch-none"
+        className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2"
         {...sectionDragHandlers}
       >
         <div className="flex items-center gap-2">
@@ -701,17 +724,19 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
           +
         </button>
 
-        {/* Desktop delete button */}
-        <button
-          type="button"
-          onClick={() => onDelete(item.id)}
-          className="flex-shrink-0 flex items-center ml-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
-          aria-label={`Remove ${item.name}`}
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        {/* Desktop delete button — fixed-width wrapper prevents layout shift on hover */}
+        <div className="w-5 flex-shrink-0 hidden md:flex items-center justify-center">
+          <button
+            type="button"
+            onClick={() => onDelete(item.id)}
+            className="hover-delete-btn flex-shrink-0 items-center text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
+            aria-label={`Remove ${item.name}`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );

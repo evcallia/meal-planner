@@ -27,6 +27,7 @@ vi.mock('../../db', () => ({
   saveLocalPantrySections: vi.fn(),
   deleteLocalPantryItem: vi.fn(),
   clearLocalPantryItems: vi.fn(),
+  getPendingChanges: vi.fn(() => Promise.resolve([])),
 }));
 
 vi.mock('../useOnlineStatus', () => ({
