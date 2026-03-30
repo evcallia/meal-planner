@@ -319,12 +319,13 @@ const mockRemovePendingChange = vi.mocked(removePendingChange)
     expect(mockGetHiddenCalendarEvents).not.toHaveBeenCalled()
   })
 
-  it('shows error when hidden events fail to load', async () => {
+  it('silently keeps cached data when hidden events API fails', async () => {
     mockGetHiddenCalendarEvents.mockRejectedValueOnce(new Error('Boom'))
     await renderModal()
 
+    // With cache-first, API failure is silent — no error shown
     await waitFor(() => {
-      expect(screen.getByText('Failed to load hidden events')).toBeInTheDocument()
+      expect(screen.queryByText('Failed to load hidden events')).not.toBeInTheDocument()
     })
   })
 

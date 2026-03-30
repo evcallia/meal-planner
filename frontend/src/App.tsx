@@ -467,31 +467,26 @@ function AppContent() {
     const checkAuth = async () => {
       const cached = localStorage.getItem('meal-planner-user');
 
+      // 1. Load cached user immediately for instant offline startup
+      if (cached) {
+        try {
+          setUser(JSON.parse(cached));
+          setLoading(false);
+        } catch { /* invalid cache — continue to API */ }
+      }
+
+      // 2. Verify with server in background
       try {
         const currentUser = await getCurrentUser();
         if (currentUser) {
           localStorage.setItem('meal-planner-user', JSON.stringify(currentUser));
           setUser(currentUser);
-        } else {
-          if (cached) {
-            try {
-              setUser(JSON.parse(cached));
-            } catch {
-              setUser(null);
-            }
-          } else {
-            setUser(null);
-          }
+        } else if (!cached) {
+          setUser(null);
         }
       } catch (error) {
         console.error('Auth check failed:', error);
-        if (cached) {
-          try {
-            setUser(JSON.parse(cached));
-          } catch {
-            setUser(null);
-          }
-        } else {
+        if (!cached) {
           setUser(null);
         }
       } finally {
