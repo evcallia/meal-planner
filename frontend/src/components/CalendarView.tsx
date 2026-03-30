@@ -247,41 +247,35 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
         const localEvents = await getLocalCalendarEventsForRange(startStr, endStr);
         if (Object.keys(localEvents).length > 0) {
           applyEvents(normalizeEventsMap(localEvents));
-        } else {
-          setEventsLoadState(prev => ({ ...prev, [rangeKey]: 'error' }));
+          return true;
         }
       } catch (dbError) {
         console.error('Failed to load events from IndexedDB:', dbError);
-        setEventsLoadState(prev => ({ ...prev, [rangeKey]: 'error' }));
       }
+      return false;
     };
 
-    // If offline, skip API and load directly from IndexedDB
-    if (!online) {
-      await loadFromIndexedDB();
-      setLoadingEvents(false);
-      return;
-    }
+    // 1. Load from cache immediately
+    await loadFromIndexedDB();
 
-    try {
-      const requestStart = perfNow();
-      // Always fetch all events (including hidden) so IndexedDB has complete data for offline
-      const eventsMap = await getEvents(startStr, endStr, true);
-      logDuration('calendar.events.request', requestStart, { start: startStr, end: endStr });
+    // 2. If online, fetch from API in background
+    if (online) {
+      try {
+        const requestStart = perfNow();
+        const eventsMap = await getEvents(startStr, endStr, true);
+        logDuration('calendar.events.request', requestStart, { start: startStr, end: endStr });
 
-      // Save ALL events to IndexedDB for offline access (filtering happens client-side)
-      for (const [date, events] of Object.entries(eventsMap)) {
-        saveLocalCalendarEvents(date, events);
+        for (const [date, events] of Object.entries(eventsMap)) {
+          saveLocalCalendarEvents(date, events);
+        }
+
+        applyEvents(eventsMap);
+      } catch (error) {
+        console.error('Failed to load events from API:', error);
       }
-
-      // applyEvents handles client-side filtering based on showAllEvents
-      applyEvents(eventsMap);
-    } catch (error) {
-      console.error('Failed to load events from API, trying local cache:', error);
-      await loadFromIndexedDB();
-    } finally {
-      setLoadingEvents(false);
     }
+
+    setLoadingEvents(false);
   }, []);
 
   useEffect(() => {
@@ -371,55 +365,50 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       const startStr = formatDate(displayStartRef.current);
       const endStr = formatDate(displayEndRef.current);
 
+      // 1. Load from cache immediately
       try {
-        // Load days without events first (fast) - only the display range (1 week)
-        const requestStart = perfNow();
-        const data = await getDays(startStr, endStr);
-        logDuration('calendar.days.request', requestStart, {
-          start: startStr,
-          end: endStr,
-        });
-        const renderStart = perfNow();
-        setDays(data);
-        // Also add to cache
-        data.forEach(d => daysCache.current.set(d.date, d));
-        // Save to IndexedDB for offline access
-        data.forEach(d => {
-          if (d.meal_note) {
-            saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
-          }
-        });
-        enqueueRenderLog('calendar.days.render', renderStart, { count: data.length });
-        setLoading(false);
-
-        // Then load events separately (slow, but non-blocking)
-        loadEventsForRange(displayStartRef.current, displayEndRef.current, true);
-
-        // Pre-fetch extended cache range in background after a short delay
-        // This caches 2 weeks past and 8 weeks future for offline support
-        // Data is cached but NOT displayed until user scrolls
-        setTimeout(() => prefetchCacheRange(), 500);
-      } catch (error) {
-        console.error('Failed to load days from API, trying local cache:', error);
-
-        // Try to load from IndexedDB when API fails (offline)
-        try {
-          const localNotes = await getLocalNotesForRange(startStr, endStr);
+        const localNotes = await getLocalNotesForRange(startStr, endStr);
+        if (localNotes.length > 0) {
           const data = localNotesToDayData(localNotes, startStr, endStr);
           setDays(data);
           data.forEach(d => daysCache.current.set(d.date, d));
-          console.log('Loaded from local cache:', data.length, 'days');
+          setLoading(false);
 
-          // Also try to load events from local cache (offline mode)
+          // Load events from cache too
           loadEventsForRange(displayStartRef.current, displayEndRef.current, false);
-        } catch (dbError) {
-          console.error('Failed to load from local cache:', dbError);
         }
-        setLoading(false);
+      } catch { /* cache failed — will try API */ }
+
+      // 2. If online, fetch from API in background
+      if (isOnline) {
+        try {
+          const requestStart = perfNow();
+          const data = await getDays(startStr, endStr);
+          logDuration('calendar.days.request', requestStart, {
+            start: startStr,
+            end: endStr,
+          });
+          const renderStart = perfNow();
+          setDays(data);
+          data.forEach(d => daysCache.current.set(d.date, d));
+          data.forEach(d => {
+            if (d.meal_note) {
+              saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
+            }
+          });
+          enqueueRenderLog('calendar.days.render', renderStart, { count: data.length });
+
+          loadEventsForRange(displayStartRef.current, displayEndRef.current, true);
+          setTimeout(() => prefetchCacheRange(), 500);
+        } catch (error) {
+          console.error('Failed to load days from API:', error);
+        }
       }
+
+      setLoading(false);
     };
     init();
-  }, [loadEventsForRange, prefetchCacheRange]);
+  }, [loadEventsForRange, prefetchCacheRange, isOnline]);
 
   // Scroll to today after initial load
   useEffect(() => {
@@ -745,36 +734,32 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     };
 
     try {
-      if (isOnline) {
-        // Online: try API first
-        const requestStart = perfNow();
-        const data = await getDays(startStr, endStr);
-        logDuration('calendar.days.request', requestStart, { start: startStr, end: endStr });
-
-        // Update memory cache and IndexedDB
-        data.forEach(d => {
-          daysCache.current.set(d.date, d);
-          if (d.meal_note) {
-            saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
-          }
-        });
-
-        const renderStart = perfNow();
-        addDaysToDisplay(data);
-        enqueueRenderLog('calendar.days.render', renderStart, { count: data.length, direction: 'prev' });
-        loadEventsForRange(newStart, newEnd, true);
-      } else {
-        // Offline: use local cache
-        await loadFromLocalCache();
-        // Also load events from local cache (offline mode - instant)
-        loadEventsForRange(newStart, newEnd, false);
-      }
-    } catch (error) {
-      console.error('Failed to load previous week from API, trying local cache:', error);
-      // API failed - try local cache
+      // 1. Load from cache immediately
       await loadFromLocalCache();
-      // Also try to load events from local cache (offline mode - instant)
       loadEventsForRange(newStart, newEnd, false);
+
+      // 2. If online, fetch from API in background and update
+      if (isOnline) {
+        try {
+          const requestStart = perfNow();
+          const data = await getDays(startStr, endStr);
+          logDuration('calendar.days.request', requestStart, { start: startStr, end: endStr });
+
+          data.forEach(d => {
+            daysCache.current.set(d.date, d);
+            if (d.meal_note) {
+              saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
+            }
+          });
+
+          const renderStart = perfNow();
+          addDaysToDisplay(data);
+          enqueueRenderLog('calendar.days.render', renderStart, { count: data.length, direction: 'prev' });
+          loadEventsForRange(newStart, newEnd, true);
+        } catch (error) {
+          console.error('Failed to load previous week from API:', error);
+        }
+      }
     } finally {
       setLoadingMore(null);
     }
@@ -834,36 +819,32 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     };
 
     try {
-      if (isOnline) {
-        // Online: try API first
-        const requestStart = perfNow();
-        const data = await getDays(startStr, endStr);
-        logDuration('calendar.days.request', requestStart, { start: startStr, end: endStr });
-
-        // Update memory cache and IndexedDB
-        data.forEach(d => {
-          daysCache.current.set(d.date, d);
-          if (d.meal_note) {
-            saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
-          }
-        });
-
-        const renderStart = perfNow();
-        addDaysToDisplay(data);
-        enqueueRenderLog('calendar.days.render', renderStart, { count: data.length, direction: 'next' });
-        loadEventsForRange(newStart, newEnd, true);
-      } else {
-        // Offline: use local cache
-        await loadFromLocalCache();
-        // Also load events from local cache (offline mode - instant)
-        loadEventsForRange(newStart, newEnd, false);
-      }
-    } catch (error) {
-      console.error('Failed to load next week from API, trying local cache:', error);
-      // API failed - try local cache
+      // 1. Load from cache immediately
       await loadFromLocalCache();
-      // Also try to load events from local cache (offline mode - instant)
       loadEventsForRange(newStart, newEnd, false);
+
+      // 2. If online, fetch from API in background and update
+      if (isOnline) {
+        try {
+          const requestStart = perfNow();
+          const data = await getDays(startStr, endStr);
+          logDuration('calendar.days.request', requestStart, { start: startStr, end: endStr });
+
+          data.forEach(d => {
+            daysCache.current.set(d.date, d);
+            if (d.meal_note) {
+              saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
+            }
+          });
+
+          const renderStart = perfNow();
+          addDaysToDisplay(data);
+          enqueueRenderLog('calendar.days.render', renderStart, { count: data.length, direction: 'next' });
+          loadEventsForRange(newStart, newEnd, true);
+        } catch (error) {
+          console.error('Failed to load next week from API:', error);
+        }
+      }
     } finally {
       setLoadingMore(null);
     }
