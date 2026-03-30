@@ -21,6 +21,7 @@ import {
   saveLocalGroceryItem,
   deleteLocalGroceryItem,
   queueChange,
+  getPendingChanges,
   generateTempId,
 } from '../db';
 import { useOnlineStatus } from './useOnlineStatus';
@@ -118,26 +119,30 @@ export function useGroceryList() {
       }
     } catch { /* cache failed — continue to API */ }
 
-    // 2. If online, fetch from API in background
+    // 2. If online, fetch from API in background (skip if pending offline changes exist)
     if (isOnlineRef.current) {
-      try {
-        const data = await getGroceryList();
-        if (optimisticVersionRef.current !== fetchVersion) return;
-        setSections(data);
-        saveGroceryToLocalStorage(data);
-        await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        const allItems = data.flatMap(s => s.items);
-        await saveLocalGroceryItems(allItems.map(i => ({
-          id: i.id,
-          section_id: i.section_id,
-          name: i.name,
-          quantity: i.quantity,
-          checked: i.checked,
-          position: i.position,
-          store_id: i.store_id,
-          updated_at: i.updated_at,
-        })));
-      } catch { /* API failed — keep cached data */ }
+      const pending = await getPendingChanges();
+      const hasGroceryChanges = pending.some(c => c.type.startsWith('grocery-'));
+      if (!hasGroceryChanges) {
+        try {
+          const data = await getGroceryList();
+          if (optimisticVersionRef.current !== fetchVersion) return;
+          setSections(data);
+          saveGroceryToLocalStorage(data);
+          await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+          const allItems = data.flatMap(s => s.items);
+          await saveLocalGroceryItems(allItems.map(i => ({
+            id: i.id,
+            section_id: i.section_id,
+            name: i.name,
+            quantity: i.quantity,
+            checked: i.checked,
+            position: i.position,
+            store_id: i.store_id,
+            updated_at: i.updated_at,
+          })));
+        } catch { /* API failed — keep cached data */ }
+      }
     }
 
     setLoading(false);

@@ -22,6 +22,7 @@ import {
   saveLocalPantryItem,
   deleteLocalPantryItem,
   queueChange,
+  getPendingChanges,
   generateTempId,
 } from '../db';
 import { useOnlineStatus } from './useOnlineStatus';
@@ -111,20 +112,24 @@ export function usePantry() {
       }
     } catch { /* cache failed — continue to API */ }
 
-    // 2. If online, fetch from API in background
+    // 2. If online, fetch from API in background (skip if pending offline changes exist)
     if (isOnlineRef.current) {
-      try {
-        const data = await getPantryList();
-        if (optimisticVersionRef.current !== fetchVersion) return;
-        setSections(data);
-        savePantryToLocalStorage(data);
-        await saveLocalPantrySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
-        const allItems = data.flatMap(s => s.items);
-        await saveLocalPantryItems(allItems.map(i => ({
-          id: i.id, section_id: i.section_id, name: i.name,
-          quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-        })));
-      } catch { /* API failed — keep cached data */ }
+      const pending = await getPendingChanges();
+      const hasPantryChanges = pending.some(c => c.type.startsWith('pantry-'));
+      if (!hasPantryChanges) {
+        try {
+          const data = await getPantryList();
+          if (optimisticVersionRef.current !== fetchVersion) return;
+          setSections(data);
+          savePantryToLocalStorage(data);
+          await saveLocalPantrySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+          const allItems = data.flatMap(s => s.items);
+          await saveLocalPantryItems(allItems.map(i => ({
+            id: i.id, section_id: i.section_id, name: i.name,
+            quantity: i.quantity, position: i.position, updated_at: i.updated_at,
+          })));
+        } catch { /* API failed — keep cached data */ }
+      }
     }
 
     setLoading(false);
