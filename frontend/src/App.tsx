@@ -11,11 +11,11 @@ import { useSync } from './hooks/useSync';
 import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
 import { useRealtime } from './hooks/useRealtime';
-import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryList } from './api/client';
+import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryList, getStores as getStoresAPI } from './api/client';
 import { UserInfo } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
-import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, clearAllLocalData } from './db';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, clearAllLocalData } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'pantry' | 'grocery';
@@ -496,7 +496,7 @@ function AppContent() {
     checkAuth();
   }, []);
 
-  // Pre-cache grocery list for offline use (IndexedDB + localStorage backup)
+  // Pre-cache grocery list and stores for offline use
   useEffect(() => {
     if (!user || !isOnline) return;
     getGroceryList().then(async (data) => {
@@ -507,6 +507,9 @@ function AppContent() {
         id: i.id, section_id: i.section_id, name: i.name,
         quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
       }))));
+    }).catch(() => { /* best-effort */ });
+    getStoresAPI().then(async (stores) => {
+      await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
     }).catch(() => { /* best-effort */ });
   }, [user, isOnline]);
 

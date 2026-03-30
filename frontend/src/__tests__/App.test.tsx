@@ -89,6 +89,7 @@ vi.mock('../api/client', () => ({
   updateMealIdea: vi.fn(),
   deleteMealIdea: vi.fn(),
   getGroceryList: vi.fn(() => Promise.resolve([])),
+  getStores: vi.fn(() => Promise.resolve([])),
 }));
 
 vi.mock('../db', () => ({
@@ -110,6 +111,7 @@ vi.mock('../db', () => ({
   clearLocalMealIdeas: vi.fn(() => Promise.resolve()),
   saveLocalGrocerySections: vi.fn(() => Promise.resolve()),
   saveLocalGroceryItems: vi.fn(() => Promise.resolve()),
+  saveLocalStores: vi.fn(() => Promise.resolve()),
   clearAllLocalData: vi.fn(() => Promise.resolve()),
 }));
 
