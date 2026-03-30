@@ -365,7 +365,7 @@ function PantrySectionCard({
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
       {/* Section Header */}
       <div
-        className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 touch-none"
+        className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2"
         {...sectionDragHandlers}
       >
         <div className="flex items-center gap-2">
@@ -711,7 +711,7 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
         <button
           type="button"
           onClick={() => onDelete(item.id)}
-          className="flex-shrink-0 flex items-center ml-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
+          className="hover-delete-btn flex-shrink-0 items-center ml-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
           aria-label={`Remove ${item.name}`}
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

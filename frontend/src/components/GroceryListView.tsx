@@ -562,7 +562,7 @@ function SectionCard({
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
       {/* Section Header -- long-press to drag section */}
       <div
-        className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 touch-none rounded-t-lg"
+        className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 rounded-t-lg"
         {...sectionDragHandlers}
       >
         <div className="flex items-center gap-2">
