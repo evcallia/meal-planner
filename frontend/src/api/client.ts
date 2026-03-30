@@ -35,6 +35,11 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
 
   logDuration('api.request', requestStart, { path, method, status: response.status });
 
+  // Any successful response proves we're online — notify the status hook
+  if (response.ok) {
+    window.dispatchEvent(new Event('api-request-succeeded'));
+  }
+
   if (!response.ok) {
     if (response.status === 401) {
       window.dispatchEvent(new CustomEvent('auth-unauthorized'));

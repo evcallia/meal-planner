@@ -707,17 +707,19 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
           +
         </button>
 
-        {/* Desktop delete button */}
-        <button
-          type="button"
-          onClick={() => onDelete(item.id)}
-          className="hover-delete-btn flex-shrink-0 items-center ml-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
-          aria-label={`Remove ${item.name}`}
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        {/* Desktop delete button — fixed-width wrapper prevents layout shift on hover */}
+        <div className="w-5 flex-shrink-0 hidden md:flex items-center justify-center">
+          <button
+            type="button"
+            onClick={() => onDelete(item.id)}
+            className="hover-delete-btn flex-shrink-0 items-center text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
+            aria-label={`Remove ${item.name}`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );
