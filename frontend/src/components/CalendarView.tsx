@@ -365,18 +365,16 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       const startStr = formatDate(displayStartRef.current);
       const endStr = formatDate(displayEndRef.current);
 
-      // 1. Load from cache immediately
+      // 1. Load from cache immediately (generate day structure even if no notes cached)
       try {
         const localNotes = await getLocalNotesForRange(startStr, endStr);
-        if (localNotes.length > 0) {
-          const data = localNotesToDayData(localNotes, startStr, endStr);
-          setDays(data);
-          data.forEach(d => daysCache.current.set(d.date, d));
-          setLoading(false);
+        const data = localNotesToDayData(localNotes, startStr, endStr);
+        setDays(data);
+        data.forEach(d => daysCache.current.set(d.date, d));
+        setLoading(false);
 
-          // Load events from cache too
-          loadEventsForRange(displayStartRef.current, displayEndRef.current, false);
-        }
+        // Load events from cache too
+        loadEventsForRange(displayStartRef.current, displayEndRef.current, false);
       } catch { /* cache failed — will try API */ }
 
       // 2. If online, fetch from API in background
