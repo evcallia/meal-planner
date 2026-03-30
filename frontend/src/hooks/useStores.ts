@@ -36,24 +36,28 @@ export function useStores(options: UseStoresOptions = {}) {
 
   const loadStores = useCallback(async () => {
     const fetchVersion = optimisticVersionRef.current;
+
+    // 1. Load from cache immediately
     try {
-      if (isOnlineRef.current) {
+      const local = await getLocalStores();
+      if (optimisticVersionRef.current !== fetchVersion) return;
+      if (local.length > 0) {
+        setStores(local);
+        setLoading(false);
+      }
+    } catch { /* IndexedDB failed — continue to API */ }
+
+    // 2. If online, fetch from API in background
+    if (isOnlineRef.current) {
+      try {
         const data = await getStoresAPI();
         if (optimisticVersionRef.current !== fetchVersion) return;
         setStores(data);
         await saveLocalStores(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
-      } else {
-        const local = await getLocalStores();
-        if (optimisticVersionRef.current !== fetchVersion) return;
-        setStores(local);
-      }
-    } catch {
-      const local = await getLocalStores();
-      if (optimisticVersionRef.current !== fetchVersion) return;
-      setStores(local);
-    } finally {
-      setLoading(false);
+      } catch { /* API failed — keep cached data */ }
     }
+
+    setLoading(false);
   }, []);
 
   const loadStoresRef = useRef(loadStores);
