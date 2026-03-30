@@ -678,10 +678,10 @@ export function useGroceryList() {
     if (isOnline) {
       pendingMutationsRef.current++;
       try { await deleteGroceryItemAPI(itemId); } catch {
-        await queueChange('grocery-delete', '', { id: itemId });
+        await queueChange('grocery-delete', '', { id: itemId, name: deletedItem.name });
       } finally { settleMutation(); }
     } else {
-      await queueChange('grocery-delete', '', { id: itemId });
+      await queueChange('grocery-delete', '', { id: itemId, name: deletedItem.name });
     }
   }, [sections, isOnline, pushAction]);
 
@@ -741,11 +741,11 @@ export function useGroceryList() {
             await deleteGroceryItemAPI(itemId);
           } catch {
             await queueChange('grocery-edit', '', { id: dupId, quantity: mergedQty });
-            await queueChange('grocery-delete', '', { id: itemId });
+            await queueChange('grocery-delete', '', { id: itemId, name: deletedItem.name });
           } finally { settleMutation(); }
         } else {
           await queueChange('grocery-edit', '', { id: dupId, quantity: mergedQty });
-          await queueChange('grocery-delete', '', { id: itemId });
+          await queueChange('grocery-delete', '', { id: itemId, name: deletedItem.name });
         }
 
         pushAction({

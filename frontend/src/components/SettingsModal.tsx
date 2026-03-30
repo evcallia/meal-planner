@@ -159,7 +159,7 @@ async function enrichPendingChanges(changes: PendingChange[]): Promise<EnrichedP
         if (payload?.quantity) detail += ` (${payload.quantity})`;
         break;
       case 'grocery-delete':
-        detail = groceryItemMap.get(payload?.id as string) || '';
+        detail = groceryItemMap.get(payload?.id as string) || (payload?.name as string) || '';
         break;
       case 'grocery-check': {
         const itemName = groceryItemMap.get(payload?.id as string) || '';

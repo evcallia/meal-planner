@@ -10,7 +10,12 @@ export function PantryPanel() {
   const [newItemQty, setNewItemQty] = useState('1');
   const [showClearMenu, setShowClearMenu] = useState(false);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('meal-planner-pantry-collapsed');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
   const [isAddingSection, setIsAddingSection] = useState(false);
   const [newSectionName, setNewSectionName] = useState('');
   const clearMenuRef = useRef<HTMLDivElement>(null);
@@ -111,6 +116,7 @@ export function PantryPanel() {
       const next = new Set(prev);
       if (next.has(sectionName)) next.delete(sectionName);
       else next.add(sectionName);
+      try { localStorage.setItem('meal-planner-pantry-collapsed', JSON.stringify([...next])); } catch {}
       return next;
     });
   }, []);

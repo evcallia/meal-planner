@@ -120,7 +120,7 @@ describe('useGroceryList - API error handling', () => {
       await result.current.deleteItem('i1');
     });
 
-    expect(mockQueueChange).toHaveBeenCalledWith('grocery-delete', '', { id: 'i1' });
+    expect(mockQueueChange).toHaveBeenCalledWith('grocery-delete', '', { id: 'i1', name: 'Bananas' });
   });
 
   it('editItem queues on API error', async () => {

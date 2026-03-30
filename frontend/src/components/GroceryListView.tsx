@@ -27,7 +27,12 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   const [filterStoreId, setFilterStoreId] = useState<string | null>(null);
   const [sortByStore, setSortByStore] = useState(false);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('meal-planner-grocery-collapsed');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const clearMenuRef = useRef<HTMLDivElement>(null);
   const sectionContainerRef = useRef<HTMLDivElement>(null);
@@ -160,6 +165,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       const next = new Set(prev);
       if (next.has(sectionName)) next.delete(sectionName);
       else next.add(sectionName);
+      try { localStorage.setItem('meal-planner-grocery-collapsed', JSON.stringify([...next])); } catch {}
       return next;
     });
   }, []);
