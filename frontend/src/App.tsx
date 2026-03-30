@@ -11,11 +11,11 @@ import { useSync } from './hooks/useSync';
 import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
 import { useRealtime } from './hooks/useRealtime';
-import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryList, getStores as getStoresAPI } from './api/client';
+import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryList, getStores as getStoresAPI, getPantryList } from './api/client';
 import { UserInfo } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
-import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, clearAllLocalData } from './db';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, clearAllLocalData } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'pantry' | 'grocery';
@@ -512,6 +512,61 @@ function AppContent() {
       await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
     }).catch(() => { /* best-effort */ });
   }, [user, isOnline]);
+
+  // Keep local cache fresh from realtime events for inactive tabs.
+  // When the active tab's hook handles its own events, this also pre-warms
+  // the cache for other tabs so data is instant on tab switch.
+  const currentPageRef = useRef(currentPage);
+  currentPageRef.current = currentPage;
+  useEffect(() => {
+    if (!user) return;
+    const handler = async (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.type) return;
+
+      // Skip if there are pending offline changes — don't overwrite local edits
+      try {
+        const pending = await getPendingChanges();
+
+        if (detail.type === 'grocery.updated' && currentPageRef.current !== 'grocery') {
+          if (pending.some(c => c.type.startsWith('grocery-'))) return;
+          try {
+            const data = await getGroceryList();
+            try { localStorage.setItem('meal-planner-grocery', JSON.stringify(data)); } catch {}
+            setGroceryCount(data.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0));
+            await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+            await saveLocalGroceryItems(data.flatMap(s => s.items.map(i => ({
+              id: i.id, section_id: i.section_id, name: i.name,
+              quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
+            }))));
+          } catch {}
+        }
+
+        if (detail.type === 'pantry.updated' && currentPageRef.current !== 'pantry') {
+          if (pending.some(c => c.type.startsWith('pantry-'))) return;
+          try {
+            const data = await getPantryList();
+            try { localStorage.setItem('meal-planner-pantry-sections', JSON.stringify(data)); } catch {}
+            await saveLocalPantrySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+            await saveLocalPantryItems(data.flatMap(s => s.items.map(i => ({
+              id: i.id, section_id: i.section_id, name: i.name,
+              quantity: i.quantity, position: i.position, updated_at: i.updated_at,
+            }))));
+          } catch {}
+        }
+
+        if (detail.type === 'stores.updated') {
+          try {
+            const stores = await getStoresAPI();
+            await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
+            try { localStorage.setItem('meal-planner-stores', JSON.stringify(stores)); } catch {}
+          } catch {}
+        }
+      } catch {}
+    };
+    window.addEventListener('meal-planner-realtime', handler);
+    return () => window.removeEventListener('meal-planner-realtime', handler);
+  }, [user]);
 
   useEffect(() => {
     const scale = settings.compactView ? settings.textScaleCompact : settings.textScaleStandard;
