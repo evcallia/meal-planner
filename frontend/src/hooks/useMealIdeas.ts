@@ -11,6 +11,7 @@ import {
   deleteLocalMealIdea,
   clearLocalMealIdeas,
   removePendingChangesForTempId,
+  getPendingChanges,
 } from '../db';
 
 interface MealIdeaInput {
@@ -77,55 +78,87 @@ export function useMealIdeas() {
     }
   }, [ideas]);
 
+  // Use a ref so refreshIdeas doesn't depend on isOnline directly.
+  // This prevents the load function from being recreated (and re-triggered)
+  // when going online→offline, which would overwrite in-memory optimistic state.
+  const isOnlineRef = useRef(isOnline);
+  isOnlineRef.current = isOnline;
+
+  // Load meal ideas (cache-first: show cached data immediately, then refresh from API)
   const refreshIdeas = useCallback(async () => {
     const token = ++loadTokenRef.current;
+
+    // Capture legacy localStorage before anything overwrites it (for first-load hydration)
+    const legacyRaw = localStorage.getItem(STORAGE_KEY);
+
+    // 1. Load from cache immediately
     try {
-      const serverIdeas = await getMealIdeas();
-      if (!isMountedRef.current || token !== loadTokenRef.current) return;
-
-      // Merge with any local-only ideas (temp IDs)
       const localIdeas = await getLocalMealIdeas();
-      const tempIdeas = localIdeas.filter(idea => isTempId(idea.id));
-      const mergedIdeas = [...serverIdeas, ...tempIdeas];
-
-      // Don't overwrite local state while the user is actively editing
-      if (!editingRef.current) {
-        setIdeas(mergedIdeas);
-      }
-
-      // Sync server ideas to local DB for offline access
-      await clearLocalMealIdeas();
-      for (const idea of mergedIdeas) {
-        await saveLocalMealIdea(idea);
-      }
-
-      if (!hasHydratedRef.current) {
-        hasHydratedRef.current = true;
-        const legacyIdeas = parseStoredIdeas(localStorage.getItem(STORAGE_KEY));
-        if (serverIdeas.length === 0 && legacyIdeas.length > 0) {
-          for (const idea of legacyIdeas) {
-            await createMealIdea({ title: idea.title });
-          }
-          const refreshed = await getMealIdeas();
-          if (isMountedRef.current && token === loadTokenRef.current) {
-            setIdeas(refreshed);
-          }
+      if (!isMountedRef.current || token !== loadTokenRef.current) return;
+      if (localIdeas.length > 0) {
+        setIdeas(localIdeas);
+      } else {
+        // Fall back to localStorage
+        const stored = parseStoredIdeas(legacyRaw);
+        if (stored.length > 0) {
+          setIdeas(stored);
         }
       }
-    } catch (error) {
-      console.error('Failed to load meal ideas:', error);
-      if (isMountedRef.current && token === loadTokenRef.current) {
-        // Load from IndexedDB when offline
-        const localIdeas = await getLocalMealIdeas();
-        if (localIdeas.length > 0) {
-          setIdeas(localIdeas);
-        } else {
-          // Fall back to localStorage
-          setIdeas(parseStoredIdeas(localStorage.getItem(STORAGE_KEY)));
-        }
+    } catch { /* cache failed — continue to API */ }
+
+    // 2. If online, fetch from API in background (skip if pending offline changes exist)
+    if (isOnlineRef.current) {
+      const pending = await getPendingChanges();
+      const hasMealIdeaChanges = pending.some(c => c.type.startsWith('meal-idea-'));
+      if (!hasMealIdeaChanges) {
+        try {
+          const serverIdeas = await getMealIdeas();
+          if (!isMountedRef.current || token !== loadTokenRef.current) return;
+
+          // Merge with any local-only ideas (temp IDs)
+          const localIdeas = await getLocalMealIdeas();
+          const tempIdeas = localIdeas.filter(idea => isTempId(idea.id));
+          const mergedIdeas = [...serverIdeas, ...tempIdeas];
+
+          // Don't overwrite local state while the user is actively editing
+          if (!editingRef.current) {
+            setIdeas(mergedIdeas);
+          }
+
+          // Sync to local DB for offline access
+          await clearLocalMealIdeas();
+          for (const idea of mergedIdeas) {
+            await saveLocalMealIdea(idea);
+          }
+          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(mergedIdeas)); } catch {}
+
+          if (!hasHydratedRef.current) {
+            hasHydratedRef.current = true;
+            const legacyIdeas = parseStoredIdeas(legacyRaw);
+            if (serverIdeas.length === 0 && legacyIdeas.length > 0) {
+              for (const idea of legacyIdeas) {
+                await createMealIdea({ title: idea.title });
+              }
+              const refreshed = await getMealIdeas();
+              if (isMountedRef.current && token === loadTokenRef.current) {
+                setIdeas(refreshed);
+              }
+            }
+          }
+        } catch { /* API failed — keep cached data */ }
       }
     }
   }, []);
+
+  // Load on mount, and reload when coming back online (but not when going offline)
+  const prevOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+    if (isOnline && wasOffline) {
+      refreshIdeas();
+    }
+  }, [isOnline, refreshIdeas]);
 
   useEffect(() => {
     refreshIdeas();

@@ -11,11 +11,11 @@ import { useSync } from './hooks/useSync';
 import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
 import { useRealtime } from './hooks/useRealtime';
-import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryList, getStores as getStoresAPI, getPantryList } from './api/client';
+import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryList, getStores as getStoresAPI, getPantryList, getMealIdeas } from './api/client';
 import { UserInfo } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
-import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData } from './db';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'pantry' | 'grocery';
@@ -560,6 +560,18 @@ function AppContent() {
             const stores = await getStoresAPI();
             await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
             try { localStorage.setItem('meal-planner-stores', JSON.stringify(stores)); } catch {}
+          } catch {}
+        }
+
+        if (detail.type === 'meal-ideas.updated' && currentPageRef.current !== 'meals') {
+          if (pending.some(c => c.type.startsWith('meal-idea-'))) return;
+          try {
+            const ideas = await getMealIdeas();
+            await clearLocalMealIdeas();
+            for (const idea of ideas) {
+              await saveLocalMealIdea(idea);
+            }
+            try { localStorage.setItem('meal-planner-meal-ideas', JSON.stringify(ideas)); } catch {}
           } catch {}
         }
 
