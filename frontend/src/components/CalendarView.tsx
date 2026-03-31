@@ -389,7 +389,15 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             end: endStr,
           });
           const renderStart = perfNow();
-          setDays(data);
+          // Merge API days with existing events to avoid a flash where
+          // cached events disappear while waiting for the events API
+          setDays(prev => {
+            const prevEventsMap = new Map(prev.map(d => [d.date, d.events]));
+            return data.map(d => ({
+              ...d,
+              events: d.events.length > 0 ? d.events : (prevEventsMap.get(d.date) ?? []),
+            }));
+          });
           data.forEach(d => daysCache.current.set(d.date, d));
           data.forEach(d => {
             if (d.meal_note) {

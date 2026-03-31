@@ -17,6 +17,8 @@ vi.mock('../../db', () => ({
   getLocalMealIdeas: vi.fn(() => Promise.resolve([])),
   deleteLocalMealIdea: vi.fn(),
   clearLocalMealIdeas: vi.fn(),
+  removePendingChangesForTempId: vi.fn(),
+  getPendingChanges: vi.fn(() => Promise.resolve([])),
 }));
 
 vi.mock('../useOnlineStatus', () => ({
