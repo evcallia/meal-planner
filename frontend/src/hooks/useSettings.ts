@@ -7,6 +7,7 @@ export interface Settings {
   textScaleStandard: number;
   textScaleCompact: number;
   showAllEvents: boolean;
+  showHolidays: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -16,6 +17,7 @@ const DEFAULT_SETTINGS: Settings = {
   textScaleStandard: 1,
   textScaleCompact: 1,
   showAllEvents: false,
+  showHolidays: true,
 };
 
 const STORAGE_KEY = 'meal-planner-settings';
