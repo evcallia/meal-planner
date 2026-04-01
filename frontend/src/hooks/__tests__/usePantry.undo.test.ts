@@ -220,7 +220,7 @@ describe('usePantry undo/redo', () => {
     expect(result.current.sections).toHaveLength(2);
   });
 
-  it('deleteSection undo restores the section', async () => {
+  it('deleteSection undo restores the section at original position', async () => {
     mockDeleteSectionAPI.mockResolvedValue({ status: 'ok' });
     mockCreateSectionAPI.mockResolvedValue({ id: 'restored-s1', name: 'Fridge', position: 0, items: [] });
     mockAddAPI.mockImplementation(async (_sectionId, name, quantity) => ({
@@ -230,11 +230,20 @@ describe('usePantry undo/redo', () => {
     const { result } = renderHook(() => usePantry());
     await waitFor(() => expect(result.current.sections).toHaveLength(2));
 
+    // Capture original order: s1 (Fridge) at index 0, s2 (Pantry) at index 1
+    expect(result.current.sections[0].id).toBe('s1');
+    expect(result.current.sections[1].id).toBe('s2');
+
+    // Delete first section
     await act(async () => { await result.current.deleteSection('s1'); });
     expect(result.current.sections).toHaveLength(1);
+    expect(result.current.sections[0].id).toBe('s2');
 
+    // Undo — should restore at index 0, not append to end
     await act(async () => { await pushActionCalls[0].undo(); });
-    expect(result.current.sections.length).toBeGreaterThanOrEqual(2);
+    expect(result.current.sections).toHaveLength(2);
+    expect(result.current.sections[0].name).toBe('Fridge');
+    expect(result.current.sections[1].id).toBe('s2');
   });
 
   it('moveItem undo moves item back', async () => {
