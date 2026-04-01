@@ -1,6 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useSettings } from '../useSettings'
+import { useSettings, DEFAULT_SETTINGS } from '../useSettings'
+
+// Mock the API client
+vi.mock('../../api/client', () => ({
+  getSettings: vi.fn().mockRejectedValue(new Error('offline')),
+  putSettings: vi.fn().mockRejectedValue(new Error('offline')),
+  SOURCE_ID: 'test-source',
+}))
+
+// Mock useOnlineStatus
+vi.mock('../useOnlineStatus', () => ({
+  useOnlineStatus: vi.fn().mockReturnValue(false),
+}))
 
 // Mock localStorage
 const mockLocalStorage = {
@@ -25,69 +37,38 @@ describe('useSettings', () => {
 
     const { result } = renderHook(() => useSettings())
 
-    expect(result.current.settings).toEqual({
-      showItemizedColumn: true,
-
-      showMealIdeas: true,
-      compactView: false,
-      textScaleStandard: 1,
-      textScaleCompact: 1,
-      showAllEvents: false,
-      showHolidays: true,
-      holidayColor: 'red',
-      calendarColor: 'amber',
-    })
-    expect(mockLocalStorage.getItem).toHaveBeenCalledWith('meal-planner-settings')
+    expect(result.current.settings).toEqual(DEFAULT_SETTINGS)
   })
 
-  it('loads settings from localStorage', () => {
-    const storedSettings = JSON.stringify({
+  it('migrates old localStorage format (no updated_at wrapper)', () => {
+    // Old format: just the settings object
+    const oldFormat = JSON.stringify({
       showItemizedColumn: false,
-
-      showMealIdeas: false,
       compactView: true,
-      textScaleStandard: 1.1,
-      textScaleCompact: 0.9,
     })
-    mockLocalStorage.getItem.mockReturnValue(storedSettings)
+    mockLocalStorage.getItem.mockReturnValue(oldFormat)
 
     const { result } = renderHook(() => useSettings())
 
-    expect(result.current.settings).toEqual({
-      showItemizedColumn: false,
-
-      showMealIdeas: false,
-      compactView: true,
-      textScaleStandard: 1.1,
-      textScaleCompact: 0.9,
-      showAllEvents: false,
-      showHolidays: true,
-      holidayColor: 'red',
-      calendarColor: 'amber',
-    })
+    expect(result.current.settings.showItemizedColumn).toBe(false)
+    expect(result.current.settings.compactView).toBe(true)
+    // Defaults should be merged in
+    expect(result.current.settings.showHolidays).toBe(true)
   })
 
-  it('merges stored settings with defaults', () => {
-    const storedSettings = JSON.stringify({
-      someOldSetting: true, // This would be included in merge
+  it('loads new localStorage format with updated_at', () => {
+    const newFormat = JSON.stringify({
+      settings: { compactView: true, calendarColor: 'blue' },
+      updated_at: '2026-04-01T12:00:00.000Z',
     })
-    mockLocalStorage.getItem.mockReturnValue(storedSettings)
+    mockLocalStorage.getItem.mockReturnValue(newFormat)
 
     const { result } = renderHook(() => useSettings())
 
-    expect(result.current.settings).toEqual({
-      showItemizedColumn: true, // Default value
-
-      showMealIdeas: true,
-      compactView: false,
-      textScaleStandard: 1,
-      textScaleCompact: 1,
-      showAllEvents: false,
-      showHolidays: true,
-      holidayColor: 'red',
-      calendarColor: 'amber',
-      someOldSetting: true, // Merged from storage
-    })
+    expect(result.current.settings.compactView).toBe(true)
+    expect(result.current.settings.calendarColor).toBe('blue')
+    // Defaults merged
+    expect(result.current.settings.showMealIdeas).toBe(true)
   })
 
   it('handles malformed localStorage data gracefully', () => {
@@ -95,21 +76,10 @@ describe('useSettings', () => {
 
     const { result } = renderHook(() => useSettings())
 
-    expect(result.current.settings).toEqual({
-      showItemizedColumn: true,
-
-      showMealIdeas: true,
-      compactView: false,
-      textScaleStandard: 1,
-      textScaleCompact: 1,
-      showAllEvents: false,
-      showHolidays: true,
-      holidayColor: 'red',
-      calendarColor: 'amber',
-    })
+    expect(result.current.settings).toEqual(DEFAULT_SETTINGS)
   })
 
-  it('updates settings and saves to localStorage', () => {
+  it('updates settings and saves to localStorage in new format', () => {
     mockLocalStorage.getItem.mockReturnValue(null)
 
     const { result } = renderHook(() => useSettings())
@@ -119,47 +89,28 @@ describe('useSettings', () => {
     })
 
     expect(result.current.settings.showItemizedColumn).toBe(false)
-    expect(mockLocalStorage.setItem).toHaveBeenCalledWith(
-      'meal-planner-settings',
-      JSON.stringify({
-        showItemizedColumn: false,
-  
-        showMealIdeas: true,
-        compactView: false,
-        textScaleStandard: 1,
-        textScaleCompact: 1,
-        showAllEvents: false,
-        showHolidays: true,
-      holidayColor: 'red',
-      calendarColor: 'amber',
-      })
+    // Verify localStorage was called with the new wrapped format
+    const lastCall = mockLocalStorage.setItem.mock.calls.find(
+      (call: [string, string]) => call[0] === 'meal-planner-settings'
     )
+    expect(lastCall).toBeTruthy()
+    const stored = JSON.parse(lastCall![1])
+    expect(stored.settings.showItemizedColumn).toBe(false)
+    expect(stored.updated_at).toBeTruthy()
   })
 
   it('allows partial updates', () => {
-    const initialSettings = JSON.stringify({
-      showItemizedColumn: false,
-
-      showMealIdeas: false,
-      compactView: false,
-      textScaleStandard: 1,
-      textScaleCompact: 1,
-    })
-    mockLocalStorage.getItem.mockReturnValue(initialSettings)
+    mockLocalStorage.getItem.mockReturnValue(null)
 
     const { result } = renderHook(() => useSettings())
 
-    // Verify initial state
-    expect(result.current.settings.showItemizedColumn).toBe(false)
-
-    expect(result.current.settings.showMealIdeas).toBe(false)
-    expect(result.current.settings.compactView).toBe(false)
-
-    // Update only one setting
     act(() => {
-      result.current.updateSettings({ showItemizedColumn: true })
+      result.current.updateSettings({ compactView: true })
     })
 
+    expect(result.current.settings.compactView).toBe(true)
+    // Other settings unchanged
     expect(result.current.settings.showItemizedColumn).toBe(true)
+    expect(result.current.settings.showMealIdeas).toBe(true)
   })
 })
