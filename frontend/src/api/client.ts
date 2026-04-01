@@ -384,3 +384,14 @@ export async function reorderStores(storeIds: string[]): Promise<{ status: strin
     body: JSON.stringify({ store_ids: storeIds }),
   });
 }
+
+export async function getSettings(): Promise<{ settings: Record<string, unknown>; updated_at: string | null }> {
+  return fetchAPI<{ settings: Record<string, unknown>; updated_at: string | null }>('/settings');
+}
+
+export async function putSettings(settings: Record<string, unknown>, updatedAt: string): Promise<{ settings: Record<string, unknown>; updated_at: string }> {
+  return fetchAPI<{ settings: Record<string, unknown>; updated_at: string }>('/settings', {
+    method: 'PUT',
+    body: JSON.stringify({ settings, updated_at: updatedAt }),
+  });
+}
