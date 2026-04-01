@@ -8,6 +8,7 @@ export interface Settings {
   textScaleCompact: number;
   showAllEvents: boolean;
   showHolidays: boolean;
+  holidayColor: string;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -18,6 +19,7 @@ const DEFAULT_SETTINGS: Settings = {
   textScaleCompact: 1,
   showAllEvents: false,
   showHolidays: true,
+  holidayColor: 'red',
 };
 
 const STORAGE_KEY = 'meal-planner-settings';

@@ -690,6 +690,35 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
                 />
               </button>
             </label>
+
+            {/* Holiday Color Picker */}
+            {settings.showHolidays && (
+              <div className="mt-3">
+                <span className="text-sm text-gray-700 dark:text-gray-300">Holiday color</span>
+                <div className="flex gap-2 mt-1.5">
+                  {[
+                    { value: 'red', bg: 'bg-red-500' },
+                    { value: 'blue', bg: 'bg-blue-500' },
+                    { value: 'green', bg: 'bg-green-500' },
+                    { value: 'purple', bg: 'bg-purple-500' },
+                    { value: 'pink', bg: 'bg-pink-500' },
+                    { value: 'amber', bg: 'bg-amber-500' },
+                  ].map(({ value, bg }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-label={`${value} holiday color`}
+                      onClick={() => onUpdate({ holidayColor: value })}
+                      className={`w-7 h-7 rounded-full ${bg} transition-all ${
+                        settings.holidayColor === value
+                          ? 'ring-2 ring-offset-2 ring-gray-900 dark:ring-white dark:ring-offset-gray-800 scale-110'
+                          : 'opacity-60 hover:opacity-100'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Hidden Events */}

@@ -266,6 +266,7 @@ function MealsPage({
           compactView={settings.compactView}
           showAllEvents={settings.showAllEvents}
           showHolidays={settings.showHolidays}
+          holidayColor={settings.holidayColor}
         />
       </main>
 

@@ -135,12 +135,13 @@ interface CalendarViewProps {
   compactView?: boolean;
   showAllEvents?: boolean;
   showHolidays?: boolean;
+  holidayColor?: string;
 }
 
 // Track which date ranges have finished loading events
 type EventsLoadState = 'loading' | 'loaded' | 'error';
 
-export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false, showAllEvents = false, showHolidays = true }: CalendarViewProps) {
+export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false, showAllEvents = false, showHolidays = true, holidayColor = 'red' }: CalendarViewProps) {
   // days = what's displayed in the UI
   const [days, setDays] = useState<DayData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1317,6 +1318,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             isDragActive={isDragActive}
             dragSourceDate={dragSourceDate}
             onDeleteMeal={(lineIndex) => handleDeleteMeal(day.date, lineIndex)}
+            holidayColor={holidayColor}
           />
         </div>
       ))}
