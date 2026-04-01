@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, date
-from sqlalchemy import String, Text, Boolean, Integer, Date, DateTime, ForeignKey
+from sqlalchemy import String, Text, Boolean, Integer, Date, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -201,3 +201,11 @@ class HiddenCalendarEvent(Base):
     end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     all_day: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class UserSettings(Base):
+    __tablename__ = "user_settings"
+
+    sub: Mapped[str] = mapped_column(String(255), primary_key=True)
+    settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

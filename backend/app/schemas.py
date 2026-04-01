@@ -243,3 +243,13 @@ class UserInfo(BaseModel):
     sub: str
     email: str | None = None
     name: str | None = None
+
+
+class UserSettingsResponse(BaseModel):
+    settings: dict
+    updated_at: datetime | None = None
+
+
+class UserSettingsUpdate(BaseModel):
+    settings: dict
+    updated_at: datetime
