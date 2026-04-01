@@ -78,6 +78,9 @@ Key details:
 - **Undo/redo with replaceGroceryListAPI**: For complex state changes (delete, clear), both undo and redo use `replaceGroceryListAPI` with full list snapshots rather than trying to reverse individual operations. Simpler and more reliable
 - All mutation functions follow the same pattern: capture `prevSections`, increment `optimisticVersionRef`, optimistic `setSections`, save locally, API call (or queue offline), `pushAction` with undo/redo that also use the version/mutation refs
 
+## Pantry Undo Patterns
+- **Section delete undo preserves order**: `deleteSection` captures `originalIndex = sections.indexOf(section)` at deletion time. Both online and offline undo paths use `splice(Math.min(originalIndex, next.length), 0, ...)` to insert at the original position, then reindex positions with `.map((s, i) => ({ ...s, position: i }))`. Online undo also calls `reorderPantrySectionsAPI` to persist the order on the server.
+
 ## Optimistic Update Patterns (usePantry)
 - **Debounced updates**: `updateItem` uses a 500ms debounce timer (`updateTimersRef`) and accumulates changes in `pendingUpdatesRef`. This lets rapid +/- clicks batch into a single API call
 - **Guard against stale server responses**: After the debounced API call returns, only apply the server response if `!pendingUpdatesRef.current[id]` — a newer pending update means the response is already stale
@@ -95,3 +98,5 @@ Key details:
 - Mock `authEvents` in test files that import modules using it: `vi.mock('../../authEvents', () => ({ emitAuthFailure: vi.fn(), onAuthFailure: vi.fn(() => vi.fn()) }))`
 - Mock fetch responses need `headers: { get: () => 'application/json' }` since `fetchAPI` now checks content-type on errors
 - `useSync.test.ts` uses `importOriginal` for `api/client` mock to preserve `AuthError` class for `instanceof` checks
+- `useSettings.test.ts` mocks `useOnlineStatus` to return `false` (offline) to isolate localStorage behavior from server sync. Also mocks `api/client` with `getSettings`/`putSettings` rejecting to simulate offline
+- Backend settings tests use `authenticated_client` fixture (not bare `client`) and mock `broadcast_to_user` with `AsyncMock`
