@@ -100,7 +100,7 @@ describe('API client', () => {
 
       const result = await getEvents('2024-01-01', '2024-01-07');
 
-      expect(mockFetch).toHaveBeenCalledWith('/api/days/events?start_date=2024-01-01&end_date=2024-01-07&include_hidden=false', expect.objectContaining({
+      expect(mockFetch).toHaveBeenCalledWith('/api/days/events?start_date=2024-01-01&end_date=2024-01-07&include_hidden=false&include_holidays=true', expect.objectContaining({
         headers: expect.objectContaining({
           'Content-Type': 'application/json',
         }),

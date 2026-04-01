@@ -33,6 +33,7 @@ describe('useSettings', () => {
       textScaleStandard: 1,
       textScaleCompact: 1,
       showAllEvents: false,
+      showHolidays: true,
     })
     expect(mockLocalStorage.getItem).toHaveBeenCalledWith('meal-planner-settings')
   })
@@ -58,6 +59,7 @@ describe('useSettings', () => {
       textScaleStandard: 1.1,
       textScaleCompact: 0.9,
       showAllEvents: false,
+      showHolidays: true,
     })
   })
 
@@ -77,6 +79,7 @@ describe('useSettings', () => {
       textScaleStandard: 1,
       textScaleCompact: 1,
       showAllEvents: false,
+      showHolidays: true,
       someOldSetting: true, // Merged from storage
     })
   })
@@ -94,6 +97,7 @@ describe('useSettings', () => {
       textScaleStandard: 1,
       textScaleCompact: 1,
       showAllEvents: false,
+      showHolidays: true,
     })
   })
 
@@ -117,6 +121,7 @@ describe('useSettings', () => {
         textScaleStandard: 1,
         textScaleCompact: 1,
         showAllEvents: false,
+        showHolidays: true,
       })
     )
   })
