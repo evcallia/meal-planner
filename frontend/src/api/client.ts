@@ -59,11 +59,12 @@ export async function getDays(startDate: string, endDate: string): Promise<DayDa
   return fetchAPI<DayData[]>(`/days?start_date=${startDate}&end_date=${endDate}`);
 }
 
-export async function getEvents(startDate: string, endDate: string, includeHidden: boolean = false): Promise<Record<string, CalendarEvent[]>> {
+export async function getEvents(startDate: string, endDate: string, includeHidden: boolean = false, includeHolidays: boolean = true): Promise<Record<string, CalendarEvent[]>> {
   const params = new URLSearchParams({
     start_date: startDate,
     end_date: endDate,
     include_hidden: String(includeHidden),
+    include_holidays: String(includeHolidays),
   });
   return fetchAPI<Record<string, CalendarEvent[]>>(`/days/events?${params}`);
 }

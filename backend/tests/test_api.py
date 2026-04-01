@@ -95,7 +95,7 @@ class TestDaysAPI:
         assert day["events"][0]["start_time"] == "2024-02-15T19:00:00Z"
         assert day["events"][0]["all_day"] is False
         
-        mock_fetch_events.assert_called_once_with(date(2024, 2, 15), date(2024, 2, 15))
+        mock_fetch_events.assert_called_once_with(date(2024, 2, 15), date(2024, 2, 15), include_holidays=True)
 
     def test_get_days_invalid_date_range(self, authenticated_client: TestClient):
         """Test getting days with invalid date parameters."""
