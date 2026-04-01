@@ -663,6 +663,34 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
             </div>
           </div>
 
+          {/* Calendar Event Color */}
+          <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+            <span className="text-gray-900 dark:text-gray-100 font-medium">Event color</span>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Color for calendar events</p>
+            <div className="flex gap-2 mt-1.5">
+              {[
+                { value: 'amber', bg: 'bg-amber-500' },
+                { value: 'blue', bg: 'bg-blue-500' },
+                { value: 'green', bg: 'bg-green-500' },
+                { value: 'purple', bg: 'bg-purple-500' },
+                { value: 'red', bg: 'bg-red-500' },
+                { value: 'pink', bg: 'bg-pink-500' },
+              ].map(({ value, bg }) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-label={`${value} event color`}
+                  onClick={() => onUpdate({ calendarColor: value })}
+                  className={`w-7 h-7 rounded-full ${bg} transition-all ${
+                    settings.calendarColor === value
+                      ? 'ring-2 ring-offset-2 ring-gray-900 dark:ring-white dark:ring-offset-gray-800 scale-110'
+                      : 'opacity-60 hover:opacity-100'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+
           {/* US Holidays */}
           <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
             <label className="flex items-center justify-between gap-3 cursor-pointer">

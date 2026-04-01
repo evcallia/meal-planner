@@ -21,6 +21,7 @@ interface DayCardProps {
   dragSourceDate?: string | null;
   onDeleteMeal?: (lineIndex: number) => void;
   holidayColor?: string;
+  calendarColor?: string;
 }
 
 function formatTime(isoString: string): string {
@@ -42,14 +43,14 @@ function formatDate(dateString: string, compact = false): { dayName: string; dat
   };
 }
 
-// Holiday color presets — maps setting value to Tailwind classes
-const HOLIDAY_COLORS: Record<string, { text: string; textDark: string; bg: string; bgDark: string; hover: string; hoverDark: string }> = {
-  red:    { text: 'text-red-700',    textDark: 'dark:text-red-400',    bg: 'bg-red-50',    bgDark: 'dark:bg-red-900/20',    hover: 'hover:bg-red-100/80',    hoverDark: 'dark:hover:bg-red-900/40' },
-  blue:   { text: 'text-blue-700',   textDark: 'dark:text-blue-400',   bg: 'bg-blue-50',   bgDark: 'dark:bg-blue-900/20',   hover: 'hover:bg-blue-100/80',   hoverDark: 'dark:hover:bg-blue-900/40' },
-  green:  { text: 'text-green-700',  textDark: 'dark:text-green-400',  bg: 'bg-green-50',  bgDark: 'dark:bg-green-900/20',  hover: 'hover:bg-green-100/80',  hoverDark: 'dark:hover:bg-green-900/40' },
-  purple: { text: 'text-purple-700', textDark: 'dark:text-purple-400', bg: 'bg-purple-50', bgDark: 'dark:bg-purple-900/20', hover: 'hover:bg-purple-100/80', hoverDark: 'dark:hover:bg-purple-900/40' },
-  pink:   { text: 'text-pink-700',   textDark: 'dark:text-pink-400',   bg: 'bg-pink-50',   bgDark: 'dark:bg-pink-900/20',   hover: 'hover:bg-pink-100/80',   hoverDark: 'dark:hover:bg-pink-900/40' },
-  amber:  { text: 'text-amber-700',  textDark: 'dark:text-amber-400',  bg: 'bg-amber-50',  bgDark: 'dark:bg-amber-900/20',  hover: 'hover:bg-amber-100/80',  hoverDark: 'dark:hover:bg-amber-900/40' },
+// Event color presets — maps setting value to Tailwind classes
+const EVENT_COLORS: Record<string, { text: string; textDark: string; textStrong: string; textStrongDark: string; bg: string; bgDark: string; border: string; borderDark: string; hover: string; hoverDark: string }> = {
+  red:    { text: 'text-red-700',    textDark: 'dark:text-red-400',    textStrong: 'text-red-800',    textStrongDark: 'dark:text-red-200',    bg: 'bg-red-50',    bgDark: 'dark:bg-red-900/20',    border: 'border-red-100',    borderDark: 'dark:border-red-800/30',    hover: 'hover:bg-red-100/80',    hoverDark: 'dark:hover:bg-red-900/40' },
+  blue:   { text: 'text-blue-700',   textDark: 'dark:text-blue-400',   textStrong: 'text-blue-800',   textStrongDark: 'dark:text-blue-200',   bg: 'bg-blue-50',   bgDark: 'dark:bg-blue-900/20',   border: 'border-blue-100',   borderDark: 'dark:border-blue-800/30',   hover: 'hover:bg-blue-100/80',   hoverDark: 'dark:hover:bg-blue-900/40' },
+  green:  { text: 'text-green-700',  textDark: 'dark:text-green-400',  textStrong: 'text-green-800',  textStrongDark: 'dark:text-green-200',  bg: 'bg-green-50',  bgDark: 'dark:bg-green-900/20',  border: 'border-green-100',  borderDark: 'dark:border-green-800/30',  hover: 'hover:bg-green-100/80',  hoverDark: 'dark:hover:bg-green-900/40' },
+  purple: { text: 'text-purple-700', textDark: 'dark:text-purple-400', textStrong: 'text-purple-800', textStrongDark: 'dark:text-purple-200', bg: 'bg-purple-50', bgDark: 'dark:bg-purple-900/20', border: 'border-purple-100', borderDark: 'dark:border-purple-800/30', hover: 'hover:bg-purple-100/80', hoverDark: 'dark:hover:bg-purple-900/40' },
+  pink:   { text: 'text-pink-700',   textDark: 'dark:text-pink-400',   textStrong: 'text-pink-800',   textStrongDark: 'dark:text-pink-200',   bg: 'bg-pink-50',   bgDark: 'dark:bg-pink-900/20',   border: 'border-pink-100',   borderDark: 'dark:border-pink-800/30',   hover: 'hover:bg-pink-100/80',   hoverDark: 'dark:hover:bg-pink-900/40' },
+  amber:  { text: 'text-amber-700',  textDark: 'dark:text-amber-400',  textStrong: 'text-amber-800',  textStrongDark: 'dark:text-amber-200',  bg: 'bg-amber-50',  bgDark: 'dark:bg-amber-900/20',  border: 'border-amber-100',  borderDark: 'dark:border-amber-800/30',  hover: 'hover:bg-amber-100/80',  hoverDark: 'dark:hover:bg-amber-900/40' },
 };
 
 function isHolidayEvent(event: { calendar_name?: string | null }): boolean {
@@ -119,6 +120,7 @@ export function DayCard({
   dragSourceDate,
   onDeleteMeal,
   holidayColor = 'red',
+  calendarColor = 'amber',
 }: DayCardProps) {
   const normalizeNotes = (value?: string | null) => decodeHtmlEntities(value ?? '');
   const [notes, setNotes] = useState(() => normalizeNotes(day.meal_note?.notes));
@@ -483,19 +485,18 @@ export function DayCard({
                   {day.events.map(event => {
                     const isSelected = contextMenu ? isSameEvent(contextMenu.event, event) : false;
                     const gestureHandlers = createEventGestureHandlers(event);
-                    const holiday = isHolidayEvent(event);
-                    const hc = holiday ? HOLIDAY_COLORS[holidayColor] || HOLIDAY_COLORS.red : null;
+                    const ec = EVENT_COLORS[isHolidayEvent(event) ? holidayColor : calendarColor] || EVENT_COLORS.amber;
                     return (
                     <div
                       key={event.id || `${event.title}-${event.start_time}`}
-                      className={`text-xs ${hc ? `${hc.text} ${hc.textDark}` : 'text-amber-700 dark:text-amber-400'} flex items-start gap-1 select-none transition-opacity ${isSelected ? 'opacity-60' : ''}`}
+                      className={`text-xs ${ec.text} ${ec.textDark} flex items-start gap-1 select-none transition-opacity ${isSelected ? 'opacity-60' : ''}`}
                       aria-selected={isSelected}
                       {...gestureHandlers}
                     >
                       <button
                         type="button"
                         aria-label="Event options"
-                        className={`flex-shrink-0 p-0.5 -ml-0.5 rounded ${hc ? `${hc.hover} ${hc.hoverDark}` : 'hover:bg-amber-100/80 dark:hover:bg-amber-900/40'}`}
+                        className={`flex-shrink-0 p-0.5 -ml-0.5 rounded ${ec.hover} ${ec.hoverDark}`}
                         onPointerDown={(e) => e.stopPropagation()}
                         onTouchStart={(e) => e.stopPropagation()}
                         onClick={(e) => openEventActionsFromTarget(event, e.currentTarget)}
@@ -508,7 +509,7 @@ export function DayCard({
                         <span className="block truncate">{event.title}</span>
                       </div>
                       {!event.all_day && (
-                        <span className={`flex-shrink-0 ${hc ? `${hc.text} ${hc.textDark}` : 'text-amber-600 dark:text-amber-400'}`}>{formatTime(event.start_time)}</span>
+                        <span className={`flex-shrink-0 ${ec.text} ${ec.textDark}`}>{formatTime(event.start_time)}</span>
                       )}
                     </div>
                   );
@@ -684,13 +685,14 @@ export function DayCard({
       )}
 
       {/* Events */}
-        {!eventsLoading && day.events.length > 0 && (
-          <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-800/30">
+        {!eventsLoading && day.events.length > 0 && (() => {
+          const cc = EVENT_COLORS[calendarColor] || EVENT_COLORS.amber;
+          return (
+          <div className={`px-4 py-2 ${cc.bg} ${cc.bgDark} border-b ${cc.border} ${cc.borderDark}`}>
             {day.events.map((event, i) => {
               const isSelected = contextMenu ? isSameEvent(contextMenu.event, event) : false;
               const gestureHandlers = createEventGestureHandlers(event);
-              const holiday = isHolidayEvent(event);
-              const hc = holiday ? HOLIDAY_COLORS[holidayColor] || HOLIDAY_COLORS.red : null;
+              const ec = EVENT_COLORS[isHolidayEvent(event) ? holidayColor : calendarColor] || EVENT_COLORS.amber;
               return (
               <div
                 key={event.id || i}
@@ -701,7 +703,7 @@ export function DayCard({
                 <button
                   type="button"
                   aria-label="Event options"
-                  className={`flex-shrink-0 p-1 -ml-1 rounded ${hc ? `${hc.hover} ${hc.hoverDark} ${hc.text} ${hc.textDark}` : 'hover:bg-amber-100/80 dark:hover:bg-amber-900/40 text-amber-600 dark:text-amber-500'}`}
+                  className={`flex-shrink-0 p-1 -ml-1 rounded ${ec.hover} ${ec.hoverDark} ${ec.text} ${ec.textDark}`}
                   onPointerDown={(e) => e.stopPropagation()}
                   onTouchStart={(e) => e.stopPropagation()}
                   onClick={(e) => openEventActionsFromTarget(event, e.currentTarget)}
@@ -711,16 +713,17 @@ export function DayCard({
                   </svg>
                 </button>
                 <div className="flex-1 min-w-0 overflow-hidden">
-                  <span className={`${hc ? `${hc.text} ${hc.textDark}` : 'text-amber-800 dark:text-amber-200'} font-medium break-words`}>{event.title}</span>
+                  <span className={`${ec.textStrong} ${ec.textStrongDark} font-medium break-words`}>{event.title}</span>
                 </div>
                 {!event.all_day && (
-                  <span className={hc ? `${hc.text} ${hc.textDark}` : 'text-amber-600 dark:text-amber-400'}>{formatTime(event.start_time)}</span>
+                  <span className={`${ec.text} ${ec.textDark}`}>{formatTime(event.start_time)}</span>
                 )}
               </div>
             );
             })}
           </div>
-        )}
+          );
+        })()}
 
         {/* Meal Notes */}
         <div className="p-4">

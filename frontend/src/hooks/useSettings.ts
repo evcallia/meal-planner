@@ -9,6 +9,7 @@ export interface Settings {
   showAllEvents: boolean;
   showHolidays: boolean;
   holidayColor: string;
+  calendarColor: string;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -20,6 +21,7 @@ const DEFAULT_SETTINGS: Settings = {
   showAllEvents: false,
   showHolidays: true,
   holidayColor: 'red',
+  calendarColor: 'amber',
 };
 
 const STORAGE_KEY = 'meal-planner-settings';

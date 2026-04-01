@@ -267,6 +267,7 @@ function MealsPage({
           showAllEvents={settings.showAllEvents}
           showHolidays={settings.showHolidays}
           holidayColor={settings.holidayColor}
+          calendarColor={settings.calendarColor}
         />
       </main>
 
