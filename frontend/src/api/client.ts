@@ -59,11 +59,12 @@ export async function getDays(startDate: string, endDate: string): Promise<DayDa
   return fetchAPI<DayData[]>(`/days?start_date=${startDate}&end_date=${endDate}`);
 }
 
-export async function getEvents(startDate: string, endDate: string, includeHidden: boolean = false): Promise<Record<string, CalendarEvent[]>> {
+export async function getEvents(startDate: string, endDate: string, includeHidden: boolean = false, includeHolidays: boolean = true): Promise<Record<string, CalendarEvent[]>> {
   const params = new URLSearchParams({
     start_date: startDate,
     end_date: endDate,
     include_hidden: String(includeHidden),
+    include_holidays: String(includeHolidays),
   });
   return fetchAPI<Record<string, CalendarEvent[]>>(`/days/events?${params}`);
 }
@@ -381,5 +382,16 @@ export async function reorderStores(storeIds: string[]): Promise<{ status: strin
   return fetchAPI<{ status: string }>('/stores/reorder', {
     method: 'PATCH',
     body: JSON.stringify({ store_ids: storeIds }),
+  });
+}
+
+export async function getSettings(): Promise<{ settings: Record<string, unknown>; updated_at: string | null }> {
+  return fetchAPI<{ settings: Record<string, unknown>; updated_at: string | null }>('/settings');
+}
+
+export async function putSettings(settings: Record<string, unknown>, updatedAt: string): Promise<{ settings: Record<string, unknown>; updated_at: string }> {
+  return fetchAPI<{ settings: Record<string, unknown>; updated_at: string }>('/settings', {
+    method: 'PUT',
+    body: JSON.stringify({ settings, updated_at: updatedAt }),
   });
 }

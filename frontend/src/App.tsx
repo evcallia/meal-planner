@@ -265,6 +265,9 @@ function MealsPage({
           showItemizedColumn={settings.showItemizedColumn}
           compactView={settings.compactView}
           showAllEvents={settings.showAllEvents}
+          showHolidays={settings.showHolidays}
+          holidayColor={settings.holidayColor}
+          calendarColor={settings.calendarColor}
         />
       </main>
 

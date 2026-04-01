@@ -663,6 +663,92 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
             </div>
           </div>
 
+          {/* Calendar Event Color */}
+          <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+            <span className="text-gray-900 dark:text-gray-100 font-medium">Event color</span>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Color for calendar events</p>
+            <div className="flex gap-2 mt-1.5">
+              {[
+                { value: 'amber', bg: 'bg-amber-500' },
+                { value: 'blue', bg: 'bg-blue-500' },
+                { value: 'green', bg: 'bg-green-500' },
+                { value: 'purple', bg: 'bg-purple-500' },
+                { value: 'red', bg: 'bg-red-500' },
+                { value: 'pink', bg: 'bg-pink-500' },
+              ].map(({ value, bg }) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-label={`${value} event color`}
+                  onClick={() => onUpdate({ calendarColor: value })}
+                  className={`w-7 h-7 rounded-full ${bg} transition-all ${
+                    settings.calendarColor === value
+                      ? 'ring-2 ring-offset-2 ring-gray-900 dark:ring-white dark:ring-offset-gray-800 scale-110'
+                      : 'opacity-60 hover:opacity-100'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* US Holidays */}
+          <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+            <label className="flex items-center justify-between gap-3 cursor-pointer">
+              <div className="flex-1 min-w-0">
+                <span className="text-gray-900 dark:text-gray-100 font-medium">US Holidays</span>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Show US holidays on the calendar
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={settings.showHolidays}
+                onClick={() => onUpdate({ showHolidays: !settings.showHolidays })}
+                className={`
+                  flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                  ${settings.showHolidays ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
+                `}
+              >
+                <span
+                  className={`
+                    inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                    ${settings.showHolidays ? 'translate-x-6' : 'translate-x-1'}
+                  `}
+                />
+              </button>
+            </label>
+
+            {/* Holiday Color Picker */}
+            {settings.showHolidays && (
+              <div className="mt-3">
+                <span className="text-sm text-gray-700 dark:text-gray-300">Holiday color</span>
+                <div className="flex gap-2 mt-1.5">
+                  {[
+                    { value: 'red', bg: 'bg-red-500' },
+                    { value: 'blue', bg: 'bg-blue-500' },
+                    { value: 'green', bg: 'bg-green-500' },
+                    { value: 'purple', bg: 'bg-purple-500' },
+                    { value: 'pink', bg: 'bg-pink-500' },
+                    { value: 'amber', bg: 'bg-amber-500' },
+                  ].map(({ value, bg }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-label={`${value} holiday color`}
+                      onClick={() => onUpdate({ holidayColor: value })}
+                      className={`w-7 h-7 rounded-full ${bg} transition-all ${
+                        settings.holidayColor === value
+                          ? 'ring-2 ring-offset-2 ring-gray-900 dark:ring-white dark:ring-offset-gray-800 scale-110'
+                          : 'opacity-60 hover:opacity-100'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Hidden Events */}
           <div className="pt-2 border-t border-gray-200 dark:border-gray-700 space-y-3">
             {/* Show All Events Toggle */}

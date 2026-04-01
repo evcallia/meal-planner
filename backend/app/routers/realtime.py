@@ -14,7 +14,7 @@ async def stream_events(
     request: Request,
     user: dict = Depends(get_current_user),
 ):
-    queue = broadcaster.subscribe()
+    queue = broadcaster.subscribe(sub=user.get("sub"))
 
     async def event_generator():
         shutdown_task: asyncio.Task[bool] | None = None

@@ -686,6 +686,7 @@ export function usePantry() {
     if (!section) return;
 
     const deletedSection = { ...section, items: [...section.items] };
+    const originalIndex = sections.indexOf(section);
     const sectionRef = { id: sectionId };
 
     pushAction({
@@ -703,10 +704,24 @@ export function usePantry() {
               restoredItems.push(createdItem);
             }
             optimisticVersionRef.current++;
-            setSections(prev => [...prev, { ...created, items: restoredItems }]);
+            let reorderIds: string[] = [];
+            setSections(prev => {
+              const next = [...prev];
+              const insertAt = Math.min(originalIndex, next.length);
+              next.splice(insertAt, 0, { ...created, items: restoredItems });
+              const reindexed = next.map((s, i) => ({ ...s, position: i }));
+              reorderIds = reindexed.map(s => s.id);
+              return reindexed;
+            });
+            await reorderPantrySectionsAPI(reorderIds);
           } catch { /* queue */ }
         } else {
-          setSections(prev => [...prev, deletedSection]);
+          setSections(prev => {
+            const next = [...prev];
+            const insertAt = Math.min(originalIndex, next.length);
+            next.splice(insertAt, 0, deletedSection);
+            return next.map((s, i) => ({ ...s, position: i }));
+          });
         }
         settleMutation();
       },

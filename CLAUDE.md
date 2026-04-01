@@ -28,6 +28,31 @@ Key details:
 - `ConnectionStatus` type includes `'auth-required'` state (in addition to online/offline/syncing)
 - Service worker has a `cacheWillUpdate` plugin that rejects HTML responses for API routes (prevents CF challenge caching)
 
+## Server-Side User Settings
+- `user_settings` table: `sub` (PK, from OIDC), `settings` (JSON), `updated_at` (DateTime)
+- `GET /api/settings` returns `{ settings, updated_at }` for the authenticated user; empty `{}` if no row
+- `PUT /api/settings` upserts and broadcasts `settings.updated` SSE event to the user's other sessions
+- **Offline-first**: `useSettings` loads from localStorage immediately (zero delay), then syncs with server in background
+- **Last-write-wins**: compares `updated_at` timestamps — server newer → apply server; local newer → push to server
+- **localStorage format**: `{ settings: {...}, updated_at: "ISO8601" }` — auto-migrates from old flat format (just `{...}`)
+- **SSE listener**: listens for `settings.updated` events, applies if incoming `updated_at` is newer than local
+- `DEFAULT_SETTINGS` is exported from `useSettings.ts` for use in tests
+
+## Per-User SSE Broadcasting
+- `EventBroadcaster` tracks `sub` per queue via `_queue_subs` dict
+- `subscribe(sub=...)` associates a queue with a user's OIDC subject
+- `publish()` broadcasts to ALL queues (unchanged — used for shared data like grocery/pantry/calendar)
+- `publish_to_user(sub, payload)` broadcasts only to queues for that user (used for settings)
+- `broadcast_to_user()` helper function in `realtime.py` wraps `publish_to_user`
+- SSE endpoint passes `user.get("sub")` to `subscribe()` so queues are tagged
+
+## Calendar Holidays
+- US holidays fetched from Google's public iCal feed, cached in-memory (24h TTL) and in DB (`cached_calendar_events` with `calendar_name = "US Holidays"`)
+- `include_holidays` query param on `/api/days/events` and `/api/days` (default `true`)
+- `showHolidays` setting (default `true`) controls frontend visibility
+- `holidayColor` / `calendarColor` settings allow per-user color customization for holiday vs regular events
+- `EVENT_COLORS` map in `DayCard.tsx` maps color names to Tailwind class sets (text, bg, border, hover variants for light/dark)
+
 ## Drag & Drop Patterns
 - `useDragReorder` hook supports both touch (long-press 300ms) and mouse (handle-based immediate drag)
 - **containerRef approach**: Hook accepts a `containerRef` pointing to the container of draggable items. Items must have `data-drag-index` attributes. Uses `:scope > [data-drag-index]` to find draggable children — avoids broken `parentElement` traversal when DOM nesting doesn't match expectations
@@ -53,6 +78,9 @@ Key details:
 - **Undo/redo with replaceGroceryListAPI**: For complex state changes (delete, clear), both undo and redo use `replaceGroceryListAPI` with full list snapshots rather than trying to reverse individual operations. Simpler and more reliable
 - All mutation functions follow the same pattern: capture `prevSections`, increment `optimisticVersionRef`, optimistic `setSections`, save locally, API call (or queue offline), `pushAction` with undo/redo that also use the version/mutation refs
 
+## Pantry Undo Patterns
+- **Section delete undo preserves order**: `deleteSection` captures `originalIndex = sections.indexOf(section)` at deletion time. Both online and offline undo paths use `splice(Math.min(originalIndex, next.length), 0, ...)` to insert at the original position, then reindex positions with `.map((s, i) => ({ ...s, position: i }))`. Online undo also calls `reorderPantrySectionsAPI` to persist the order on the server.
+
 ## Optimistic Update Patterns (usePantry)
 - **Debounced updates**: `updateItem` uses a 500ms debounce timer (`updateTimersRef`) and accumulates changes in `pendingUpdatesRef`. This lets rapid +/- clicks batch into a single API call
 - **Guard against stale server responses**: After the debounced API call returns, only apply the server response if `!pendingUpdatesRef.current[id]` — a newer pending update means the response is already stale
@@ -70,3 +98,5 @@ Key details:
 - Mock `authEvents` in test files that import modules using it: `vi.mock('../../authEvents', () => ({ emitAuthFailure: vi.fn(), onAuthFailure: vi.fn(() => vi.fn()) }))`
 - Mock fetch responses need `headers: { get: () => 'application/json' }` since `fetchAPI` now checks content-type on errors
 - `useSync.test.ts` uses `importOriginal` for `api/client` mock to preserve `AuthError` class for `instanceof` checks
+- `useSettings.test.ts` mocks `useOnlineStatus` to return `false` (offline) to isolate localStorage behavior from server sync. Also mocks `api/client` with `getSettings`/`putSettings` rejecting to simulate offline
+- Backend settings tests use `authenticated_client` fixture (not bare `client`) and mock `broadcast_to_user` with `AsyncMock`

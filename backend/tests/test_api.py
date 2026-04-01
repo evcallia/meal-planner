@@ -95,7 +95,7 @@ class TestDaysAPI:
         assert day["events"][0]["start_time"] == "2024-02-15T19:00:00Z"
         assert day["events"][0]["all_day"] is False
         
-        mock_fetch_events.assert_called_once_with(date(2024, 2, 15), date(2024, 2, 15))
+        mock_fetch_events.assert_called_once_with(date(2024, 2, 15), date(2024, 2, 15), include_holidays=True)
 
     def test_get_days_invalid_date_range(self, authenticated_client: TestClient):
         """Test getting days with invalid date parameters."""
@@ -815,3 +815,49 @@ class TestGroceryStoreDefaults:
         # Verify ItemDefault.store_id is now None
         db_session.refresh(default)
         assert default.store_id is None
+
+
+class TestSettingsAPI:
+    def test_get_settings_empty(self, authenticated_client: TestClient):
+        """GET /api/settings returns empty when no settings saved."""
+        response = authenticated_client.get("/api/settings")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["settings"] == {}
+        assert data["updated_at"] is None
+
+    @patch("app.routers.settings.broadcast_to_user", new_callable=AsyncMock)
+    def test_put_and_get_settings(self, mock_broadcast, authenticated_client: TestClient):
+        """PUT /api/settings saves and GET retrieves."""
+        settings_payload = {
+            "settings": {"compactView": True, "calendarColor": "blue"},
+            "updated_at": "2026-04-01T12:00:00",
+        }
+        response = authenticated_client.put("/api/settings", json=settings_payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["settings"]["compactView"] is True
+        assert data["settings"]["calendarColor"] == "blue"
+        assert data["updated_at"] is not None
+
+        # GET should return the same
+        response = authenticated_client.get("/api/settings")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["settings"]["compactView"] is True
+
+    @patch("app.routers.settings.broadcast_to_user", new_callable=AsyncMock)
+    def test_put_settings_upsert(self, mock_broadcast, authenticated_client: TestClient):
+        """PUT /api/settings twice overwrites."""
+        authenticated_client.put("/api/settings", json={
+            "settings": {"compactView": True},
+            "updated_at": "2026-04-01T12:00:00",
+        })
+        authenticated_client.put("/api/settings", json={
+            "settings": {"compactView": False, "holidayColor": "green"},
+            "updated_at": "2026-04-01T13:00:00",
+        })
+        response = authenticated_client.get("/api/settings")
+        data = response.json()
+        assert data["settings"]["compactView"] is False
+        assert data["settings"]["holidayColor"] == "green"

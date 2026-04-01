@@ -429,6 +429,7 @@ class TestDatabaseCaching:
         ]
 
         with patch("app.ical_service._fetch_events_from_caldav", return_value=mock_events_with_source), \
+             patch("app.ical_service._fetch_holidays_sync", return_value=[]), \
              patch("app.ical_service.SessionLocal", return_value=db_session):
             _refresh_db_cache_sync()
 
@@ -459,6 +460,7 @@ class TestDatabaseCaching:
         ]
 
         with patch("app.ical_service._fetch_events_from_caldav", return_value=mock_events_with_source), \
+             patch("app.ical_service._fetch_holidays_sync", return_value=[]), \
              patch("app.ical_service.SessionLocal", return_value=db_session):
             result = _fetch_and_cache_events_sync(date(2024, 3, 1), date(2024, 3, 1))
 

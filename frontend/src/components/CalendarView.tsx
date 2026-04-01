@@ -134,12 +134,15 @@ interface CalendarViewProps {
   showItemizedColumn?: boolean;
   compactView?: boolean;
   showAllEvents?: boolean;
+  showHolidays?: boolean;
+  holidayColor?: string;
+  calendarColor?: string;
 }
 
 // Track which date ranges have finished loading events
 type EventsLoadState = 'loading' | 'loaded' | 'error';
 
-export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false, showAllEvents = false }: CalendarViewProps) {
+export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false, showAllEvents = false, showHolidays = true, holidayColor = 'red', calendarColor = 'amber' }: CalendarViewProps) {
   // days = what's displayed in the UI
   const [days, setDays] = useState<DayData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -166,6 +169,10 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
   useEffect(() => {
     showAllEventsRef.current = showAllEvents;
   }, [showAllEvents]);
+  const showHolidaysRef = useRef(showHolidays);
+  useEffect(() => {
+    showHolidaysRef.current = showHolidays;
+  }, [showHolidays]);
   const refreshHiddenKeys = useCallback(async () => {
     const hidden = await getLocalHiddenEvents();
     hiddenEventKeysRef.current = new Set(
@@ -264,7 +271,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     if (online) {
       try {
         const requestStart = perfNow();
-        const eventsMap = await getEvents(startStr, endStr, true);
+        const eventsMap = await getEvents(startStr, endStr, true, showHolidaysRef.current);
         logDuration('calendar.events.request', requestStart, { start: startStr, end: endStr });
 
         for (const [date, events] of Object.entries(eventsMap)) {
@@ -298,14 +305,14 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     };
   }, [isOnline, loadEventsForRange, refreshHiddenKeys]);
 
-  // Reload events when showAllEvents setting changes
+  // Reload events when showAllEvents or showHolidays setting changes
   useEffect(() => {
     if (!initialLoadDone.current) return;
     // Reset ALL load states to force fresh reload
     setEventsLoadState({});
-    // Force online fetch if available to get fresh data with correct include_hidden
+    // Force online fetch if available to get fresh data with correct include_hidden / include_holidays
     loadEventsForRange(displayStartRef.current, displayEndRef.current, isOnline);
-  }, [showAllEvents, loadEventsForRange, isOnline]);
+  }, [showAllEvents, showHolidays, loadEventsForRange, isOnline]);
 
   // Pre-fetch extended cache range in background (for offline support)
   // This caches data but does NOT display it - data is added to UI only when user scrolls
@@ -1312,6 +1319,8 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             isDragActive={isDragActive}
             dragSourceDate={dragSourceDate}
             onDeleteMeal={(lineIndex) => handleDeleteMeal(day.date, lineIndex)}
+            holidayColor={holidayColor}
+            calendarColor={calendarColor}
           />
         </div>
       ))}
