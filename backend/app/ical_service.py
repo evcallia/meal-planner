@@ -6,6 +6,7 @@ import time
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
+import urllib.request
 
 from app.config import get_settings
 from app.schemas import CalendarEvent
@@ -38,6 +39,14 @@ CACHE_REFRESH_INTERVAL = 1800  # 30 minutes
 # Now stores list of calendars instead of single calendar
 _calendars_cache: tuple[float, list[caldav.Calendar]] = (0, [])
 CALENDAR_CACHE_TTL = 600  # 10 minutes
+
+# US Holidays iCal feed (Google public calendar)
+US_HOLIDAYS_ICAL_URL = "https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics"
+US_HOLIDAYS_CALENDAR_NAME = "US Holidays"
+
+# In-memory cache for holiday feed (avoid re-fetching on every request)
+_holidays_cache: tuple[float, list] = (0, [])
+HOLIDAYS_CACHE_TTL = 86400  # 24 hours — holidays don't change often
 
 # Background refresh task
 _refresh_task: Optional[asyncio.Task] = None
@@ -208,6 +217,77 @@ def _prune_hidden_events(
             db.delete(hidden_event)
 
 
+def _fetch_holidays_sync(start_date: date, end_date: date) -> list[CalendarEventWithSource]:
+    """Fetch US holidays from Google's public iCal feed."""
+    global _holidays_cache
+    now = time.time()
+
+    cached_time, cached_events = _holidays_cache
+    if cached_events and (now - cached_time) < HOLIDAYS_CACHE_TTL:
+        return [
+            e for e in cached_events
+            if start_date <= e.event.start_time.date() <= end_date
+        ]
+
+    _log("[Holidays] Fetching US holidays from Google...")
+    t1 = time.time()
+
+    try:
+        req = urllib.request.Request(US_HOLIDAYS_ICAL_URL, headers={"User-Agent": "meal-planner/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as response:
+            ical_data = response.read()
+
+        cal = Calendar.from_ical(ical_data)
+        all_events: list[CalendarEventWithSource] = []
+
+        for component in cal.walk():
+            if component.name != "VEVENT":
+                continue
+
+            dtstart = component.get("dtstart")
+            dtend = component.get("dtend")
+            summary = str(component.get("summary", ""))
+            uid = component.get("uid")
+
+            if not dtstart:
+                continue
+
+            event_start = _parse_ical_date(dtstart)
+            event_end = _parse_ical_date(dtend) if dtend else None
+            event_uid = _normalize_uid(
+                str(uid) if uid is not None else None,
+                US_HOLIDAYS_CALENDAR_NAME,
+                event_start,
+                summary,
+            )
+
+            event = CalendarEvent(
+                id=_event_key(event_uid, US_HOLIDAYS_CALENDAR_NAME, event_start),
+                uid=event_uid,
+                calendar_name=US_HOLIDAYS_CALENDAR_NAME,
+                title=summary,
+                start_time=event_start,
+                end_time=event_end,
+                all_day=_is_all_day(component),
+            )
+            all_events.append(CalendarEventWithSource(event, US_HOLIDAYS_CALENDAR_NAME))
+
+        all_events.sort(key=lambda e: e.event.start_time)
+        _holidays_cache = (now, all_events)
+
+        t2 = time.time()
+        _log(f"[Holidays] Fetched {len(all_events)} holidays in {t2-t1:.2f}s")
+
+        return [
+            e for e in all_events
+            if start_date <= e.event.start_time.date() <= end_date
+        ]
+
+    except Exception as e:
+        _log(f"[Holidays] Error fetching holidays: {e}")
+        return []
+
+
 def _fetch_events_from_caldav(start_date: date, end_date: date) -> list[CalendarEventWithSource]:
     """Fetch events from all selected CalDAV calendars (slow network call)."""
     t_start = time.time()
@@ -324,6 +404,21 @@ def _refresh_db_cache_sync() -> None:
                 event_date=event.start_time.date(),
                 event_uid=event.uid or "",
                 calendar_name=event_with_source.calendar_name,
+                title=event.title,
+                start_time=event.start_time,
+                end_time=event.end_time,
+                all_day=event.all_day,
+            )
+            db.add(cached_event)
+
+        # Also cache US holiday events
+        holiday_events = _fetch_holidays_sync(start, end)
+        for event_with_source in holiday_events:
+            event = event_with_source.event
+            cached_event = CachedCalendarEvent(
+                event_date=event.start_time.date(),
+                event_uid=event.uid or "",
+                calendar_name=US_HOLIDAYS_CALENDAR_NAME,
                 title=event.title,
                 start_time=event.start_time,
                 end_time=event.end_time,
@@ -463,6 +558,9 @@ def _fetch_and_cache_events_sync(start_date: date, end_date: date) -> list[Calen
     # Fetch from CalDAV (now returns CalendarEventWithSource objects)
     events_with_source = _fetch_events_from_caldav(start_date, end_date)
 
+    # Fetch holidays for this range
+    holiday_events = _fetch_holidays_sync(start_date, end_date)
+
     # Add to database cache
     db = SessionLocal()
     try:
@@ -486,6 +584,20 @@ def _fetch_and_cache_events_sync(start_date: date, end_date: date) -> list[Calen
             )
             db.add(cached_event)
 
+        # Also cache holidays
+        for event_with_source in holiday_events:
+            event = event_with_source.event
+            cached_event = CachedCalendarEvent(
+                event_date=event.start_time.date(),
+                event_uid=event.uid or "",
+                calendar_name=US_HOLIDAYS_CALENDAR_NAME,
+                title=event.title,
+                start_time=event.start_time,
+                end_time=event.end_time,
+                all_day=event.all_day,
+            )
+            db.add(cached_event)
+
         _prune_hidden_events(db, start_date, end_date, events_with_source)
 
         db.commit()
@@ -498,7 +610,7 @@ def _fetch_and_cache_events_sync(start_date: date, end_date: date) -> list[Calen
         db.close()
 
     # Return just the CalendarEvent objects (without source) for API compatibility
-    return [e.event for e in events_with_source]
+    return [e.event for e in events_with_source] + [e.event for e in holiday_events]
 
 
 def _filter_hidden_events(events: list[CalendarEvent], start_date: date, end_date: date) -> list[CalendarEvent]:
@@ -523,25 +635,33 @@ def _filter_hidden_events(events: list[CalendarEvent], start_date: date, end_dat
         db.close()
 
 
-async def fetch_ical_events(start_date: date, end_date: date, include_hidden: bool = False) -> list[CalendarEvent]:
+async def fetch_ical_events(
+    start_date: date,
+    end_date: date,
+    include_hidden: bool = False,
+    include_holidays: bool = True,
+) -> list[CalendarEvent]:
     """
     Fetch events for a date range.
 
     - If fully within cache range: serve from DB instantly
     - If outside cache range: fetch from CalDAV and add to cache
     - If include_hidden is True, hidden events are included in results
+    - If include_holidays is False, US holiday events are excluded
     """
     cache_start, cache_end = _get_cache_metadata()
 
-    def maybe_filter(events: list[CalendarEvent]) -> list[CalendarEvent]:
-        if include_hidden:
-            return events
-        return _filter_hidden_events(events, start_date, end_date)
+    def apply_filters(events: list[CalendarEvent]) -> list[CalendarEvent]:
+        if not include_hidden:
+            events = _filter_hidden_events(events, start_date, end_date)
+        if not include_holidays:
+            events = [e for e in events if e.calendar_name != US_HOLIDAYS_CALENDAR_NAME]
+        return events
 
     # Check if requested range is fully within cache
     if cache_start and cache_end and start_date >= cache_start and end_date <= cache_end:
         _log(f"[CalDAV Cache] Serving {start_date} to {end_date} from DB cache")
-        return maybe_filter(_get_events_from_db(start_date, end_date))
+        return apply_filters(_get_events_from_db(start_date, end_date))
 
     # Check if there's partial overlap - serve what we have from cache, fetch the rest
     if cache_start and cache_end:
@@ -580,7 +700,7 @@ async def fetch_ical_events(start_date: date, end_date: date, include_hidden: bo
 
         # Sort combined events
         events.sort(key=lambda e: e.start_time)
-        return maybe_filter(events)
+        return apply_filters(events)
 
     # No cache at all - fetch everything
     _log(f"[CalDAV Cache] No cache, fetching {start_date} to {end_date} from CalDAV")
@@ -588,7 +708,7 @@ async def fetch_ical_events(start_date: date, end_date: date, include_hidden: bo
     events = await loop.run_in_executor(
         _executor, _fetch_and_cache_events_sync, start_date, end_date
     )
-    return maybe_filter(events)
+    return apply_filters(events)
 
 
 def get_events_for_date(events: list[CalendarEvent], target_date: date) -> list[CalendarEvent]:
