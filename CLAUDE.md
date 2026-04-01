@@ -28,6 +28,31 @@ Key details:
 - `ConnectionStatus` type includes `'auth-required'` state (in addition to online/offline/syncing)
 - Service worker has a `cacheWillUpdate` plugin that rejects HTML responses for API routes (prevents CF challenge caching)
 
+## Server-Side User Settings
+- `user_settings` table: `sub` (PK, from OIDC), `settings` (JSON), `updated_at` (DateTime)
+- `GET /api/settings` returns `{ settings, updated_at }` for the authenticated user; empty `{}` if no row
+- `PUT /api/settings` upserts and broadcasts `settings.updated` SSE event to the user's other sessions
+- **Offline-first**: `useSettings` loads from localStorage immediately (zero delay), then syncs with server in background
+- **Last-write-wins**: compares `updated_at` timestamps — server newer → apply server; local newer → push to server
+- **localStorage format**: `{ settings: {...}, updated_at: "ISO8601" }` — auto-migrates from old flat format (just `{...}`)
+- **SSE listener**: listens for `settings.updated` events, applies if incoming `updated_at` is newer than local
+- `DEFAULT_SETTINGS` is exported from `useSettings.ts` for use in tests
+
+## Per-User SSE Broadcasting
+- `EventBroadcaster` tracks `sub` per queue via `_queue_subs` dict
+- `subscribe(sub=...)` associates a queue with a user's OIDC subject
+- `publish()` broadcasts to ALL queues (unchanged — used for shared data like grocery/pantry/calendar)
+- `publish_to_user(sub, payload)` broadcasts only to queues for that user (used for settings)
+- `broadcast_to_user()` helper function in `realtime.py` wraps `publish_to_user`
+- SSE endpoint passes `user.get("sub")` to `subscribe()` so queues are tagged
+
+## Calendar Holidays
+- US holidays fetched from Google's public iCal feed, cached in-memory (24h TTL) and in DB (`cached_calendar_events` with `calendar_name = "US Holidays"`)
+- `include_holidays` query param on `/api/days/events` and `/api/days` (default `true`)
+- `showHolidays` setting (default `true`) controls frontend visibility
+- `holidayColor` / `calendarColor` settings allow per-user color customization for holiday vs regular events
+- `EVENT_COLORS` map in `DayCard.tsx` maps color names to Tailwind class sets (text, bg, border, hover variants for light/dark)
+
 ## Drag & Drop Patterns
 - `useDragReorder` hook supports both touch (long-press 300ms) and mouse (handle-based immediate drag)
 - **containerRef approach**: Hook accepts a `containerRef` pointing to the container of draggable items. Items must have `data-drag-index` attributes. Uses `:scope > [data-drag-index]` to find draggable children — avoids broken `parentElement` traversal when DOM nesting doesn't match expectations
