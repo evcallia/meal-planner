@@ -793,8 +793,9 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       await loadFromLocalCache();
       loadEventsForRange(newStart, newEnd, false);
 
-      // 2. If online, fetch from API in background and update
-      if (isOnline) {
+      // 2. If online, fetch from API in background (skip if background cache already covers this range)
+      const cacheCoversRange = backgroundCacheDone.current && daysFromMemCache.length === 7;
+      if (isOnline && !cacheCoversRange) {
         try {
           const requestStart = perfNow();
           const data = await getDays(startStr, endStr);
@@ -878,8 +879,9 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       await loadFromLocalCache();
       loadEventsForRange(newStart, newEnd, false);
 
-      // 2. If online, fetch from API in background and update
-      if (isOnline) {
+      // 2. If online, fetch from API in background (skip if background cache already covers this range)
+      const cacheCoversRange = backgroundCacheDone.current && daysFromMemCache.length === 7;
+      if (isOnline && !cacheCoversRange) {
         try {
           const requestStart = perfNow();
           const data = await getDays(startStr, endStr);
