@@ -197,7 +197,7 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
       longPressReadyRef.current = { index, storeId, storeName, clientX, clientY };
     }, 300);
     popoverTimerRef.current = setTimeout(() => {
-      // 500ms: auto-open popover if no movement
+      // 800ms: auto-open popover if no movement
       if (!isDraggingRef.current) {
         clearLongPress();
         didLongPressRef.current = true;
@@ -205,7 +205,7 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
         setEditingStoreId(storeId);
         setEditName(storeName);
       }
-    }, 500);
+    }, 800);
   };
 
   const handlePointerUp = (storeId: string) => {
