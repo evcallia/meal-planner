@@ -1,69 +1,84 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSyncExternalStore } from 'react';
 
-export function useOnlineStatus() {
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const checkingRef = useRef(false);
+// Singleton online-status manager — a single /api/health check is shared
+// across all hook consumers so tab switches don't trigger redundant calls.
+let _isOnline = navigator.onLine;
+const _listeners = new Set<() => void>();
+let _checking = false;
+let _interval: ReturnType<typeof setInterval> | null = null;
+let _subscriberCount = 0;
 
-  // Actually test network connectivity with a fast timeout
-  const checkConnectivity = useCallback(async () => {
-    if (checkingRef.current) return;
-    checkingRef.current = true;
+export function resetOnlineStatus() {
+  _isOnline = navigator.onLine;
+  _checking = false;
+  _listeners.clear();
+  if (_interval) { clearInterval(_interval); _interval = null; }
+  _subscriberCount = 0;
+}
 
-    try {
-      const controller = new AbortController();
-      // Very short timeout - if server doesn't respond in 2s, assume offline
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
+function notify() {
+  for (const l of _listeners) l();
+}
 
-      const response = await fetch('/api/health', {
-        method: 'GET',
-        signal: controller.signal,
-        cache: 'no-store',
-      });
+function setOnline(value: boolean) {
+  if (_isOnline !== value) {
+    _isOnline = value;
+    notify();
+  }
+}
 
-      clearTimeout(timeoutId);
+async function checkConnectivity() {
+  if (_checking) return;
+  _checking = true;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const response = await fetch('/api/health', {
+      method: 'GET',
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    clearTimeout(timeoutId);
+    setOnline(response.ok);
+  } catch {
+    setOnline(false);
+  } finally {
+    _checking = false;
+  }
+}
 
-      // If we got a response, we're online
-      setIsOnline(response.ok);
-    } catch {
-      // Network error or timeout - we're offline
-      setIsOnline(false);
-    } finally {
-      checkingRef.current = false;
-    }
-  }, []);
+function handleOnline() { checkConnectivity(); }
+function handleOffline() { setOnline(false); }
+function handleApiSuccess() { setOnline(true); }
 
-  useEffect(() => {
-    const handleOnline = () => {
-      // Browser says we're online, but verify
-      checkConnectivity();
-    };
-    const handleOffline = () => setIsOnline(false);
+function subscribe(callback: () => void) {
+  _listeners.add(callback);
 
-    const handleApiSuccess = () => setIsOnline(true);
-
+  if (_subscriberCount === 0) {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     window.addEventListener('api-request-succeeded', handleApiSuccess);
+    if (navigator.onLine) checkConnectivity();
+    _interval = setInterval(() => {
+      if (navigator.onLine) checkConnectivity();
+    }, 30000);
+  }
+  _subscriberCount++;
 
-    // Initial check
-    if (navigator.onLine) {
-      checkConnectivity();
-    }
-
-    // Periodic connectivity check when browser reports online
-    const interval = setInterval(() => {
-      if (navigator.onLine) {
-        checkConnectivity();
-      }
-    }, 30000); // Check every 30 seconds
-
-    return () => {
+  return () => {
+    _listeners.delete(callback);
+    _subscriberCount--;
+    if (_subscriberCount === 0) {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('api-request-succeeded', handleApiSuccess);
-      clearInterval(interval);
-    };
-  }, [checkConnectivity]);
+      if (_interval) { clearInterval(_interval); _interval = null; }
+    }
+  };
+}
 
-  return isOnline;
+function getSnapshot() { return _isOnline; }
+
+export function useOnlineStatus() {
+  return useSyncExternalStore(subscribe, getSnapshot);
 }

@@ -418,15 +418,26 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
         } else {
           await queueChange('calendar-unhide', eventDate, { hiddenId });
         }
-        window.dispatchEvent(new CustomEvent('meal-planner-hidden-updated', { detail: { date: eventDate } }));
+        window.dispatchEvent(new CustomEvent('meal-planner-hidden-updated', {
+          detail: {
+            date: eventDate,
+            end_time: hiddenEvent?.end_time,
+            all_day: hiddenEvent?.all_day,
+          },
+        }));
         return;
       }
+      const hiddenEvent = hiddenEvents.find(event => event.id === hiddenId);
       await unhideCalendarEvent(hiddenId);
       setHiddenEvents(prev => prev.filter(event => event.id !== hiddenId));
       await deleteLocalHiddenEvent(hiddenId);
-      const hiddenEvent = hiddenEvents.find(event => event.id === hiddenId);
-      const eventDate = hiddenEvent?.event_date;
-      window.dispatchEvent(new CustomEvent('meal-planner-hidden-updated', { detail: { date: eventDate } }));
+      window.dispatchEvent(new CustomEvent('meal-planner-hidden-updated', {
+        detail: {
+          date: hiddenEvent?.event_date,
+          end_time: hiddenEvent?.end_time,
+          all_day: hiddenEvent?.all_day,
+        },
+      }));
     } catch (error) {
       console.error('Failed to unhide event:', error);
       setHiddenError('Failed to unhide event');

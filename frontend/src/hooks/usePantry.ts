@@ -49,6 +49,10 @@ function loadPantryFromLocalStorage(): PantrySection[] {
   }
 }
 
+let sessionLoaded = false;
+export function resetPantrySessionLoaded() { sessionLoaded = false; }
+export function markPantrySessionLoaded() { sessionLoaded = true; }
+
 export function usePantry() {
   const [sections, setSections] = useState<PantrySection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,7 +110,7 @@ export function usePantry() {
   const isOnlineRef = useRef(isOnline);
   isOnlineRef.current = isOnline;
 
-  const loadPantryList = useCallback(async () => {
+  const loadPantryList = useCallback(async (skipApi = false) => {
     const fetchVersion = optimisticVersionRef.current;
 
     // 1. Load from cache immediately
@@ -120,7 +124,7 @@ export function usePantry() {
     } catch { /* cache failed — continue to API */ }
 
     // 2. If online, fetch from API in background (skip if pending offline changes exist)
-    if (isOnlineRef.current) {
+    if (!skipApi && isOnlineRef.current) {
       const pending = await getPendingChanges();
       const hasPantryChanges = pending.some(c => c.type.startsWith('pantry-'));
       if (!hasPantryChanges) {
@@ -135,6 +139,7 @@ export function usePantry() {
             id: i.id, section_id: i.section_id, name: i.name,
             quantity: i.quantity, position: i.position, updated_at: i.updated_at,
           })));
+          sessionLoaded = true;
         } catch { /* API failed — keep cached data */ }
       }
     }
@@ -165,17 +170,8 @@ export function usePantry() {
     }))));
   };
 
-  const prevOnlineRef = useRef(isOnline);
   useEffect(() => {
-    const wasOffline = !prevOnlineRef.current;
-    prevOnlineRef.current = isOnline;
-    if (isOnline && wasOffline) {
-      loadPantryList();
-    }
-  }, [isOnline, loadPantryList]);
-
-  useEffect(() => {
-    loadPantryList();
+    loadPantryList(sessionLoaded);
   }, [loadPantryList]);
 
   // Listen for realtime updates

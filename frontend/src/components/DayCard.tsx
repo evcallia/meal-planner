@@ -513,8 +513,11 @@ export function DayCard({
                     {lines.map((line, i) => {
                       const isItemized = itemsMap.get(i) || false;
                       const dragHandlers = getMealDragHandlers(i);
+                      const isDraggedItem = mealDragState.isDragging && mealDragState.dragIndex === i;
                       let style: React.CSSProperties | undefined;
-                      if (mealDragState.isDragging && mealDragState.dragIndex !== i) {
+                      if (isDraggedItem) {
+                        style = { opacity: 0, pointerEvents: 'none' };
+                      } else if (mealDragState.isDragging) {
                         const { dragIndex, overIndex, itemHeight } = mealDragState;
                         if (dragIndex !== null && overIndex !== null) {
                           if (dragIndex < overIndex && i > dragIndex && i <= overIndex) {
@@ -737,8 +740,11 @@ export function DayCard({
                 <div ref={mealContainerRef} data-meal-container className="space-y-0">
                   {lines.map((line, i) => {
                     const dragHandlers = getMealDragHandlers(i);
+                    const isDraggedItem = mealDragState.isDragging && mealDragState.dragIndex === i;
                     let style: React.CSSProperties | undefined;
-                    if (mealDragState.isDragging && mealDragState.dragIndex !== i) {
+                    if (isDraggedItem) {
+                      style = { opacity: 0, pointerEvents: 'none' };
+                    } else if (mealDragState.isDragging) {
                       const { dragIndex, overIndex, itemHeight } = mealDragState;
                       if (dragIndex !== null && overIndex !== null) {
                         if (dragIndex < overIndex && i > dragIndex && i <= overIndex) {

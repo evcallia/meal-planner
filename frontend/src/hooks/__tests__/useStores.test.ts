@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useStores } from '../useStores';
+import { useStores, resetStoresSessionLoaded } from '../useStores';
 import type { Store } from '../../types';
 
 vi.mock('../../api/client', () => ({
@@ -50,6 +50,7 @@ const sampleStores: Store[] = [
 
 describe('useStores', () => {
   beforeEach(() => {
+    resetStoresSessionLoaded();
     vi.clearAllMocks();
     mockUseOnlineStatus.mockReturnValue(true);
     mockGetLocalStores.mockResolvedValue([]);

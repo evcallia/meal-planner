@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
-import { CalendarView } from './components/CalendarView';
+import { CalendarView, resetCalendarSessionLoaded } from './components/CalendarView';
 import { PantryPanel } from './components/PantryPanel';
 import { MealIdeasPanel } from './components/MealIdeasPanel';
 import { GroceryListView } from './components/GroceryListView';
@@ -15,6 +15,10 @@ import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryLi
 import { UserInfo } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
+import { markGrocerySessionLoaded } from './hooks/useGroceryList';
+import { markPantrySessionLoaded } from './hooks/usePantry';
+import { markMealIdeasSessionLoaded } from './hooks/useMealIdeas';
+import { markStoresSessionLoaded } from './hooks/useStores';
 import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
@@ -499,9 +503,13 @@ function AppContent() {
     checkAuth();
   }, []);
 
-  // Pre-cache grocery list and stores for offline use
-  useEffect(() => {
-    if (!user || !isOnline) return;
+  // Fetch all data and write to local cache so tab switches never need API calls.
+  // Called on initial load, focus-return, and online-reconnect.
+  const fetchAllData = useCallback(() => {
+    markGrocerySessionLoaded();
+    markStoresSessionLoaded();
+    markPantrySessionLoaded();
+    markMealIdeasSessionLoaded();
     getGroceryList().then(async (data) => {
       try { localStorage.setItem('meal-planner-grocery', JSON.stringify(data)); } catch { /* full */ }
       setGroceryCount(data.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0));
@@ -514,7 +522,39 @@ function AppContent() {
     getStoresAPI().then(async (stores) => {
       await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
     }).catch(() => { /* best-effort */ });
-  }, [user, isOnline]);
+    getPantryList().then(async (data) => {
+      try { localStorage.setItem('meal-planner-pantry-sections', JSON.stringify(data)); } catch { /* full */ }
+      await saveLocalPantrySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+      await saveLocalPantryItems(data.flatMap(s => s.items.map(i => ({
+        id: i.id, section_id: i.section_id, name: i.name,
+        quantity: i.quantity, position: i.position, updated_at: i.updated_at,
+      }))));
+    }).catch(() => { /* best-effort */ });
+    getMealIdeas().then(async (ideas) => {
+      await clearLocalMealIdeas();
+      for (const idea of ideas) await saveLocalMealIdea(idea);
+      try { localStorage.setItem('meal-planner-meal-ideas', JSON.stringify(ideas)); } catch { /* full */ }
+    }).catch(() => { /* best-effort */ });
+  }, []);
+
+  // Initial data fetch — guard prevents double-run when auth check
+  // calls setUser twice (once from localStorage, once from API).
+  const preCacheDoneRef = useRef(false);
+  // Mark flags during render (before child effects run) so hooks that
+  // mount in this cycle see sessionLoaded=true and skip their own API fetch.
+  if (user && isOnline && !preCacheDoneRef.current) {
+    markGrocerySessionLoaded();
+    markStoresSessionLoaded();
+    markPantrySessionLoaded();
+    markMealIdeasSessionLoaded();
+  }
+  useEffect(() => {
+    if (!user || !isOnline || preCacheDoneRef.current) return;
+    preCacheDoneRef.current = true;
+    fetchAllData();
+    // Calendar data is fetched by CalendarView on its own first mount
+    // (it needs display range context), so we don't pre-fetch it here.
+  }, [user, isOnline, fetchAllData]);
 
   // Keep local cache fresh from realtime events for inactive tabs.
   // When the active tab's hook handles its own events, this also pre-warms
@@ -526,6 +566,9 @@ function AppContent() {
     const handler = async (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (!detail?.type) return;
+
+      // Focus-refresh events are handled by each tab's own hook — skip here
+      if (detail.source_id === '__focus_refresh__') return;
 
       // Skip if there are pending offline changes — don't overwrite local edits
       try {
@@ -587,6 +630,24 @@ function AppContent() {
               try { saveLocalNote(payload.date, payload.meal_note.notes, payload.meal_note.items); } catch {}
             }
           }
+          if (detail.type === 'item.updated') {
+            const payload = detail.payload as { date?: string; line_index?: number; itemized?: boolean };
+            if (payload?.date && payload.line_index !== undefined && payload.itemized !== undefined) {
+              try {
+                const note = await getLocalNote(payload.date);
+                if (note) {
+                  const items = [...note.items];
+                  const idx = items.findIndex(i => i.line_index === payload.line_index);
+                  if (idx >= 0) {
+                    items[idx] = { ...items[idx], itemized: payload.itemized! };
+                  } else {
+                    items.push({ line_index: payload.line_index!, itemized: payload.itemized! });
+                  }
+                  saveLocalNote(payload.date, note.notes, items);
+                }
+              } catch {}
+            }
+          }
           if (detail.type === 'calendar.refreshed') {
             const payload = detail.payload as { events_by_date?: Record<string, any[]> };
             if (payload?.events_by_date) {
@@ -624,6 +685,40 @@ function AppContent() {
     window.addEventListener('meal-planner-realtime', handler);
     return () => window.removeEventListener('meal-planner-realtime', handler);
   }, [user]);
+
+  // Re-fetch all data (focus-return, online-reconnect).
+  // Resets session flags so inactive tabs re-read from cache on next mount,
+  // then fetches fresh data for all tabs and dispatches a calendar refresh
+  // for the active CalendarView.
+  const broadcastFullRefresh = useCallback(() => {
+    resetCalendarSessionLoaded();
+    fetchAllData();
+    // Calendar needs a synthetic event since CalendarView manages its own fetch
+    window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+      detail: { type: 'calendar.refreshed', payload: {}, source_id: '__focus_refresh__' },
+    }));
+  }, [fetchAllData]);
+
+  // Refresh when the app regains focus (e.g. returning to PWA or browser tab).
+  // SSE may have disconnected while in the background.
+  useEffect(() => {
+    if (!user) return;
+    let hidden = document.hidden;
+    const onVisibility = () => {
+      if (hidden && !document.hidden) broadcastFullRefresh();
+      hidden = document.hidden;
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [user, broadcastFullRefresh]);
+
+  // Refresh when reconnecting from offline.
+  const prevOnlineRef2 = useRef(isOnline);
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef2.current;
+    prevOnlineRef2.current = isOnline;
+    if (user && isOnline && wasOffline) broadcastFullRefresh();
+  }, [user, isOnline, broadcastFullRefresh]);
 
   useEffect(() => {
     const scale = settings.compactView ? settings.textScaleCompact : settings.textScaleStandard;

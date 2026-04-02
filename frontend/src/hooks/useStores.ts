@@ -37,6 +37,10 @@ interface UseStoresOptions {
   onItemsStoreChanged?: (itemIds: string[], storeId: string | null) => void;
 }
 
+let sessionLoaded = false;
+export function resetStoresSessionLoaded() { sessionLoaded = false; }
+export function markStoresSessionLoaded() { sessionLoaded = true; }
+
 export function useStores(options: UseStoresOptions = {}) {
   const { grocerySections, onItemsStoreChanged } = options;
   const [stores, setStores] = useState<Store[]>(() => loadStoresFromLocalStorage());
@@ -54,7 +58,7 @@ export function useStores(options: UseStoresOptions = {}) {
   const isOnlineRef = useRef(isOnline);
   isOnlineRef.current = isOnline;
 
-  const loadStores = useCallback(async () => {
+  const loadStores = useCallback(async (skipApi = false) => {
     const fetchVersion = optimisticVersionRef.current;
 
     // 1. Try IndexedDB (may have fresher data than localStorage init)
@@ -68,12 +72,13 @@ export function useStores(options: UseStoresOptions = {}) {
     } catch { /* IndexedDB failed */ }
 
     // 2. If online, fetch from API in background
-    if (isOnlineRef.current) {
+    if (!skipApi && isOnlineRef.current) {
       try {
         const data = await getStoresAPI();
         if (optimisticVersionRef.current !== fetchVersion) return;
         setStores(data);
         await saveLocalStores(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+        sessionLoaded = true;
       } catch { /* API failed — keep cached data */ }
     }
 
@@ -91,16 +96,7 @@ export function useStores(options: UseStoresOptions = {}) {
     }
   }, []);
 
-  const prevOnlineRef = useRef(isOnline);
-  useEffect(() => {
-    const wasOffline = !prevOnlineRef.current;
-    prevOnlineRef.current = isOnline;
-    if (isOnline && wasOffline) {
-      loadStores();
-    }
-  }, [isOnline, loadStores]);
-
-  useEffect(() => { loadStores(); }, [loadStores]);
+  useEffect(() => { loadStores(sessionLoaded); }, [loadStores]);
 
   // Keep localStorage in sync with stores state for reliable offline access
   useEffect(() => {

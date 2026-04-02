@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useStores } from '../useStores';
+import { useStores, resetStoresSessionLoaded } from '../useStores';
 import type { Store } from '../../types';
 
 const pushActionCalls: any[] = [];
@@ -56,6 +56,7 @@ const sampleStores: Store[] = [
 
 describe('useStores undo/redo', () => {
   beforeEach(() => {
+    resetStoresSessionLoaded();
     vi.clearAllMocks();
     pushActionCalls.length = 0;
     mockUseOnlineStatus.mockReturnValue(true);

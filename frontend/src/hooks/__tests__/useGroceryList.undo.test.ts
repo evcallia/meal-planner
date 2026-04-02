@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useGroceryList } from '../useGroceryList';
+import { useGroceryList, resetGrocerySessionLoaded } from '../useGroceryList';
 import type { GrocerySection } from '../../types';
 
 // Capture pushAction calls to test undo/redo
@@ -92,6 +92,7 @@ const sampleSections: GrocerySection[] = [
 
 describe('useGroceryList undo/redo', () => {
   beforeEach(() => {
+    resetGrocerySessionLoaded();
     vi.clearAllMocks();
     pushActionCalls.length = 0;
     mockUseOnlineStatus.mockReturnValue(true);
