@@ -4,16 +4,19 @@ import { NONE_STORE_ID } from './GroceryListView';
 
 interface StoreFilterBarProps {
   stores: Store[];
-  activeStoreId: string | null;
-  onFilterChange: (storeId: string | null) => void;
+  selectedStoreIds: Set<string>;
+  excludedStoreIds: Set<string>;
+  onToggleSelect: (storeId: string) => void;
+  onRemoveExclusion: (storeId: string) => void;
   onRename: (storeId: string, name: string) => void;
   onDelete: (storeId: string) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
+  onExclude: (storeId: string) => void;
   storeCounts?: Map<string, number>;
   noneCount?: number;
 }
 
-export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename, onDelete, onReorder, storeCounts, noneCount = 0 }: StoreFilterBarProps) {
+export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onToggleSelect, onRemoveExclusion, onRename, onDelete, onReorder, onExclude, storeCounts, noneCount = 0 }: StoreFilterBarProps) {
   const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -199,8 +202,11 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
       return;
     }
     if (!didLongPressRef.current) {
-      // Short tap → toggle filter
-      onFilterChange(activeStoreId === storeId ? null : storeId);
+      if (excludedStoreIds.has(storeId)) {
+        onRemoveExclusion(storeId);
+      } else {
+        onToggleSelect(storeId);
+      }
     }
     longPressReadyRef.current = null;
   };
@@ -242,7 +248,6 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
   const handleDelete = () => {
     if (editingStoreId) {
       onDelete(editingStoreId);
-      if (activeStoreId === editingStoreId) onFilterChange(null);
     }
     setEditingStoreId(null);
   };
@@ -254,6 +259,8 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
       <div ref={containerRef} className="flex flex-wrap gap-2 pb-2 px-1 -mx-1">
         {stores.map((store, i) => {
           const isDragged = dragIndex === i;
+          const isSelected = selectedStoreIds.has(store.id);
+          const isExcluded = excludedStoreIds.has(store.id);
           // During drag, compute where this chip should visually move to
           let transformStyle: string | undefined;
           if (dragIndex !== null && dragOverIndex !== null && dragIndex !== dragOverIndex && !isDragged && chipRectsRef.current.length === stores.length) {
@@ -291,16 +298,18 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
               }}
               className={`
                 px-3 py-1 rounded-full text-sm font-medium transition-colors select-none touch-none
-                ${activeStoreId === store.id
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                ${isExcluded
+                  ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through opacity-60'
+                  : isSelected
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                 }
               `}
             >
               {store.name}
               {storeCounts && (storeCounts.get(store.id) ?? 0) > 0 && (
                 <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center ${
-                  activeStoreId === store.id
+                  isSelected
                     ? 'bg-blue-400/30 text-white'
                     : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
                 }`}>
@@ -317,11 +326,11 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
               e.stopPropagation();
             }}
             onPointerUp={() => {
-              onFilterChange(activeStoreId === NONE_STORE_ID ? null : NONE_STORE_ID);
+              onToggleSelect(NONE_STORE_ID);
             }}
             className={`
               px-3 py-1 rounded-full text-sm font-medium transition-colors select-none touch-none
-              ${activeStoreId === NONE_STORE_ID
+              ${selectedStoreIds.has(NONE_STORE_ID)
                 ? 'bg-blue-500 text-white'
                 : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }
@@ -329,7 +338,7 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
           >
             None
             <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center ${
-              activeStoreId === NONE_STORE_ID
+              selectedStoreIds.has(NONE_STORE_ID)
                 ? 'bg-blue-400/30 text-white'
                 : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
             }`}>
