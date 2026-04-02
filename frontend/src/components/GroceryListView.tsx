@@ -24,7 +24,23 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
   const [newItemName, setNewItemName] = useState('');
   const [showClearMenu, setShowClearMenu] = useState(false);
-  const [filterStoreId, setFilterStoreId] = useState<string | null>(null);
+  const [selectedStoreIds, setSelectedStoreIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('meal-planner-selected-stores');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
+  const [excludedStoreIds, setExcludedStoreIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('meal-planner-excluded-stores');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
+  const [showAllStores, setShowAllStores] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('meal-planner-show-all-stores') === 'true';
+    } catch { return false; }
+  });
   const [sortByStore, setSortByStore] = useState(false);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
@@ -51,18 +67,87 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     return counts;
   }, [sections]);
 
+  const handleToggleSelect = useCallback((storeId: string) => {
+    setSelectedStoreIds(prev => {
+      const next = new Set(prev);
+      if (next.has(storeId)) {
+        next.delete(storeId);
+      } else {
+        next.add(storeId);
+      }
+      try { localStorage.setItem('meal-planner-selected-stores', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }, []);
+
+  const handleExclude = useCallback((storeId: string) => {
+    setSelectedStoreIds(prev => {
+      if (prev.has(storeId)) {
+        const next = new Set(prev);
+        next.delete(storeId);
+        try { localStorage.setItem('meal-planner-selected-stores', JSON.stringify([...next])); } catch {}
+        return next;
+      }
+      return prev;
+    });
+    setExcludedStoreIds(prev => {
+      const next = new Set(prev);
+      next.add(storeId);
+      try { localStorage.setItem('meal-planner-excluded-stores', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }, []);
+
+  const handleRemoveExclusion = useCallback((storeId: string) => {
+    setExcludedStoreIds(prev => {
+      const next = new Set(prev);
+      next.delete(storeId);
+      try { localStorage.setItem('meal-planner-excluded-stores', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }, []);
+
+  const handleToggleShowAllStores = useCallback(() => {
+    setShowAllStores(prev => {
+      const next = !prev;
+      try { localStorage.setItem('meal-planner-show-all-stores', String(next)); } catch {}
+      return next;
+    });
+  }, []);
+  void handleToggleShowAllStores; // Used in Task 4 (Show All Stores menu option)
+
+  const visibleStores = useMemo(() => {
+    if (showAllStores) return stores;
+    return stores.filter(s =>
+      (storeCounts.get(s.id) ?? 0) > 0 || excludedStoreIds.has(s.id)
+    );
+  }, [stores, storeCounts, excludedStoreIds, showAllStores]);
+
   const visibleSections = useMemo(() => {
     let filtered = sections.filter(s => s.items.some(i => !i.checked));
-    if (filterStoreId) {
+
+    // 1. Remove excluded stores' items
+    if (excludedStoreIds.size > 0) {
       filtered = filtered
         .map(s => ({
           ...s,
-          items: s.items.filter(i => !i.checked && (filterStoreId === NONE_STORE_ID
-            ? !i.store_id
-            : i.store_id === filterStoreId)),
+          items: s.items.filter(i => !i.store_id || !excludedStoreIds.has(i.store_id)),
+        }))
+        .filter(s => s.items.some(i => !i.checked));
+    }
+
+    // 2. If any stores are selected, show only those
+    if (selectedStoreIds.size > 0) {
+      filtered = filtered
+        .map(s => ({
+          ...s,
+          items: s.items.filter(i => !i.checked && (selectedStoreIds.has(NONE_STORE_ID)
+            ? !i.store_id || selectedStoreIds.has(i.store_id!)
+            : i.store_id && selectedStoreIds.has(i.store_id))),
         }))
         .filter(s => s.items.length > 0);
     }
+
     if (sortByStore) {
       const storeOrder = new Map(stores.map(s => [s.id, s.position]));
       filtered = filtered.map(s => ({
@@ -76,7 +161,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       }));
     }
     return filtered;
-  }, [sections, filterStoreId, sortByStore, stores]);
+  }, [sections, selectedStoreIds, excludedStoreIds, sortByStore, stores]);
 
   const handleSectionReorder = useCallback((from: number, to: number) => {
     const fromSection = visibleSections[from];
@@ -177,7 +262,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   // When sort-by-store is active, drag indices correspond to the sorted visibleSections,
   // not the unsorted sections. Map sorted indices to the item IDs and use reorderItemsByIds.
   const handleReorderItems = useCallback((sectionId: string, from: number, to: number) => {
-    if (!sortByStore && !filterStoreId) {
+    if (!sortByStore && selectedStoreIds.size === 0 && excludedStoreIds.size === 0) {
       reorderItems(sectionId, from, to);
       return;
     }
@@ -191,7 +276,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     reordered.splice(to, 0, moved);
     // Pass the new ID order to the hook
     reorderItems(sectionId, from, to, reordered.map(i => i.id));
-  }, [sortByStore, filterStoreId, visibleSections, reorderItems]);
+  }, [sortByStore, selectedStoreIds, excludedStoreIds, visibleSections, reorderItems]);
 
   useEffect(() => {
     if (!showClearMenu) return;
@@ -409,12 +494,15 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
 
       {/* Store filter bar */}
       <StoreFilterBar
-        stores={stores}
-        activeStoreId={filterStoreId}
-        onFilterChange={setFilterStoreId}
+        stores={visibleStores}
+        selectedStoreIds={selectedStoreIds}
+        excludedStoreIds={excludedStoreIds}
+        onToggleSelect={handleToggleSelect}
+        onRemoveExclusion={handleRemoveExclusion}
         onRename={renameStore}
         onDelete={removeStore}
         onReorder={reorderStores}
+        onExclude={handleExclude}
         storeCounts={storeCounts}
         noneCount={storeCounts.get(NONE_STORE_ID) ?? 0}
       />
