@@ -635,18 +635,34 @@ function AppContent() {
     };
   }, [settings.compactView, settings.textScaleCompact, settings.textScaleStandard]);
 
-  const handleLogout = useCallback(async () => {
-    await logout();
+  const handleLogout = useCallback(async (endProviderSession = true) => {
+    const endSessionUrl = await logout();
     localStorage.removeItem('meal-planner-user');
     localStorage.removeItem('meal-planner-grocery');
     localStorage.removeItem('meal-planner-settings');
     await clearAllLocalData().catch(() => {});
     setUser(null);
+    if (endProviderSession && endSessionUrl) {
+      // Check if running as installed PWA (standalone mode)
+      const isPWA = window.matchMedia('(display-mode: standalone)').matches
+        || (navigator as unknown as { standalone?: boolean }).standalone === true;
+      if (isPWA) {
+        // PWA: full-page redirect to authentik's invalidation flow.
+        // User will need to navigate back to the app after.
+        window.location.href = endSessionUrl;
+      } else {
+        // Desktop browser: open invalidation flow in a popup to kill
+        // authentik's session, then close it — user stays on login screen
+        const popup = window.open(endSessionUrl, 'authentik_logout', 'width=1,height=1,left=-100,top=-100');
+        setTimeout(() => { popup?.close(); }, 3000);
+      }
+    }
   }, []);
 
-  // Log out when any API call returns 401
+  // Log out when any API call returns 401 — don't redirect to provider
+  // since the session is already gone (avoids redirect loop)
   useEffect(() => {
-    const handler = () => { handleLogout(); };
+    const handler = () => { handleLogout(false); };
     window.addEventListener('auth-unauthorized', handler);
     return () => window.removeEventListener('auth-unauthorized', handler);
   }, [handleLogout]);

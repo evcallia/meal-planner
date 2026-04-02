@@ -63,6 +63,18 @@ async def callback(request: Request):
 
 
 async def logout(request: Request):
-    """Clear session and logout."""
+    """Clear session and return authentik invalidation URL."""
     request.session.clear()
+
+    # Return authentik's invalidation flow URL so the frontend can open
+    # it to fully terminate the authentik session (not just the RP session).
+    if settings.oidc_issuer:
+        from urllib.parse import urlparse
+        parsed = urlparse(settings.oidc_issuer)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        return {
+            "status": "logged out",
+            "end_session_url": f"{base_url}/if/flow/default-invalidation-flow/",
+        }
+
     return {"status": "logged out"}

@@ -210,17 +210,36 @@ describe('API client', () => {
   });
 
   describe('logout', () => {
-    it('should call logout endpoint', async () => {
+    it('should call logout endpoint and return end_session_url', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
+        json: () => Promise.resolve({ status: 'logged out', end_session_url: 'https://auth.example.com/end-session' }),
       });
 
-      await logout();
+      const url = await logout();
 
       expect(mockFetch).toHaveBeenCalledWith('/api/auth/logout', {
         method: 'POST',
         credentials: 'include',
       });
+      expect(url).toBe('https://auth.example.com/end-session');
+    });
+
+    it('should return null when no end_session_url', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ status: 'logged out' }),
+      });
+
+      const url = await logout();
+      expect(url).toBeNull();
+    });
+
+    it('should return null when response is not ok', async () => {
+      mockFetch.mockResolvedValue({ ok: false });
+
+      const url = await logout();
+      expect(url).toBeNull();
     });
   });
 
