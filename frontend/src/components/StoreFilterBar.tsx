@@ -359,6 +359,21 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
               autoFocus
               className="w-full text-sm px-2 py-1 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"
             />
+            {excludedStoreIds.has(editingStoreId) ? (
+              <button
+                onClick={() => { onRemoveExclusion(editingStoreId); setEditingStoreId(null); }}
+                className="w-full text-left text-sm text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 mb-2"
+              >
+                Include in list
+              </button>
+            ) : (
+              <button
+                onClick={() => { onExclude(editingStoreId); setEditingStoreId(null); }}
+                className="w-full text-left text-sm text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300 mb-2"
+              >
+                Exclude from list
+              </button>
+            )}
             <div className="flex justify-between">
               <button onClick={handleDelete} className="text-sm text-red-500 hover:text-red-700">
                 Delete
