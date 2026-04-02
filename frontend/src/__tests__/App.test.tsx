@@ -76,7 +76,7 @@ vi.mock('../hooks/useOnlineStatus', () => ({
 
 vi.mock('../api/client', () => ({
   getCurrentUser: vi.fn(),
-  logout: vi.fn(),
+  logout: vi.fn().mockResolvedValue(null),
   getLoginUrl: vi.fn(() => '/api/auth/login'),
   getDays: vi.fn(),
   updateNotes: vi.fn(),
@@ -211,7 +211,7 @@ describe('App', () => {
     };
 
     mockGetCurrentUser.mockResolvedValue(mockUser);
-    mockLogout.mockResolvedValue(undefined);
+    mockLogout.mockResolvedValue(null);
 
     render(<App />);
 

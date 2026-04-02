@@ -102,11 +102,16 @@ export async function getCurrentUser(): Promise<UserInfo | null> {
   }
 }
 
-export async function logout(): Promise<void> {
-  await fetch(`${API_BASE}/auth/logout`, {
+export async function logout(): Promise<string | null> {
+  const res = await fetch(`${API_BASE}/auth/logout`, {
     method: 'POST',
     credentials: 'include',
   });
+  if (res.ok) {
+    const data = await res.json();
+    return data.end_session_url || null;
+  }
+  return null;
 }
 
 export function getLoginUrl(): string {

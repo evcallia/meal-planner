@@ -87,6 +87,14 @@ Key details:
 - **Guard SSE during debounce**: The `pantry.updated` SSE handler skips `refreshItems()` when `Object.keys(pendingUpdatesRef.current).length > 0` — prevents stale server state from overwriting optimistic changes during rapid edits
 - **loadTokenRef pattern**: `refreshItems` uses `const token = ++loadTokenRef.current` and checks `token === loadTokenRef.current` after async work. `invalidateLoad()` increments the counter to invalidate in-flight refreshes
 
+## OIDC Logout
+- `POST /api/auth/logout` clears the app session and returns `{ status, end_session_url }` with authentik's invalidation flow URL
+- Frontend `logout()` in `api/client.ts` returns the `end_session_url` (or null)
+- `handleLogout(endProviderSession)` in App.tsx: clears local data, then opens authentik's invalidation flow in a popup (desktop) or full redirect (PWA) to kill the authentik session
+- PWA detection: `window.matchMedia('(display-mode: standalone)')` or `navigator.standalone`
+- 401 auto-logout (`auth-unauthorized` event) passes `endProviderSession=false` to avoid redirect loops — only user-initiated logout triggers authentik invalidation
+- authentik's invalidation flow (`/if/flow/default-invalidation-flow/`) auto-logs out without a confirmation prompt (unlike the OIDC end_session_endpoint which shows an interstitial)
+
 ## Preview / Local Dev Auth
 - Backend has a `/api/auth/dev-login` endpoint that's only available when `OIDC_ISSUER` env var is empty. It sets a fake session (`dev-user` / `dev@localhost`) and redirects to `/`
 - The `.env` file is in the project root — run uvicorn from the project root with `--app-dir backend` (not `cd backend && uvicorn`) so pydantic-settings can find `.env`
