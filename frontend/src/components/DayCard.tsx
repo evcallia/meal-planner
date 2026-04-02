@@ -564,8 +564,6 @@ export function DayCard({
                                 showHeader={false}
                                 showItemizedColumn={false}
                                 compact={true}
-                                lineIndex={i}
-                                date={day.date}
                                 dragHandleMouseDown={getMealHandleMouseDown(i)}
                               />
                             </div>
@@ -767,8 +765,6 @@ export function DayCard({
                           mealTargetDate={mealTargetAttr}
                           showHeader={i === 0}
                           showItemizedColumn={showItemizedColumn}
-                          lineIndex={i}
-                          date={day.date}
                           dragHandleMouseDown={getMealHandleMouseDown(i)}
                         />
                         {showInsertAfter && <div className="h-0.5 bg-blue-500 rounded" />}

@@ -14,8 +14,6 @@ interface MealItemProps {
   showItemizedColumn?: boolean;
   compact?: boolean;
   bgClass?: string;
-  lineIndex: number;
-  date: string;
   dragHandleMouseDown?: (e: React.MouseEvent) => void;
 }
 
@@ -33,8 +31,6 @@ export function MealItem({
   showItemizedColumn = true,
   compact = false,
   bgClass = 'bg-white dark:bg-gray-800',
-  lineIndex,
-  date,
   dragHandleMouseDown,
 }: MealItemProps) {
   const decodedHtml = decodeHtmlEntities(html);

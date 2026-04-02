@@ -171,8 +171,6 @@ describe('MealItem', () => {
     const { container } = render(
       <MealItem
         {...defaultProps}
-        date="2026-02-05"
-        lineIndex={1}
         dragHandleMouseDown={dragHandleMouseDown}
       />
     )
@@ -188,8 +186,6 @@ describe('MealItem', () => {
     const { container } = render(
       <MealItem
         {...defaultProps}
-        date="2026-02-05"
-        lineIndex={1}
       />
     )
 

@@ -23,6 +23,7 @@ import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useUndo } from '../contexts/UndoContext';
 import { scrollToElementWithOffset } from '../utils/scroll';
 import { isPerfEnabled, logDuration, logRenderDuration, perfNow } from '../utils/perf';
+import { decodeHtmlEntities } from '../utils/html';
 
 function formatDate(date: Date): string {
   // Use local date to avoid timezone issues (toISOString uses UTC)
@@ -129,6 +130,10 @@ function localNotesToDayData(localNotes: LocalMealNote[], startDate: string, end
   return days;
 }
 
+let sessionLoaded = false;
+export function resetCalendarSessionLoaded() { sessionLoaded = false; }
+export function markCalendarSessionLoaded() { sessionLoaded = true; }
+
 interface CalendarViewProps {
   onTodayRefReady: (ref: HTMLDivElement | null) => void;
   showItemizedColumn?: boolean;
@@ -180,9 +185,13 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     );
   }, []);
 
-  // Drag and drop state
-  const [isDragActive, setIsDragActive] = useState(false);
-  const [dragSourceDate, setDragSourceDate] = useState<string | null>(null);
+  // Cross-day drag state
+  const [crossDrag, setCrossDrag] = useState<{
+    sourceDate: string;
+    targetDate: string;
+    targetIndex: number;
+    itemHeight: number;
+  } | null>(null);
 
   const today = useRef(formatDate(new Date())).current;
   const handleTodayRef = useCallback((node: HTMLDivElement | null) => {
@@ -202,6 +211,13 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     notifiedTodayRef.current = today;
     onTodayRefReady(element);
   }, [loading, days, onTodayRefReady, today]);
+
+  const compareEvents = (a: CalendarEvent, b: CalendarEvent): number => {
+    const aHoliday = a.calendar_name === 'US Holidays' ? 0 : 1;
+    const bHoliday = b.calendar_name === 'US Holidays' ? 0 : 1;
+    if (aHoliday !== bHoliday) return aHoliday - bHoliday;
+    return (a.start_time ?? '').localeCompare(b.start_time ?? '');
+  };
 
   // Load events for a date range (non-blocking)
   // Also updates the in-memory cache with event data
@@ -239,7 +255,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       setDays(prev => prev.map(day => {
         // Only update days within the loaded range
         if (day.date >= startStr && day.date <= endStr) {
-          const dayEvents = filteredEventsMap[day.date] || [];
+          const dayEvents = (filteredEventsMap[day.date] || []).sort(compareEvents);
           return { ...day, events: dayEvents };
         }
         // Keep existing events for days outside the range
@@ -290,11 +306,25 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
   useEffect(() => {
     refreshHiddenKeys();
     const handleHiddenUpdated = (event: Event) => {
-      const detail = (event as CustomEvent).detail as { date?: string } | undefined;
+      const detail = (event as CustomEvent).detail as {
+        date?: string;
+        end_time?: string | null;
+        all_day?: boolean;
+      } | undefined;
       refreshHiddenKeys().then(() => {
         if (detail?.date) {
-          const start = new Date(`${detail.date}T12:00:00`);
-          const end = new Date(`${detail.date}T12:00:00`);
+          const startDate = detail.date;
+          let endDate = startDate;
+          if (detail.end_time) {
+            endDate = detail.end_time.split('T')[0];
+            if (detail.all_day && endDate > startDate) {
+              const d = new Date(endDate + 'T12:00:00');
+              d.setDate(d.getDate() - 1);
+              endDate = d.toISOString().split('T')[0];
+            }
+          }
+          const start = new Date(`${startDate}T12:00:00`);
+          const end = new Date(`${endDate}T12:00:00`);
           loadEventsForRange(start, end, isOnline);
         }
       });
@@ -313,56 +343,6 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     // Force online fetch if available to get fresh data with correct include_hidden / include_holidays
     loadEventsForRange(displayStartRef.current, displayEndRef.current, isOnline);
   }, [showAllEvents, showHolidays, loadEventsForRange, isOnline]);
-
-  // Pre-fetch extended cache range in background (for offline support)
-  // This caches data but does NOT display it - data is added to UI only when user scrolls
-  const prefetchCacheRange = useCallback(async () => {
-    if (backgroundCacheDone.current) return;
-    backgroundCacheDone.current = true;
-
-    try {
-      // Fetch past 2 weeks
-      const pastStart = addDays(new Date(), -14);
-      const pastEnd = addDays(new Date(), -1);
-      if (pastEnd >= pastStart) {
-        const pastData = await getDays(formatDate(pastStart), formatDate(pastEnd));
-        // Store in memory cache and IndexedDB, don't display
-        pastData.forEach(d => {
-          if (!daysCache.current.has(d.date)) {
-            daysCache.current.set(d.date, d);
-          }
-          // Save to IndexedDB for offline access
-          if (d.meal_note) {
-            saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
-          }
-        });
-        // Pre-fetch events for cached data (populates service worker cache)
-        loadEventsForRange(pastStart, pastEnd, true);
-      }
-
-      // Fetch future 8 weeks (56 days from today)
-      const futureStart = addDays(displayEndRef.current, 1);
-      const futureEnd = addDays(new Date(), 56);
-      if (futureEnd >= futureStart) {
-        const futureData = await getDays(formatDate(futureStart), formatDate(futureEnd));
-        // Store in memory cache and IndexedDB, don't display
-        futureData.forEach(d => {
-          if (!daysCache.current.has(d.date)) {
-            daysCache.current.set(d.date, d);
-          }
-          // Save to IndexedDB for offline access
-          if (d.meal_note) {
-            saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
-          }
-        });
-        // Pre-fetch events for cached data (populates service worker cache)
-        loadEventsForRange(futureStart, futureEnd, true);
-      }
-    } catch (error) {
-      // Background caching failed - not critical, user can still load on demand
-      console.error('Background cache prefetch failed:', error);
-    }
-  }, [loadEventsForRange]);
 
   // Initial load - use ref to prevent double load in StrictMode
   useEffect(() => {
@@ -386,32 +366,41 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
         loadEventsForRange(displayStartRef.current, displayEndRef.current, false);
       } catch { /* cache failed — will try API */ }
 
-      // 2. If online, fetch from API in background
-      if (isOnline) {
+      // 2. If online, fetch from API in background (skip on remount — SSE keeps cache warm)
+      //    Single request covers display range + prefetch range (past 2 weeks, future 8 weeks)
+      if (isOnline && !sessionLoaded) {
         try {
+          const fullStart = addDays(new Date(), -14);
+          const fullEnd = addDays(new Date(), 56);
+          const fullStartStr = formatDate(fullStart);
+          const fullEndStr = formatDate(fullEnd);
+
           const requestStart = perfNow();
-          const data = await getDays(startStr, endStr);
+          const allData = await getDays(fullStartStr, fullEndStr);
           logDuration('calendar.days.request', requestStart, {
-            start: startStr,
-            end: endStr,
+            start: fullStartStr,
+            end: fullEndStr,
           });
+
+          // Split: display range gets rendered, rest goes to cache only
+          const displayData = allData.filter(d => d.date >= startStr && d.date <= endStr);
           const renderStart = perfNow();
-          // Merge API days with existing events to avoid a flash where
-          // cached events disappear while waiting for the events API
           setDays(prev => {
             const prevEventsMap = new Map(prev.map(d => [d.date, d.events]));
-            return data.map(d => ({
+            return displayData.map(d => ({
               ...d,
               events: d.events.length > 0 ? d.events : (prevEventsMap.get(d.date) ?? []),
             }));
           });
-          data.forEach(d => daysCache.current.set(d.date, d));
-          data.forEach(d => {
+          enqueueRenderLog('calendar.days.render', renderStart, { count: displayData.length });
+
+          // Cache all days (display + prefetch)
+          allData.forEach(d => {
+            daysCache.current.set(d.date, d);
             if (d.meal_note) {
               saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
             }
           });
-          enqueueRenderLog('calendar.days.render', renderStart, { count: data.length });
 
           // Sync hidden events from server to IndexedDB for offline use
           try {
@@ -423,8 +412,10 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             );
           } catch { /* hidden events sync failed — keep local */ }
 
-          loadEventsForRange(displayStartRef.current, displayEndRef.current, true);
-          setTimeout(() => prefetchCacheRange(), 500);
+          // Single events fetch for the full range
+          loadEventsForRange(fullStart, fullEnd, true);
+          backgroundCacheDone.current = true;
+          sessionLoaded = true;
         } catch (error) {
           console.error('Failed to load days from API:', error);
         }
@@ -433,7 +424,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       setLoading(false);
     };
     init();
-  }, [loadEventsForRange, prefetchCacheRange, isOnline]);
+  }, [loadEventsForRange, isOnline]);
 
   // Scroll to today after initial load
   useEffect(() => {
@@ -572,6 +563,8 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
           event_uid?: string;
           calendar_name?: string;
           start_time?: string;
+          end_time?: string | null;
+          all_day?: boolean;
         };
         if (payload?.hidden_id) {
           deleteLocalHiddenEvent(payload.hidden_id);
@@ -582,9 +575,19 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
           );
         }
         if (!payload?.start_time) return;
-        const date = payload.start_time.split('T')[0];
-        const start = new Date(`${date}T12:00:00`);
-        const end = new Date(`${date}T12:00:00`);
+        const startDate = payload.start_time.split('T')[0];
+        let endDate = startDate;
+        if (payload.end_time) {
+          endDate = payload.end_time.split('T')[0];
+          // All-day events: end date is exclusive per iCal spec
+          if (payload.all_day && endDate > startDate) {
+            const d = new Date(endDate + 'T12:00:00');
+            d.setDate(d.getDate() - 1);
+            endDate = d.toISOString().split('T')[0];
+          }
+        }
+        const start = new Date(`${startDate}T12:00:00`);
+        const end = new Date(`${endDate}T12:00:00`);
         loadEventsForRange(start, end, isOnline);
       }
     };
@@ -608,13 +611,35 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     }));
   };
 
+  const getEventDates = (event: CalendarEvent): Set<string> => {
+    const startDate = event.start_time!.split('T')[0];
+    const dates = new Set<string>([startDate]);
+    if (event.end_time) {
+      let endDate = event.end_time.split('T')[0];
+      // All-day events: end date is exclusive per iCal spec
+      if (event.all_day && endDate > startDate) {
+        const d = new Date(endDate + 'T12:00:00');
+        d.setDate(d.getDate() - 1);
+        endDate = d.toISOString().split('T')[0];
+      }
+      const cur = new Date(startDate + 'T12:00:00');
+      const end = new Date(endDate + 'T12:00:00');
+      while (cur <= end) {
+        dates.add(cur.toISOString().split('T')[0]);
+        cur.setDate(cur.getDate() + 1);
+      }
+    }
+    return dates;
+  };
+
   const restoreEventToDay = (event: CalendarEvent) => {
-    const eventDate = event.start_time!.split('T')[0];
+    const eventDates = getEventDates(event);
     setDays(prev => prev.map(day => {
-      if (day.date !== eventDate) return day;
-      const updated = { ...day, events: [...day.events, event] };
+      if (!eventDates.has(day.date)) return day;
+      const events = [...day.events, event].sort(compareEvents);
+      const updated = { ...day, events };
       daysCache.current.set(day.date, updated);
-      saveLocalCalendarEvents(day.date, updated.events);
+      saveLocalCalendarEvents(day.date, events);
       return updated;
     }));
   };
@@ -1045,18 +1070,124 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     }
   };
 
-  // Drag and drop handlers
-  const handleDragStart = useCallback((date: string) => {
-    setIsDragActive(true);
-    setDragSourceDate(date);
+  // Within-day meal reorder handler
+  const handleMealReorder = useCallback(async (date: string, fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    const day = days.find(d => d.date === date);
+    if (!day) return;
+
+    const currentNotes = day.meal_note?.notes || '';
+    const currentItems = [...(day.meal_note?.items || [])];
+    const lines = splitHtmlLines(currentNotes);
+    if (fromIndex < 0 || fromIndex >= lines.length) return;
+
+    // Reorder lines
+    const [moved] = lines.splice(fromIndex, 1);
+    lines.splice(toIndex, 0, moved);
+    const newNotes = joinHtmlLines(lines);
+
+    // Remap itemized indices: build old index → itemized map, then remap
+    const itemizedByOldIndex = new Map(currentItems.map(item => [item.line_index, item.itemized]));
+    const oldIndices = Array.from({ length: lines.length + 1 }, (_, i) => i);
+    // Compute the mapping: after removing fromIndex and inserting at toIndex
+    oldIndices.splice(fromIndex, 1);
+    oldIndices.splice(toIndex, 0, fromIndex);
+    const newItems: { line_index: number; itemized: boolean }[] = [];
+    for (let newIdx = 0; newIdx < lines.length; newIdx++) {
+      const oldIdx = oldIndices[newIdx];
+      const wasItemized = itemizedByOldIndex.get(oldIdx);
+      if (wasItemized !== undefined) {
+        newItems.push({ line_index: newIdx, itemized: wasItemized });
+      }
+    }
+
+    // Push undo
+    pushAction({
+      type: 'reorder-meal',
+      undo: async () => { await restoreNotesAndItems(date, currentNotes, currentItems); },
+      redo: async () => { await restoreNotesAndItems(date, newNotes, newItems); },
+    });
+
+    // Optimistic update
+    setDays(prev => prev.map(d => {
+      if (d.date !== date) return d;
+      const updated = {
+        ...d,
+        meal_note: d.meal_note
+          ? { ...d.meal_note, notes: newNotes, items: newItems }
+          : { id: '', date, notes: newNotes, items: newItems, updated_at: new Date().toISOString() },
+      };
+      daysCache.current.set(date, updated);
+      return updated;
+    }));
+
+    await saveLocalNote(date, newNotes, newItems);
+
+    if (isOnline) {
+      try {
+        await updateNotes(date, newNotes);
+        await Promise.all(newItems.map(item =>
+          toggleItemized(date, item.line_index, item.itemized).catch(err =>
+            console.warn(`Failed to sync itemized state for ${date} line ${item.line_index}:`, err)
+          )
+        ));
+      } catch {
+        await queueChange('notes', date, { notes: newNotes });
+      }
+    } else {
+      await queueChange('notes', date, { notes: newNotes });
+    }
+  }, [days, isOnline, pushAction]);
+
+  // Cross-day drag helpers
+  const findMealDropTarget = useCallback((sourceDate: string, clientY: number) => {
+    const dayEls = document.querySelectorAll('[data-day-date]');
+    for (const el of dayEls) {
+      const date = (el as HTMLElement).dataset.dayDate;
+      if (!date || date === sourceDate) continue;
+      const rect = el.getBoundingClientRect();
+      if (clientY >= rect.top && clientY <= rect.bottom) {
+        const mealContainer = el.querySelector('[data-meal-container]');
+        let targetIndex = 0;
+        let itemHeight = 36;
+        if (mealContainer) {
+          const itemEls = mealContainer.querySelectorAll(':scope > [data-drag-index]');
+          targetIndex = itemEls.length;
+          for (let i = 0; i < itemEls.length; i++) {
+            const itemRect = itemEls[i].getBoundingClientRect();
+            if (itemRect.height > 0) {
+              itemHeight = itemRect.height;
+              if (clientY < itemRect.top + itemRect.height / 2) {
+                targetIndex = i;
+                break;
+              }
+            }
+          }
+        }
+        return { date, targetIndex, itemHeight };
+      }
+    }
+    return null;
   }, []);
 
-  const handleDragEnd = useCallback(() => {
-    setIsDragActive(false);
-    setDragSourceDate(null);
+  const handleMealDragMove = useCallback((sourceDate: string, _fromIndex: number, clientY: number) => {
+    const target = findMealDropTarget(sourceDate, clientY);
+    setCrossDrag(prev => {
+      if (!target) return prev ? null : prev;
+      if (prev?.targetDate === target.date && prev?.targetIndex === target.targetIndex) return prev;
+      return { sourceDate, targetDate: target.date, targetIndex: target.targetIndex, itemHeight: target.itemHeight };
+    });
+  }, [findMealDropTarget]);
+
+  const handleMealDragEnd = useCallback(() => {
+    setCrossDrag(null);
   }, []);
 
-  const handleMoveMeal = useCallback(async (targetDate: string, sourceDate: string, lineIndex: number, html: string) => {
+  const handleMealDragStart = useCallback(() => {
+    setCrossDrag(null);
+  }, []);
+
+  const handleMoveMeal = useCallback(async (targetDate: string, sourceDate: string, lineIndex: number, html: string, insertAt?: number) => {
     // Find source and target days
     const sourceDay = days.find(d => d.date === sourceDate);
     const targetDay = days.find(d => d.date === targetDate);
@@ -1093,18 +1224,22 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     const newSourceLines = sourceLines.filter((_, i) => i !== lineIndex);
     const newSourceNotes = joinHtmlLines(newSourceLines);
 
-    // Add line to target
+    // Add line to target at the specified position (or end)
     const targetNotes = targetDay?.meal_note?.notes || '';
     const targetLines = splitHtmlLines(targetNotes);
-    const newTargetLineIndex = targetLines.length; // The new item will be at the end
-    targetLines.push(html);
+    const newTargetLineIndex = insertAt !== undefined ? Math.min(insertAt, targetLines.length) : targetLines.length;
+    targetLines.splice(newTargetLineIndex, 0, html);
     const newTargetNotes = joinHtmlLines(targetLines);
 
-    // Update target items: add the moved item's itemized status if it was itemized
+    // Update target items: shift existing items at or after insertion point, add moved item
     const targetItems = targetDay?.meal_note?.items || [];
-    const newTargetItems = wasItemized
-      ? [...targetItems, { line_index: newTargetLineIndex, itemized: true }]
-      : targetItems;
+    const newTargetItems = targetItems.map(item => ({
+      ...item,
+      line_index: item.line_index >= newTargetLineIndex ? item.line_index + 1 : item.line_index,
+    }));
+    if (wasItemized) {
+      newTargetItems.push({ line_index: newTargetLineIndex, itemized: true });
+    }
 
     // Push undo action
     pushAction({
@@ -1194,10 +1329,21 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       }
     }
 
-    // Clear drag state
-    setIsDragActive(false);
-    setDragSourceDate(null);
   }, [days, isOnline, pushAction]);
+
+  const handleMealDropOutside = useCallback((sourceDate: string, fromIndex: number, clientY: number) => {
+    const target = findMealDropTarget(sourceDate, clientY);
+    setCrossDrag(null);
+    if (!target) return;
+
+    const day = days.find(d => d.date === sourceDate);
+    if (!day) return;
+    const lines = splitHtmlLines(day.meal_note?.notes || '');
+    if (fromIndex < 0 || fromIndex >= lines.length) return;
+    const html = decodeHtmlEntities(lines[fromIndex]);
+
+    handleMoveMeal(target.date, sourceDate, fromIndex, html, target.targetIndex);
+  }, [days, findMealDropTarget, handleMoveMeal]);
 
   const handleDeleteMeal = useCallback(async (date: string, lineIndex: number) => {
     const day = days.find(d => d.date === date);
@@ -1302,7 +1448,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
 
       {/* Day Cards */}
       {days.map(day => (
-        <div key={day.date} data-date={day.date} ref={day.date === today ? handleTodayRef : undefined}>
+        <div key={day.date} data-date={day.date} data-day-date={day.date} ref={day.date === today ? handleTodayRef : undefined}>
           <DayCard
             day={day}
             isToday={day.date === today}
@@ -1313,11 +1459,13 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             showItemizedColumn={showItemizedColumn}
             compactView={compactView}
             showAllEvents={showAllEvents}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onDrop={handleMoveMeal}
-            isDragActive={isDragActive}
-            dragSourceDate={dragSourceDate}
+            onMealReorder={handleMealReorder}
+            onMealDropOutside={handleMealDropOutside}
+            onMealDragMove={handleMealDragMove}
+            onMealDragStart={handleMealDragStart}
+            onMealDragEnd={handleMealDragEnd}
+            crossDragTargetIndex={crossDrag?.targetDate === day.date ? crossDrag.targetIndex : null}
+            crossDragItemHeight={crossDrag?.targetDate === day.date ? crossDrag.itemHeight : undefined}
             onDeleteMeal={(lineIndex) => handleDeleteMeal(day.date, lineIndex)}
             holidayColor={holidayColor}
             calendarColor={calendarColor}
