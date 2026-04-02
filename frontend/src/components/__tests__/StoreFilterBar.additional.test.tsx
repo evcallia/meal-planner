@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { StoreFilterBar } from '../StoreFilterBar';
 import type { Store } from '../../types';
@@ -10,7 +10,9 @@ const stores: Store[] = [
 ];
 
 describe('StoreFilterBar - additional coverage', () => {
-  const mockOnFilterChange = vi.fn();
+  const mockOnToggleSelect = vi.fn();
+  const mockOnRemoveExclusion = vi.fn();
+  const mockOnExclude = vi.fn();
   const mockOnRename = vi.fn();
   const mockOnDelete = vi.fn();
   const mockOnReorder = vi.fn();
@@ -24,14 +26,15 @@ describe('StoreFilterBar - additional coverage', () => {
     vi.useRealTimers();
   });
 
-  const { afterEach: _ } = { afterEach: () => {} }; // eslint trick to avoid unused var
-
   it('long press then release opens edit popover', async () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId={null}
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set<string>()}
+        excludedStoreIds={new Set<string>()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -61,8 +64,11 @@ describe('StoreFilterBar - additional coverage', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId={null}
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set<string>()}
+        excludedStoreIds={new Set<string>()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -88,8 +94,11 @@ describe('StoreFilterBar - additional coverage', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId={null}
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set<string>()}
+        excludedStoreIds={new Set<string>()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -112,8 +121,11 @@ describe('StoreFilterBar - additional coverage', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId={null}
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set<string>()}
+        excludedStoreIds={new Set<string>()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -135,8 +147,11 @@ describe('StoreFilterBar - additional coverage', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId="st1"
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set(['st1'])}
+        excludedStoreIds={new Set<string>()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -151,16 +166,17 @@ describe('StoreFilterBar - additional coverage', () => {
     fireEvent.click(screen.getByText('Delete'));
 
     expect(mockOnDelete).toHaveBeenCalledWith('st1');
-    // Should also clear the active filter since deleted store was active
-    expect(mockOnFilterChange).toHaveBeenCalledWith(null);
   });
 
   it('edit popover Cancel button closes', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId={null}
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set<string>()}
+        excludedStoreIds={new Set<string>()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -180,8 +196,11 @@ describe('StoreFilterBar - additional coverage', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId={null}
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set<string>()}
+        excludedStoreIds={new Set<string>()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -205,8 +224,11 @@ describe('StoreFilterBar - additional coverage', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId={null}
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set<string>()}
+        excludedStoreIds={new Set<string>()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -222,8 +244,11 @@ describe('StoreFilterBar - additional coverage', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId={null}
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set<string>()}
+        excludedStoreIds={new Set<string>()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
