@@ -131,7 +131,10 @@ function localNotesToDayData(localNotes: LocalMealNote[], startDate: string, end
 }
 
 let sessionLoaded = false;
-export function resetCalendarSessionLoaded() { sessionLoaded = false; }
+// Track the pre-fetched date range so loadNext/PrevWeek can skip API calls within it
+let prefetchedStart: string | null = null;
+let prefetchedEnd: string | null = null;
+export function resetCalendarSessionLoaded() { sessionLoaded = false; prefetchedStart = null; prefetchedEnd = null; }
 export function markCalendarSessionLoaded() { sessionLoaded = true; }
 
 interface CalendarViewProps {
@@ -420,6 +423,8 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
           // Single events fetch for the full range
           loadEventsForRange(fullStart, fullEnd, true);
           backgroundCacheDone.current = true;
+          prefetchedStart = fullStartStr;
+          prefetchedEnd = fullEndStr;
           sessionLoaded = true;
         } catch (error) {
           console.error('Failed to load days from API:', error);
@@ -794,8 +799,8 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       loadEventsForRange(newStart, newEnd, false);
 
       // 2. If online, fetch from API in background (skip if background cache already covers this range)
-      const cacheCoversRange = backgroundCacheDone.current && daysFromMemCache.length === 7;
-      if (isOnline && !cacheCoversRange) {
+      const withinPrefetch = prefetchedStart !== null && prefetchedEnd !== null && startStr >= prefetchedStart && endStr <= prefetchedEnd;
+      if (isOnline && !withinPrefetch) {
         try {
           const requestStart = perfNow();
           const data = await getDays(startStr, endStr);
@@ -880,8 +885,8 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       loadEventsForRange(newStart, newEnd, false);
 
       // 2. If online, fetch from API in background (skip if background cache already covers this range)
-      const cacheCoversRange = backgroundCacheDone.current && daysFromMemCache.length === 7;
-      if (isOnline && !cacheCoversRange) {
+      const withinPrefetch = prefetchedStart !== null && prefetchedEnd !== null && startStr >= prefetchedStart && endStr <= prefetchedEnd;
+      if (isOnline && !withinPrefetch) {
         try {
           const requestStart = perfNow();
           const data = await getDays(startStr, endStr);
