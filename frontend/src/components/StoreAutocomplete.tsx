@@ -59,9 +59,10 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
             <span className="text-gray-600 dark:text-gray-400">{selectedStore.name}</span>
             <button
               onClick={handleClear}
-              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xs ml-1"
+              aria-label="Remove store"
+              className="text-red-400 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 text-sm font-bold ml-1 px-1"
             >
-              ✕
+              X
             </button>
             <button
               onClick={() => { setIsOpen(true); setTimeout(() => inputRef.current?.focus(), 0); }}
