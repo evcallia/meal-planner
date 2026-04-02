@@ -355,7 +355,10 @@ describe('API client - additional coverage', () => {
     });
 
     it('logout sends POST to /api/auth/logout', async () => {
-      mockFetch.mockResolvedValue({ ok: true });
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ status: 'logged out' }),
+      });
 
       await logout();
       expect(mockFetch).toHaveBeenCalledWith(
