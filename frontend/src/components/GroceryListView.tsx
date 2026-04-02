@@ -114,7 +114,6 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       return next;
     });
   }, []);
-  void handleToggleShowAllStores; // Used in Task 4 (Show All Stores menu option)
 
   const visibleStores = useMemo(() => {
     if (showAllStores) return stores;
@@ -451,6 +450,14 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                         className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                       >
                         Copy list
+                      </button>
+                    )}
+                    {stores.length > 0 && (
+                      <button
+                        onClick={() => { handleToggleShowAllStores(); setShowClearMenu(false); }}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        {showAllStores ? 'Show only active stores' : 'Show all stores'}
                       </button>
                     )}
                     {checkedItems.length > 0 && (
