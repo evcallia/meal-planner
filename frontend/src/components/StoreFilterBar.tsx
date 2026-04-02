@@ -411,7 +411,11 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
                 Exclude from list
               </button>
             )}
-            {editingStoreId !== NONE_STORE_ID && (
+            {editingStoreId === NONE_STORE_ID ? (
+              <button onClick={() => setEditingStoreId(null)} className="w-full text-left text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                Cancel
+              </button>
+            ) : (
               <div className="flex justify-between">
                 <button onClick={handleDelete} className="text-sm text-red-500 hover:text-red-700">
                   Delete
