@@ -335,9 +335,14 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     };
   }, [isOnline, loadEventsForRange, refreshHiddenKeys]);
 
-  // Reload events when showAllEvents or showHolidays setting changes
+  // Reload events when showAllEvents or showHolidays setting changes (not on mount)
+  const prevShowAllEventsRef = useRef(showAllEvents);
+  const prevShowHolidaysRef = useRef(showHolidays);
   useEffect(() => {
     if (!initialLoadDone.current) return;
+    if (showAllEvents === prevShowAllEventsRef.current && showHolidays === prevShowHolidaysRef.current) return;
+    prevShowAllEventsRef.current = showAllEvents;
+    prevShowHolidaysRef.current = showHolidays;
     // Reset ALL load states to force fresh reload
     setEventsLoadState({});
     // Force online fetch if available to get fresh data with correct include_hidden / include_holidays
