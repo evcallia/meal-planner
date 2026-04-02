@@ -139,8 +139,9 @@ describe('MealItem', () => {
   it('applies correct CSS classes for layout without itemized column', () => {
     const { container } = render(<MealItem {...defaultProps} showItemizedColumn={false} />)
 
-    const draggable = container.querySelector('[draggable]')
-    expect(draggable).not.toHaveClass('gap-3')
+    // The inner flex div should not have gap-3 when itemized column is hidden
+    const flexDiv = container.querySelector('.flex.items-start')
+    expect(flexDiv).not.toHaveClass('gap-3')
   })
 
   it('applies margin-top to text when header is shown and itemized column is visible', () => {
@@ -164,86 +165,35 @@ describe('MealItem', () => {
     expect(textElement).not.toHaveClass('mt-4')
   })
 
-  it('fires drag callbacks and sets dataTransfer payload', () => {
-    const onDragStart = vi.fn()
-    const onDragEnd = vi.fn()
-    const dataTransfer = {
-      setData: vi.fn(),
-      setDragImage: vi.fn(),
-      effectAllowed: '',
-    }
+  it('passes dragHandleMouseDown to the drag handle', () => {
+    const dragHandleMouseDown = vi.fn()
 
     const { container } = render(
       <MealItem
         {...defaultProps}
         date="2026-02-05"
         lineIndex={1}
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
+        dragHandleMouseDown={dragHandleMouseDown}
       />
     )
 
-    const draggable = container.querySelector('[draggable]') as HTMLElement
-    fireEvent.dragStart(draggable, { dataTransfer })
-
-    expect(dataTransfer.setData).toHaveBeenCalledWith(
-      'text/plain',
-      JSON.stringify({ date: '2026-02-05', lineIndex: 1, html: 'Test meal item' })
-    )
-    expect(dataTransfer.setDragImage).toHaveBeenCalled()
-    expect(onDragStart).toHaveBeenCalledWith('2026-02-05', 1, 'Test meal item')
-
-    fireEvent.dragEnd(draggable)
-    expect(onDragEnd).toHaveBeenCalled()
+    // The drag handle is the div containing the grip SVG with cursor-grab class
+    const dragHandle = container.querySelector('.cursor-grab') as HTMLElement
+    expect(dragHandle).toBeTruthy()
+    fireEvent.mouseDown(dragHandle)
+    expect(dragHandleMouseDown).toHaveBeenCalled()
   })
 
-  it('handles touch long press to start drag', () => {
-    vi.useFakeTimers()
-    const onDragStart = vi.fn()
-    const vibrateSpy = vi.fn()
-    Object.defineProperty(navigator, 'vibrate', { value: vibrateSpy, configurable: true })
-
+  it('does not have draggable attribute on outer div', () => {
     const { container } = render(
       <MealItem
         {...defaultProps}
         date="2026-02-05"
-        lineIndex={2}
-        onDragStart={onDragStart}
+        lineIndex={1}
       />
     )
 
-    const draggable = container.querySelector('[draggable]') as HTMLElement
-    fireEvent.touchStart(draggable, { touches: [{ clientX: 10, clientY: 10 }] })
-
-    vi.runAllTimers()
-
-    expect(onDragStart).toHaveBeenCalledWith('2026-02-05', 2, 'Test meal item')
-    expect(vibrateSpy).toHaveBeenCalledWith(50)
-
-    vi.useRealTimers()
-  })
-
-  it('cancels touch long press when the finger moves', () => {
-    vi.useFakeTimers()
-    const onDragStart = vi.fn()
-
-    const { container } = render(
-      <MealItem
-        {...defaultProps}
-        date="2026-02-05"
-        lineIndex={3}
-        onDragStart={onDragStart}
-      />
-    )
-
-    const draggable = container.querySelector('[draggable]') as HTMLElement
-    fireEvent.touchStart(draggable, { touches: [{ clientX: 10, clientY: 10 }] })
-    fireEvent.touchMove(draggable, { touches: [{ clientX: 40, clientY: 40 }] })
-
-    vi.runAllTimers()
-
-    expect(onDragStart).not.toHaveBeenCalled()
-
-    vi.useRealTimers()
+    const draggable = container.querySelector('[draggable]')
+    expect(draggable).toBeNull()
   })
 })

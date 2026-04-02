@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { DayData } from '../types';
 import { MealItem } from './MealItem';
 import { decodeHtmlEntities } from '../utils/html';
 import { RichTextEditor } from './RichTextEditor';
+import { useDragReorder } from '../hooks/useDragReorder';
 
 interface DayCardProps {
   day: DayData;
@@ -14,11 +15,13 @@ interface DayCardProps {
   showItemizedColumn?: boolean;
   compactView?: boolean;
   showAllEvents?: boolean;
-  onDragStart?: (date: string, lineIndex: number, html: string) => void;
-  onDragEnd?: () => void;
-  onDrop?: (targetDate: string, sourceDate: string, lineIndex: number, html: string) => void;
-  isDragActive?: boolean;
-  dragSourceDate?: string | null;
+  onMealReorder?: (date: string, fromIndex: number, toIndex: number) => void;
+  onMealDropOutside?: (date: string, fromIndex: number, clientY: number) => void;
+  onMealDragMove?: (date: string, fromIndex: number, clientY: number) => void;
+  onMealDragStart?: () => void;
+  onMealDragEnd?: () => void;
+  crossDragTargetIndex?: number | null;
+  crossDragItemHeight?: number;
   onDeleteMeal?: (lineIndex: number) => void;
   holidayColor?: string;
   calendarColor?: string;
@@ -113,11 +116,12 @@ export function DayCard({
   showItemizedColumn = true,
   compactView = false,
   showAllEvents = false,
-  onDragStart,
-  onDragEnd,
-  onDrop,
-  isDragActive,
-  dragSourceDate,
+  onMealReorder,
+  onMealDropOutside,
+  onMealDragMove,
+  onMealDragStart,
+  onMealDragEnd,
+  crossDragTargetIndex,
   onDeleteMeal,
   holidayColor = 'red',
   calendarColor = 'amber',
@@ -130,7 +134,6 @@ export function DayCard({
   const [collapseHeight, setCollapseHeight] = useState<number | null>(null);
   const editorWrapperRef = useRef<HTMLDivElement>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const [isDragOver, setIsDragOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ event: DayData['events'][number]; x: number; y: number } | null>(null);
   const dirtyRef = useRef(false);
   const notesRef = useRef(notes);
@@ -154,6 +157,18 @@ export function DayCard({
 
   // Parse lines for display (now handles HTML)
   const lines = splitHtmlLines(notes);
+
+  // Drag reorder for meal lines
+  const mealContainerRef = useRef<HTMLDivElement>(null);
+  const { dragState: mealDragState, getDragHandlers: getMealDragHandlers, getHandleMouseDown: getMealHandleMouseDown } = useDragReorder({
+    itemCount: lines.length,
+    onReorder: (fromIndex, toIndex) => onMealReorder?.(day.date, fromIndex, toIndex),
+    containerRef: mealContainerRef,
+    onDragStart: onMealDragStart,
+    onDragEnd: onMealDragEnd,
+    onDropOutside: (fromIndex, clientY) => onMealDropOutside?.(day.date, fromIndex, clientY),
+    onDragMove: (fromIndex, clientY) => onMealDragMove?.(day.date, fromIndex, clientY),
+  });
 
   // Sync notes when day data changes (e.g., from server)
   useEffect(() => {
@@ -403,67 +418,20 @@ export function DayCard({
     };
   }, [contextMenu]);
 
-  // Drag and drop handlers
-  const handleDragOver = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      // Only show drag over state if dragging from a different day
-      if (dragSourceDate && dragSourceDate !== day.date) {
-        setIsDragOver(true);
-      }
-    },
-    [day.date, dragSourceDate]
-  );
-
-  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    // Only hide if we're actually leaving the card (not just moving between children)
-    const relatedTarget = e.relatedTarget as HTMLElement;
-    if (!e.currentTarget.contains(relatedTarget)) {
-      setIsDragOver(false);
-    }
-  }, []);
-
-  const handleDropEvent = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      setIsDragOver(false);
-
-      try {
-        const data = JSON.parse(e.dataTransfer.getData('text/plain'));
-        if (data.date && data.date !== day.date && data.html !== undefined) {
-          onDrop?.(day.date, data.date, data.lineIndex, data.html);
-        }
-      } catch (err) {
-        console.error('Failed to parse drop data:', err);
-      }
-    },
-    [day.date, onDrop]
-  );
-
-  // Determine if this card is a valid drop target
-  const isValidDropTarget = isDragActive && dragSourceDate && dragSourceDate !== day.date;
-
   // Compact view - condensed display
   if (compactView) {
     return (
       <>
         <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDropEvent}
+          data-day-date={day.date}
           className={`
             bg-white dark:bg-gray-800 rounded-md shadow-sm border overflow-hidden transition-all duration-200
             ${isToday ? 'border-blue-400 ring-1 ring-blue-100 dark:ring-blue-900' : 'border-gray-200 dark:border-gray-700'}
-            ${isDragOver ? 'ring-2 ring-blue-500 border-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}
-            ${isValidDropTarget && !isDragOver ? 'ring-1 ring-blue-300 dark:ring-blue-700' : ''}
+            ${crossDragTargetIndex != null ? 'ring-2 ring-blue-500 border-blue-500' : ''}
           `}
         >
           {/* Compact Header - inline with content */}
-          <div className={`
-            px-2 py-1.5 flex items-start gap-2
-            ${isDragOver ? 'bg-blue-100 dark:bg-blue-900/40' : ''}
-          `}>
+          <div className="px-2 py-1.5 flex items-start gap-2">
             {/* Date column */}
             <div className={`
               flex-shrink-0 w-10 text-center
@@ -541,62 +509,84 @@ export function DayCard({
               <div>
                 {/* Meals - each on its own line, with checkbox inline */}
                 {lines.length > 0 ? (
-                  <div className="space-y-0">
+                  <div ref={mealContainerRef} data-meal-container className="space-y-0">
                     {lines.map((line, i) => {
                       const isItemized = itemsMap.get(i) || false;
+                      const dragHandlers = getMealDragHandlers(i);
+                      let style: React.CSSProperties | undefined;
+                      if (mealDragState.isDragging && mealDragState.dragIndex !== i) {
+                        const { dragIndex, overIndex, itemHeight } = mealDragState;
+                        if (dragIndex !== null && overIndex !== null) {
+                          if (dragIndex < overIndex && i > dragIndex && i <= overIndex) {
+                            style = { transform: `translateY(-${itemHeight}px)`, transition: 'transform 200ms ease' };
+                          } else if (dragIndex > overIndex && i < dragIndex && i >= overIndex) {
+                            style = { transform: `translateY(${itemHeight}px)`, transition: 'transform 200ms ease' };
+                          }
+                        }
+                      }
+                      const showInsertBefore = !mealDragState.isDragging && crossDragTargetIndex === i;
+                      const showInsertAfter = !mealDragState.isDragging && crossDragTargetIndex === lines.length && i === lines.length - 1;
                       return (
-                        <div key={i} className="flex items-start gap-1.5">
-                          {/* Inline checkbox */}
-                          {showItemizedColumn && (
-                            <button
-                              type="button"
-                              onClick={() => onToggleItemized(i, !isItemized)}
-                              className={`
-                                flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center mt-[5px]
-                                transition-colors duration-150
-                                ${isItemized
-                                  ? 'bg-green-500 border-green-500 dark:bg-green-600 dark:border-green-600'
-                                  : 'border-gray-300 hover:border-gray-400 dark:border-gray-600 dark:hover:border-gray-500'
-                                }
-                              `}
-                              title={isItemized ? 'Itemized' : 'Not itemized'}
-                            >
-                              {isItemized && (
-                                <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                </svg>
-                              )}
-                            </button>
-                          )}
-                          {/* Meal item */}
-                          <div className="flex-1 min-w-0">
-                            <MealItem
-                              html={line}
-                              itemized={isItemized}
-                              onToggle={() => onToggleItemized(i, !isItemized)}
-                              onTextClick={enterEditMode}
-                              onDelete={onDeleteMeal ? () => onDeleteMeal(i) : undefined}
-                              mealTargetDate={mealTargetAttr}
-                              showHeader={false}
-                              showItemizedColumn={false}
-                              compact={true}
-                              lineIndex={i}
-                              date={day.date}
-                              onDragStart={onDragStart}
-                              onDragEnd={onDragEnd}
-                            />
+                        <div key={i} data-drag-index={i} style={style} {...dragHandlers}>
+                          {showInsertBefore && <div className="h-0.5 bg-blue-500 rounded" />}
+                          <div className="flex items-start gap-1.5">
+                            {/* Inline checkbox */}
+                            {showItemizedColumn && (
+                              <button
+                                type="button"
+                                onClick={() => onToggleItemized(i, !isItemized)}
+                                className={`
+                                  flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center mt-[5px]
+                                  transition-colors duration-150
+                                  ${isItemized
+                                    ? 'bg-green-500 border-green-500 dark:bg-green-600 dark:border-green-600'
+                                    : 'border-gray-300 hover:border-gray-400 dark:border-gray-600 dark:hover:border-gray-500'
+                                  }
+                                `}
+                                title={isItemized ? 'Itemized' : 'Not itemized'}
+                              >
+                                {isItemized && (
+                                  <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                )}
+                              </button>
+                            )}
+                            {/* Meal item */}
+                            <div className="flex-1 min-w-0">
+                              <MealItem
+                                html={line}
+                                itemized={isItemized}
+                                onToggle={() => onToggleItemized(i, !isItemized)}
+                                onTextClick={enterEditMode}
+                                onDelete={onDeleteMeal ? () => onDeleteMeal(i) : undefined}
+                                mealTargetDate={mealTargetAttr}
+                                showHeader={false}
+                                showItemizedColumn={false}
+                                compact={true}
+                                lineIndex={i}
+                                date={day.date}
+                                dragHandleMouseDown={getMealHandleMouseDown(i)}
+                              />
+                            </div>
                           </div>
+                          {showInsertAfter && <div className="h-0.5 bg-blue-500 rounded" />}
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  <div
-                    onClick={enterEditMode}
-                    data-meal-target={mealTargetAttr}
-                    className={`text-xs italic cursor-pointer ${isDragOver ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'}`}
-                  >
-                    {isDragOver ? 'Drop here' : 'Tap to add...'}
+                  <div>
+                    {crossDragTargetIndex === 0 && lines.length === 0 && (
+                      <div className="h-0.5 bg-blue-500 rounded" />
+                    )}
+                    <div
+                      onClick={enterEditMode}
+                      data-meal-target={mealTargetAttr}
+                      className="text-xs italic cursor-pointer text-gray-400 dark:text-gray-500"
+                    >
+                      Tap to add...
+                    </div>
                   </div>
                 )}
               </div>
@@ -638,14 +628,11 @@ export function DayCard({
   return (
     <>
       <div
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDropEvent}
+        data-day-date={day.date}
         className={`
           bg-white dark:bg-gray-800 rounded-lg shadow-sm border overflow-hidden transition-all duration-200
           ${isToday ? 'border-blue-400 ring-1 ring-blue-100 dark:ring-blue-900' : 'border-gray-200 dark:border-gray-700'}
-          ${isDragOver ? 'ring-2 ring-blue-500 border-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}
-          ${isValidDropTarget && !isDragOver ? 'ring-1 ring-blue-300 dark:ring-blue-700' : ''}
+          ${crossDragTargetIndex != null ? 'ring-2 ring-blue-500 border-blue-500' : ''}
         `}
       >
         {/* Header */}
@@ -654,7 +641,6 @@ export function DayCard({
           ${isToday
             ? 'bg-blue-50 border-blue-100 dark:bg-blue-900/30 dark:border-blue-800'
             : 'bg-gray-50 border-gray-100 dark:bg-gray-800 dark:border-gray-700'}
-          ${isDragOver ? 'bg-blue-100 dark:bg-blue-900/40' : ''}
         `}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -664,11 +650,6 @@ export function DayCard({
             {isToday && (
               <span className="px-2 py-0.5 text-xs font-medium bg-blue-500 text-white rounded-full">
                 TODAY
-              </span>
-            )}
-            {isDragOver && (
-              <span className="px-2 py-0.5 text-xs font-medium bg-blue-500 text-white rounded-full animate-pulse">
-                Drop here
               </span>
             )}
           </div>
@@ -755,36 +736,59 @@ export function DayCard({
           ) : (
             <div className="min-h-[60px]">
               {lines.length > 0 ? (
-                <div className="space-y-0">
-                  {lines.map((line, i) => (
-                    <MealItem
-                      key={i}
-                      html={line}
-                      itemized={itemsMap.get(i) || false}
-                      onToggle={() => {
-                        const current = itemsMap.get(i) || false;
-                        onToggleItemized(i, !current);
-                      }}
-                      onTextClick={enterEditMode}
-                      onDelete={onDeleteMeal ? () => onDeleteMeal(i) : undefined}
-                      mealTargetDate={mealTargetAttr}
-                      showHeader={i === 0}
-                      showItemizedColumn={showItemizedColumn}
-                      lineIndex={i}
-                      date={day.date}
-                      onDragStart={onDragStart}
-                      onDragEnd={onDragEnd}
-                    />
-                  ))}
+                <div ref={mealContainerRef} data-meal-container className="space-y-0">
+                  {lines.map((line, i) => {
+                    const dragHandlers = getMealDragHandlers(i);
+                    let style: React.CSSProperties | undefined;
+                    if (mealDragState.isDragging && mealDragState.dragIndex !== i) {
+                      const { dragIndex, overIndex, itemHeight } = mealDragState;
+                      if (dragIndex !== null && overIndex !== null) {
+                        if (dragIndex < overIndex && i > dragIndex && i <= overIndex) {
+                          style = { transform: `translateY(-${itemHeight}px)`, transition: 'transform 200ms ease' };
+                        } else if (dragIndex > overIndex && i < dragIndex && i >= overIndex) {
+                          style = { transform: `translateY(${itemHeight}px)`, transition: 'transform 200ms ease' };
+                        }
+                      }
+                    }
+                    const showInsertBefore = !mealDragState.isDragging && crossDragTargetIndex === i;
+                    const showInsertAfter = !mealDragState.isDragging && crossDragTargetIndex === lines.length && i === lines.length - 1;
+                    return (
+                      <div key={i} data-drag-index={i} style={style} {...dragHandlers}>
+                        {showInsertBefore && <div className="h-0.5 bg-blue-500 rounded" />}
+                        <MealItem
+                          html={line}
+                          itemized={itemsMap.get(i) || false}
+                          onToggle={() => {
+                            const current = itemsMap.get(i) || false;
+                            onToggleItemized(i, !current);
+                          }}
+                          onTextClick={enterEditMode}
+                          onDelete={onDeleteMeal ? () => onDeleteMeal(i) : undefined}
+                          mealTargetDate={mealTargetAttr}
+                          showHeader={i === 0}
+                          showItemizedColumn={showItemizedColumn}
+                          lineIndex={i}
+                          date={day.date}
+                          dragHandleMouseDown={getMealHandleMouseDown(i)}
+                        />
+                        {showInsertAfter && <div className="h-0.5 bg-blue-500 rounded" />}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
-                <p
-                  onClick={enterEditMode}
-                  data-meal-target={mealTargetAttr}
-                  className={`text-gray-400 dark:text-gray-500 italic cursor-text ${isDragOver ? 'text-blue-500' : ''}`}
-                >
-                  {isDragOver ? 'Drop meal here' : 'Tap to add meals...'}
-                </p>
+                <div>
+                  {crossDragTargetIndex === 0 && lines.length === 0 && (
+                    <div className="h-0.5 bg-blue-500 rounded" />
+                  )}
+                  <p
+                    onClick={enterEditMode}
+                    data-meal-target={mealTargetAttr}
+                    className="text-gray-400 dark:text-gray-500 italic cursor-text"
+                  >
+                    Tap to add meals...
+                  </p>
+                </div>
               )}
             </div>
           )}
