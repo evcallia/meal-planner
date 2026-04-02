@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useGroceryList } from '../useGroceryList';
+import { useGroceryList, resetGrocerySessionLoaded } from '../useGroceryList';
 import type { GrocerySection } from '../../types';
 
 vi.mock('../../api/client', () => ({
@@ -79,6 +79,7 @@ const sampleSections: GrocerySection[] = [
 
 describe('useGroceryList - API error handling', () => {
   beforeEach(() => {
+    resetGrocerySessionLoaded();
     vi.clearAllMocks();
     mockUseOnlineStatus.mockReturnValue(true);
     mockGetGroceryList.mockResolvedValue(sampleSections);
@@ -148,6 +149,7 @@ describe('useGroceryList - API error handling', () => {
       items: [{ id: 'i1', section_id: 's1', name: 'Bananas', quantity: '2', checked: true, position: 0, store_id: null, updated_at: '2026-01-01T00:00:00Z' }],
     }]);
 
+    resetGrocerySessionLoaded();
     const { result: result2 } = renderHook(() => useGroceryList());
     await waitFor(() => expect(result2.current.loading).toBe(false));
 

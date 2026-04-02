@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useMealIdeas } from '../useMealIdeas';
+import { useMealIdeas, resetMealIdeasSessionLoaded } from '../useMealIdeas';
 
 vi.mock('../../api/client', () => ({
   getMealIdeas: vi.fn(),
@@ -41,6 +41,7 @@ describe('useMealIdeas', () => {
   const storage = new Map<string, string>();
 
   beforeEach(() => {
+    resetMealIdeasSessionLoaded();
     vi.clearAllMocks();
     vi.useRealTimers();
     mockUseOnlineStatus.mockReturnValue(true);

@@ -49,6 +49,13 @@ function loadGroceryFromLocalStorage(): GrocerySection[] {
   }
 }
 
+// Track whether the initial API fetch has happened this session.
+// Survives component remounts (tab switches) — subsequent mounts
+// just load from the local cache that SSE keeps warm.
+let sessionLoaded = false;
+export function resetGrocerySessionLoaded() { sessionLoaded = false; }
+export function markGrocerySessionLoaded() { sessionLoaded = true; }
+
 export function useGroceryList() {
   const [sections, setSections] = useState<GrocerySection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,7 +117,8 @@ export function useGroceryList() {
   isOnlineRef.current = isOnline;
 
   // Load grocery list (cache-first: show cached data immediately, then refresh from API)
-  const loadGroceryList = useCallback(async () => {
+  // skipApi: true to only load from local cache (used on remount when SSE keeps cache warm)
+  const loadGroceryList = useCallback(async (skipApi = false) => {
     const fetchVersion = optimisticVersionRef.current;
 
     // 1. Load from cache immediately
@@ -124,7 +132,7 @@ export function useGroceryList() {
     } catch { /* cache failed — continue to API */ }
 
     // 2. If online, fetch from API in background (skip if pending offline changes exist)
-    if (isOnlineRef.current) {
+    if (!skipApi && isOnlineRef.current) {
       const pending = await getPendingChanges();
       const hasGroceryChanges = pending.some(c => c.type.startsWith('grocery-'));
       if (!hasGroceryChanges) {
@@ -145,6 +153,7 @@ export function useGroceryList() {
             store_id: i.store_id,
             updated_at: i.updated_at,
           })));
+          sessionLoaded = true;
         } catch { /* API failed — keep cached data */ }
       }
     }
@@ -176,19 +185,8 @@ export function useGroceryList() {
     }))));
   };
 
-  // Load on mount, and reload when coming back online (but not when going offline)
-  const prevOnlineRef = useRef(isOnline);
   useEffect(() => {
-    const wasOffline = !prevOnlineRef.current;
-    prevOnlineRef.current = isOnline;
-    if (isOnline && wasOffline) {
-      // Coming back online — refresh from server
-      loadGroceryList();
-    }
-  }, [isOnline, loadGroceryList]);
-
-  useEffect(() => {
-    loadGroceryList();
+    loadGroceryList(sessionLoaded);
   }, [loadGroceryList]);
 
   // Listen for realtime updates

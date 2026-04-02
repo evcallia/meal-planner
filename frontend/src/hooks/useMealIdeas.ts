@@ -39,6 +39,10 @@ function parseStoredIdeas(raw: string | null): MealIdea[] {
   }
 }
 
+let sessionLoaded = false;
+export function resetMealIdeasSessionLoaded() { sessionLoaded = false; }
+export function markMealIdeasSessionLoaded() { sessionLoaded = true; }
+
 export function useMealIdeas() {
   const [ideas, setIdeas] = useState<MealIdea[]>([]);
   const isMountedRef = useRef(true);
@@ -85,7 +89,7 @@ export function useMealIdeas() {
   isOnlineRef.current = isOnline;
 
   // Load meal ideas (cache-first: show cached data immediately, then refresh from API)
-  const refreshIdeas = useCallback(async () => {
+  const refreshIdeas = useCallback(async (skipApi = false) => {
     const token = ++loadTokenRef.current;
 
     // Capture legacy localStorage before anything overwrites it (for first-load hydration)
@@ -107,7 +111,7 @@ export function useMealIdeas() {
     } catch { /* cache failed — continue to API */ }
 
     // 2. If online, fetch from API in background (skip if pending offline changes exist)
-    if (isOnlineRef.current) {
+    if (!skipApi && isOnlineRef.current) {
       const pending = await getPendingChanges();
       const hasMealIdeaChanges = pending.some(c => c.type.startsWith('meal-idea-'));
       if (!hasMealIdeaChanges) {
@@ -145,23 +149,14 @@ export function useMealIdeas() {
               }
             }
           }
+          sessionLoaded = true;
         } catch { /* API failed — keep cached data */ }
       }
     }
   }, []);
 
-  // Load on mount, and reload when coming back online (but not when going offline)
-  const prevOnlineRef = useRef(isOnline);
   useEffect(() => {
-    const wasOffline = !prevOnlineRef.current;
-    prevOnlineRef.current = isOnline;
-    if (isOnline && wasOffline) {
-      refreshIdeas();
-    }
-  }, [isOnline, refreshIdeas]);
-
-  useEffect(() => {
-    refreshIdeas();
+    refreshIdeas(sessionLoaded);
   }, [refreshIdeas]);
 
   useEffect(() => {

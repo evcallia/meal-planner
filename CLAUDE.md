@@ -66,7 +66,8 @@ Key details:
 - Ghost element: clone of `[data-drag-index]` element, `position: fixed`, `overflow: hidden`, cleaned up on unmount via `useEffect`
 - **Mobile touch scroll prevention**: React synthetic touch handlers are passive by default — `e.preventDefault()` in `onTouchMove` won't block page scrolling. Fix: add a document-level `touchmove` listener with `{ passive: false }` in `beginDrag`, clean up in `finishDrag`
 - **Auto-scroll during drag**: `requestAnimationFrame` loop in `beginDrag` scrolls viewport when `lastClientY` is within 60px of edges (proportional speed, max 12px/frame). Must recache item rects after each scroll frame for accurate hit-testing
-- **Cross-section drag**: Each section has its own `useDragReorder` instance. Parent component bridges them via `onDropOutside`/`onDragMove` callbacks and shared `crossDrag` state. Drop target found by querying `[data-section-id]` elements and measuring item rects within `[data-item-container]`
+- **Cross-section/cross-day drag**: Each section/day has its own `useDragReorder` instance. Parent component bridges them via `onDropOutside`/`onDragMove` callbacks and shared `crossDrag` state. Drop target found by querying `[data-section-id]` or `[data-day-date]` elements and measuring item rects within `[data-item-container]` or `[data-meal-container]`
+- **Meal drag reordering**: DayCard uses `useDragReorder` for within-day reorder + cross-day moves. CalendarView bridges cross-day via `findMealDropTarget` (queries `[data-day-date]` DOM elements). Dragged item hidden with `opacity: 0` so shifted items are visible. `handleMealReorder` remaps `line_index` for itemized checkboxes. `handleMoveMeal` accepts optional `insertAt` for precise cross-day insertion position
 - **Collapsed state with replace APIs**: When `replaceGroceryListAPI`/`replacePantryListAPI` recreates sections (new server IDs), local state keyed by ID resets. Fix: lift collapsed state to parent component, keyed by section **name** (stable across replace operations)
 
 ## Optimistic Update Patterns (useGroceryList)
@@ -102,9 +103,25 @@ Key details:
 - To authenticate in preview: navigate to `/api/auth/dev-login` (e.g. `window.location.href = '/api/auth/dev-login'`)
 - Docker postgres (`meal-planner-db-1` from docker-compose) uses password from `.env`. The standalone `mealplanner-pg` container uses `changeme`. They use different volumes
 
+## Multi-Day Calendar Events
+- `get_events_for_date()` in `ical_service.py` checks if `target_date` falls between `start_time.date()` and `end_time.date()` (all-day end dates are exclusive per iCal spec)
+- DB query in `_get_events_from_db` uses `or_()` to also fetch events whose `end_time` extends into the requested range
+- Frontend `getEventDates()` in CalendarView computes all dates an event spans for restore/hide operations
+- `compareEvents()` sorts holidays first, then by `start_time`
+
+## Data Fetching Architecture
+- **Singleton online status**: `useOnlineStatus` uses `useSyncExternalStore` with module-level state — single `/api/health` check shared across all consumers, no redundant checks on tab switch
+- **Upfront data fetch**: App.tsx `fetchAllData()` fetches grocery, pantry, stores, meal-ideas in parallel on app load. Module-level `sessionLoaded` flags are marked synchronously during render (before child effects) so hooks skip their own API calls
+- **Session-loaded guard**: Each hook (`useGroceryList`, `usePantry`, `useMealIdeas`, `useStores`) has a module-level `sessionLoaded` flag. On mount, hooks load from local cache only if `sessionLoaded` is true (set by App.tsx `fetchAllData`). Export `reset*SessionLoaded()` and `mark*SessionLoaded()` for App.tsx and tests
+- **Pre-cache double-run prevention**: `preCacheDoneRef` in App.tsx prevents the effect from running twice when auth calls `setUser` twice (cached + API)
+- **Focus/reconnect refresh**: `broadcastFullRefresh()` in App.tsx calls `fetchAllData()` (resets flags + re-fetches all data) and dispatches a synthetic `calendar.refreshed` event. Called on `visibilitychange` (hidden→visible) and online reconnect
+- **Background cache warmer**: App.tsx SSE handler updates IndexedDB for inactive tabs (grocery, pantry, stores, meal-ideas, notes, item, calendar events, hidden events). Active tab's hooks handle their own SSE events
+- **Calendar single-fetch**: CalendarView init fetches one `getDays` call for the full range (past 2 weeks through future 8 weeks) and one `getEvents` call, instead of separate calls per range
+
 ## Testing Patterns
 - Mock `authEvents` in test files that import modules using it: `vi.mock('../../authEvents', () => ({ emitAuthFailure: vi.fn(), onAuthFailure: vi.fn(() => vi.fn()) }))`
 - Mock fetch responses need `headers: { get: () => 'application/json' }` since `fetchAPI` now checks content-type on errors
 - `useSync.test.ts` uses `importOriginal` for `api/client` mock to preserve `AuthError` class for `instanceof` checks
 - `useSettings.test.ts` mocks `useOnlineStatus` to return `false` (offline) to isolate localStorage behavior from server sync. Also mocks `api/client` with `getSettings`/`putSettings` rejecting to simulate offline
 - Backend settings tests use `authenticated_client` fixture (not bare `client`) and mock `broadcast_to_user` with `AsyncMock`
+- Hooks with module-level `sessionLoaded` flags need `reset*SessionLoaded()` in `beforeEach` to prevent cross-test pollution. Set `navigator.onLine` before `resetOnlineStatus()` when testing offline scenarios

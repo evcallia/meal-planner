@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { usePantry } from '../usePantry';
+import { usePantry, resetPantrySessionLoaded } from '../usePantry';
 
 const pushActionCalls: any[] = [];
 
@@ -92,6 +92,7 @@ const sampleSections = [
 
 describe('usePantry undo/redo', () => {
   beforeEach(() => {
+    resetPantrySessionLoaded();
     vi.clearAllMocks();
     vi.useRealTimers();
     pushActionCalls.length = 0;

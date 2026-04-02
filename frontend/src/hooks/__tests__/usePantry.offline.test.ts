@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { usePantry } from '../usePantry';
+import { usePantry, resetPantrySessionLoaded } from '../usePantry';
 
 vi.mock('../../api/client', () => ({
   getPantryList: vi.fn(),
@@ -48,6 +48,7 @@ const mockUseOnlineStatus = vi.mocked(useOnlineStatus);
 
 describe('usePantry - offline operations', () => {
   beforeEach(() => {
+    resetPantrySessionLoaded();
     vi.clearAllMocks();
     vi.useRealTimers();
     mockUseOnlineStatus.mockReturnValue(false);

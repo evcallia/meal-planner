@@ -191,53 +191,20 @@ describe('DayCard', () => {
     expect(onHideEvent).toHaveBeenCalledWith(mockDayData.events[0])
   })
 
-  it('handles drag and drop interactions', async () => {
-    const onDrop = vi.fn()
-    render(
-      <DayCard
-        {...defaultProps}
-        onDrop={onDrop}
-        dragSourceDate="2024-02-14"
-      />
-    )
+  it('renders data-day-date attribute on card', () => {
+    render(<DayCard {...defaultProps} />)
 
-    const card = document.querySelector('.bg-white.dark\\:bg-gray-800.rounded-lg.shadow-sm.border') as HTMLElement
+    const card = document.querySelector('[data-day-date="2024-02-15"]') as HTMLElement
     expect(card).toBeTruthy()
-
-    const dataTransfer = {
-      dropEffect: '',
-      getData: vi.fn(() => JSON.stringify({ date: '2024-02-14', lineIndex: 0, html: 'Breakfast' })),
-    }
-
-    fireEvent.dragOver(card, { dataTransfer })
-    await waitFor(() => {
-      expect(screen.getByText('Drop here')).toBeInTheDocument()
-    })
-
-    fireEvent.dragLeave(card, { relatedTarget: document.body })
-    await waitFor(() => {
-      expect(screen.queryByText('Drop here')).not.toBeInTheDocument()
-    })
-
-    fireEvent.dragOver(card, { dataTransfer })
-
-    fireEvent.drop(card, { dataTransfer })
-    expect(onDrop).toHaveBeenCalledWith('2024-02-15', '2024-02-14', 0, 'Breakfast')
   })
 
-  it('logs when drop data cannot be parsed', async () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    render(<DayCard {...defaultProps} onDrop={vi.fn()} />)
+  it('shows cross-drag highlight ring when crossDragTargetIndex is set', () => {
+    render(<DayCard {...defaultProps} crossDragTargetIndex={0} />)
 
-    const card = document.querySelector('.bg-white.dark\\:bg-gray-800.rounded-lg.shadow-sm.border') as HTMLElement
-    const dataTransfer = {
-      dropEffect: '',
-      getData: vi.fn(() => 'not-json'),
-    }
-
-    fireEvent.drop(card, { dataTransfer })
-    expect(consoleSpy).toHaveBeenCalledWith('Failed to parse drop data:', expect.any(Error))
-    consoleSpy.mockRestore()
+    const card = document.querySelector('[data-day-date="2024-02-15"]') as HTMLElement
+    expect(card).toBeTruthy()
+    expect(card.className).toContain('ring-2')
+    expect(card.className).toContain('ring-blue-500')
   })
 
   it('shows events loading skeleton when eventsLoading is true', () => {

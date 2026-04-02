@@ -14,10 +14,7 @@ interface MealItemProps {
   showItemizedColumn?: boolean;
   compact?: boolean;
   bgClass?: string;
-  lineIndex: number;
-  date: string;
-  onDragStart?: (date: string, lineIndex: number, html: string) => void;
-  onDragEnd?: () => void;
+  dragHandleMouseDown?: (e: React.MouseEvent) => void;
 }
 
 const SWIPE_THRESHOLD = 50;
@@ -34,10 +31,7 @@ export function MealItem({
   showItemizedColumn = true,
   compact = false,
   bgClass = 'bg-white dark:bg-gray-800',
-  lineIndex,
-  date,
-  onDragStart,
-  onDragEnd,
+  dragHandleMouseDown,
 }: MealItemProps) {
   const decodedHtml = decodeHtmlEntities(html);
   const linkedHtml = sanitizeHtml(autoLinkUrls(decodedHtml));
@@ -51,37 +45,7 @@ export function MealItem({
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
 
-  const handleDragStart = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', JSON.stringify({ date, lineIndex, html: decodedHtml }));
-      // Set a custom drag image
-      if (dragRef.current) {
-        const clone = dragRef.current.cloneNode(true) as HTMLDivElement;
-        clone.style.position = 'absolute';
-        clone.style.top = '-1000px';
-        clone.style.opacity = '0.8';
-        clone.style.backgroundColor = '#fff';
-        clone.style.padding = '8px';
-        clone.style.borderRadius = '4px';
-        clone.style.boxShadow = '0 2px 8px rgba(0,0,0,0.2)';
-        clone.style.maxWidth = '200px';
-        document.body.appendChild(clone);
-        // Position drag image to the left of cursor (offset by element width)
-        const rect = clone.getBoundingClientRect();
-        e.dataTransfer.setDragImage(clone, rect.width, 0);
-        setTimeout(() => document.body.removeChild(clone), 0);
-      }
-      onDragStart?.(date, lineIndex, decodedHtml);
-    },
-    [date, lineIndex, decodedHtml, onDragStart]
-  );
-
-  const handleDragEnd = useCallback(() => {
-    onDragEnd?.();
-  }, [onDragEnd]);
-
-  // Touch-based drag support for mobile
+  // Touch-based swipe-to-delete support for mobile
   const handleTouchStart = useCallback(
     (e: React.TouchEvent<HTMLDivElement>) => {
       const touch = e.touches[0];
@@ -98,17 +62,8 @@ export function MealItem({
         }
         return;
       }
-
-      // Long press to initiate drag
-      touchStartRef.current.timeout = setTimeout(() => {
-        onDragStart?.(date, lineIndex, decodedHtml);
-        // Trigger haptic feedback if available
-        if (navigator.vibrate) {
-          navigator.vibrate(50);
-        }
-      }, 300);
     },
-    [date, lineIndex, decodedHtml, onDragStart, isSwipeRevealed]
+    [isSwipeRevealed]
   );
 
   const handleTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
@@ -179,13 +134,10 @@ export function MealItem({
       )}
       <div
         ref={dragRef}
-        draggable
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className={`group flex items-start ${compact ? 'py-0.5' : 'py-1.5'} ${showItemizedColumn ? 'gap-3' : ''} cursor-grab active:cursor-grabbing ${bgClass}`}
+        className={`group flex items-start ${compact ? 'py-0.5' : 'py-1.5'} ${showItemizedColumn ? 'gap-3' : ''} ${bgClass}`}
         style={{
           transform: swipeOffset > 0 ? `translateX(-${swipeOffset}px)` : undefined,
           transition: swipeModeRef.current ? undefined : 'transform 200ms ease-out',
@@ -232,7 +184,10 @@ export function MealItem({
           dangerouslySetInnerHTML={{ __html: linkedHtml }}
         />
         {/* Drag handle indicator */}
-        <div className={`flex-shrink-0 flex items-center opacity-30 hover:opacity-60 transition-opacity ml-1 ${showHeader && showItemizedColumn ? 'mt-4' : ''}`}>
+        <div
+          onMouseDown={dragHandleMouseDown}
+          className={`flex-shrink-0 flex items-center opacity-30 hover:opacity-60 transition-opacity ml-1 cursor-grab active:cursor-grabbing ${showHeader && showItemizedColumn ? 'mt-4' : ''}`}
+        >
           <svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
             <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
           </svg>

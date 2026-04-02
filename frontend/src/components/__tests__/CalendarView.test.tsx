@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
-import { CalendarView } from '../CalendarView';
+import { CalendarView, resetCalendarSessionLoaded } from '../CalendarView';
 
 vi.mock('../../api/client', () => ({
   getDays: vi.fn(),
@@ -129,6 +129,7 @@ const mockDayCard = vi.mocked(DayCard);
 
 describe('CalendarView', () => {
   beforeEach(() => {
+    resetCalendarSessionLoaded();
     vi.clearAllMocks();
     mockUseOnlineStatus.mockReturnValue(true);
     mockGetDays.mockResolvedValue(mockDays);
@@ -457,67 +458,20 @@ describe('CalendarView', () => {
     });
   });
 
-  it('moves meals between days and updates itemized status', async () => {
-    const sourceNotes = 'Breakfast<div>Lunch</div>';
-    const customDays = [
-      {
-        date: todayStr,
-        meal_note: {
-          id: '1',
-          date: todayStr,
-          notes: sourceNotes,
-          items: [{ line_index: 0, itemized: true }],
-          updated_at: '2024-01-01T00:00:00Z',
-        },
-        events: [],
-      },
-      {
-        date: day2Str,
-        meal_note: null,
-        events: [],
-      },
-      {
-        date: day3Str,
-        meal_note: null,
-        events: [],
-      },
-    ];
-    mockGetDays.mockResolvedValueOnce(customDays);
-    mockGetEvents.mockResolvedValueOnce({});
-    mockUpdateNotes
-      .mockResolvedValueOnce({
-        id: '1',
-        date: todayStr,
-        notes: 'Lunch',
-        items: [],
-        updated_at: '2024-01-01T00:00:00Z',
-      })
-      .mockResolvedValueOnce({
-        id: '2',
-        date: day2Str,
-        notes: 'Breakfast',
-        items: [],
-        updated_at: '2024-01-01T00:00:00Z',
-      });
-
+  it('passes drag props to DayCard', async () => {
     render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
 
     await waitFor(() => {
       expect(screen.getByTestId(`day-card-${todayStr}`)).toBeInTheDocument();
     });
 
-    const targetCall = mockDayCard.mock.calls.find(call => call[0].day.date === day2Str);
-    await act(async () => {
-      await targetCall?.[0].onDrop?.(day2Str, todayStr, 0, 'Breakfast');
-    });
-
-    await waitFor(() => {
-      expect(mockUpdateNotes).toHaveBeenCalledWith(todayStr, 'Lunch');
-      expect(mockUpdateNotes).toHaveBeenCalledWith(day2Str, 'Breakfast');
-      expect(mockToggleItemized).toHaveBeenCalledWith(day2Str, 0, true);
-      expect(mockSaveLocalNote).toHaveBeenCalledWith(todayStr, 'Lunch', []);
-      expect(mockSaveLocalNote).toHaveBeenCalledWith(day2Str, 'Breakfast', [{ line_index: 0, itemized: true }]);
-    });
+    const todayCall = mockDayCard.mock.calls.find(call => call[0].day.date === todayStr);
+    expect(todayCall?.[0].onMealReorder).toBeDefined();
+    expect(todayCall?.[0].onMealDropOutside).toBeDefined();
+    expect(todayCall?.[0].onMealDragMove).toBeDefined();
+    expect(todayCall?.[0].onMealDragStart).toBeDefined();
+    expect(todayCall?.[0].onMealDragEnd).toBeDefined();
+    expect(todayCall?.[0].crossDragTargetIndex).toBeNull();
   });
 
   it('filters hidden events from the UI', async () => {
@@ -573,69 +527,16 @@ describe('CalendarView', () => {
     consoleSpy.mockRestore();
   });
 
-  it('moves the last meal to another day and leaves source empty', async () => {
-    const sourceNotes = 'OnlyOne';
-    const customDays = [
-      {
-        date: todayStr,
-        meal_note: {
-          id: '1',
-          date: todayStr,
-          notes: sourceNotes,
-          items: [],
-          updated_at: '2024-01-01T00:00:00Z',
-        },
-        events: [],
-      },
-      {
-        date: day2Str,
-        meal_note: {
-          id: '2',
-          date: day2Str,
-          notes: 'First',
-          items: [],
-          updated_at: '2024-01-01T00:00:00Z',
-        },
-        events: [],
-      },
-      {
-        date: day3Str,
-        meal_note: null,
-        events: [],
-      },
-    ];
-    mockGetDays.mockResolvedValueOnce(customDays);
-    mockGetEvents.mockResolvedValueOnce({});
-    mockUpdateNotes
-      .mockResolvedValueOnce({
-        id: '1',
-        date: todayStr,
-        notes: '',
-        items: [],
-        updated_at: '2024-01-01T00:00:00Z',
-      })
-      .mockResolvedValueOnce({
-        id: '2',
-        date: day2Str,
-        notes: 'First<div>OnlyOne</div>',
-        items: [],
-        updated_at: '2024-01-01T00:00:00Z',
-      });
-
+  it('passes crossDragTargetIndex when crossDrag targets a day', async () => {
     render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
 
     await waitFor(() => {
       expect(screen.getByTestId(`day-card-${todayStr}`)).toBeInTheDocument();
     });
 
-    const targetCall = mockDayCard.mock.calls.find(call => call[0].day.date === day2Str);
-    await act(async () => {
-      await targetCall?.[0].onDrop?.(day2Str, todayStr, 0, 'OnlyOne');
-    });
-
-    await waitFor(() => {
-      expect(mockUpdateNotes).toHaveBeenCalledWith(todayStr, '');
-      expect(mockUpdateNotes).toHaveBeenCalledWith(day2Str, 'First<div>OnlyOne</div>');
-    });
+    // crossDragTargetIndex defaults to null when no cross-day drag is active
+    const todayCall = mockDayCard.mock.calls.find(call => call[0].day.date === todayStr);
+    expect(todayCall?.[0].crossDragTargetIndex).toBeNull();
+    expect(todayCall?.[0].crossDragItemHeight).toBeUndefined();
   });
 });

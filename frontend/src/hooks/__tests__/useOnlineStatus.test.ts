@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
-import { useOnlineStatus } from '../useOnlineStatus'
+import { useOnlineStatus, resetOnlineStatus } from '../useOnlineStatus'
 
 // Mock navigator.onLine
 Object.defineProperty(navigator, 'onLine', {
@@ -13,8 +13,9 @@ global.fetch = mockFetch
 
 describe('useOnlineStatus', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
     navigator.onLine = true
+    resetOnlineStatus()
+    vi.clearAllMocks()
     mockFetch.mockResolvedValue({ ok: true })
   })
 
@@ -26,14 +27,16 @@ describe('useOnlineStatus', () => {
 
   it('returns initial offline status', async () => {
     navigator.onLine = false
-    
+    resetOnlineStatus()
+
     const { result } = renderHook(() => useOnlineStatus())
-    
+
     await waitFor(() => expect(result.current).toBe(false))
   })
 
   it('updates status when going online', async () => {
     navigator.onLine = false
+    resetOnlineStatus()
     const { result } = renderHook(() => useOnlineStatus())
     
     await waitFor(() => expect(result.current).toBe(false))

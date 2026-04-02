@@ -234,6 +234,8 @@ async def unhide_calendar_event(
 
     event_id = _event_key(hidden.event_uid, hidden.calendar_name, hidden.start_time)
     start_time = hidden.start_time.isoformat()
+    end_time = hidden.end_time.isoformat() if hidden.end_time else None
+    all_day = hidden.all_day
     db.delete(hidden)
     db.commit()
 
@@ -243,6 +245,8 @@ async def unhide_calendar_event(
         "event_uid": hidden.event_uid,
         "calendar_name": hidden.calendar_name,
         "start_time": start_time,
+        "end_time": end_time,
+        "all_day": all_day,
     }, source_id=request.headers.get("x-source-id"))
 
     return {"status": "ok"}

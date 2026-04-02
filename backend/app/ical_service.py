@@ -5,6 +5,7 @@ from icalendar import Calendar
 import time
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from sqlalchemy import or_
 from typing import Optional
 import urllib.request
 
@@ -338,7 +339,8 @@ def _fetch_events_from_caldav(start_date: date, end_date: date) -> list[Calendar
                             event_date = event_start.date()
                             event_uid = _normalize_uid(str(uid) if uid is not None else None, calendar_name, event_start, summary)
 
-                            if event_date < start_date or event_date > end_date:
+                            event_end_date = event_end.date() if event_end else event_date
+                            if event_end_date < start_date or event_date > end_date:
                                 continue
 
                             event = CalendarEvent(
@@ -519,8 +521,11 @@ def _get_events_from_db(start_date: date, end_date: date) -> list[CalendarEvent]
     db = SessionLocal()
     try:
         cached = db.query(CachedCalendarEvent).filter(
-            CachedCalendarEvent.event_date >= start_date,
-            CachedCalendarEvent.event_date <= end_date
+            CachedCalendarEvent.event_date <= end_date,
+            or_(
+                CachedCalendarEvent.event_date >= start_date,
+                CachedCalendarEvent.end_time >= datetime.combine(start_date, datetime.min.time())
+            )
         ).order_by(CachedCalendarEvent.start_time).all()
 
         return [
@@ -621,8 +626,11 @@ def _filter_hidden_events(events: list[CalendarEvent], start_date: date, end_dat
     db = SessionLocal()
     try:
         hidden = db.query(HiddenCalendarEvent).filter(
-            HiddenCalendarEvent.event_date >= start_date,
             HiddenCalendarEvent.event_date <= end_date,
+            or_(
+                HiddenCalendarEvent.event_date >= start_date,
+                HiddenCalendarEvent.end_time >= datetime.combine(start_date, datetime.min.time())
+            )
         ).all()
         if not hidden:
             return events
@@ -712,8 +720,21 @@ async def fetch_ical_events(
 
 
 def get_events_for_date(events: list[CalendarEvent], target_date: date) -> list[CalendarEvent]:
-    """Filter events for a specific date."""
-    return [e for e in events if e.start_time.date() == target_date]
+    """Filter events for a specific date, including multi-day events that span this date."""
+    result = []
+    for e in events:
+        start = e.start_time.date()
+        if e.end_time is not None:
+            end = e.end_time.date()
+            # All-day events: end date is exclusive (iCal spec DTEND for DATE values)
+            if e.all_day and end > start:
+                end = end - timedelta(days=1)
+            if start <= target_date <= end:
+                result.append(e)
+        else:
+            if start == target_date:
+                result.append(e)
+    return result
 
 
 # Alias for backward compatibility with tests
