@@ -130,7 +130,10 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       filtered = filtered
         .map(s => ({
           ...s,
-          items: s.items.filter(i => !i.store_id || !excludedStoreIds.has(i.store_id)),
+          items: s.items.filter(i => {
+            if (!i.store_id) return !excludedStoreIds.has(NONE_STORE_ID);
+            return !excludedStoreIds.has(i.store_id);
+          }),
         }))
         .filter(s => s.items.some(i => !i.checked));
     }
