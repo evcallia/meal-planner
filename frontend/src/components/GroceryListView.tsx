@@ -67,6 +67,23 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     return counts;
   }, [sections]);
 
+  // Auto-deselect stores that no longer have unchecked items
+  useEffect(() => {
+    if (selectedStoreIds.size === 0) return;
+    let changed = false;
+    const next = new Set(selectedStoreIds);
+    for (const id of next) {
+      if ((storeCounts.get(id) ?? 0) === 0) {
+        next.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) {
+      setSelectedStoreIds(next);
+      try { localStorage.setItem('meal-planner-selected-stores', JSON.stringify([...next])); } catch {}
+    }
+  }, [storeCounts, selectedStoreIds]);
+
   const handleToggleSelect = useCallback((storeId: string) => {
     setSelectedStoreIds(prev => {
       const next = new Set(prev);
