@@ -14,6 +14,7 @@ from app.schemas import (
     GroceryReplacePayload,
     GroceryReorderSections,
     GroceryReorderItems,
+    GrocerySectionCreate,
     GrocerySectionUpdate,
     GroceryMoveItem,
 )
@@ -124,6 +125,26 @@ async def delete_section(
     db.delete(section)
     db.commit()
     await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
+
+
+@router.post("/sections", response_model=GrocerySectionSchema, status_code=201)
+async def create_section(
+    payload: GrocerySectionCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    if payload.position is not None:
+        position = payload.position
+    else:
+        max_pos = db.query(GrocerySection).count()
+        position = max_pos
+    section = GrocerySection(name=payload.name.strip(), position=position)
+    db.add(section)
+    db.commit()
+    db.refresh(section)
+    await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
+    return section
 
 
 @router.patch("/reorder-sections")

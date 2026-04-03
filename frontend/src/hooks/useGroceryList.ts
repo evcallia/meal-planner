@@ -13,6 +13,7 @@ import {
   renameGrocerySection as renameGrocerySectionAPI,
   moveGroceryItem as moveGroceryItemAPI,
   deleteGrocerySection as deleteGrocerySectionAPI,
+  createGrocerySection as createGrocerySectionAPI,
 } from '../api/client';
 import {
   saveLocalGrocerySections,
@@ -1227,7 +1228,7 @@ export function useGroceryList() {
     if (!section || section.items.length > 0) return;
 
     const originalIndex = sections.indexOf(section);
-    const sectionRef = { id: sectionId, name: section.name };
+    const sectionRef = { id: sectionId };
 
     // Push undo BEFORE delete so it's available immediately
     pushAction({
@@ -1238,7 +1239,7 @@ export function useGroceryList() {
         pendingMutationsRef.current++;
         // Restore section at original position with a temp ID
         const tempId = generateTempId();
-        const restoredSection: GrocerySection = { ...section, id: tempId, items: [] };
+        const restoredSection: GrocerySection = { id: tempId, name: section.name, position: originalIndex, items: [] };
         setSections(prev => {
           const next = [...prev];
           next.splice(Math.min(originalIndex, next.length), 0, restoredSection);
@@ -1246,33 +1247,12 @@ export function useGroceryList() {
         });
         if (isOnline) {
           try {
-            // Re-create via replace and find the restored section by name
-            const result = await replaceGroceryListAPI(
-              (() => {
-                const current = sections.filter(s => s.id !== sectionRef.id);
-                const restored = [...current];
-                restored.splice(Math.min(originalIndex, restored.length), 0, { ...section, items: [] });
-                return restored.map((s) => ({
-                  name: s.name,
-                  items: s.items.map(item => ({
-                    name: item.name,
-                    quantity: item.quantity,
-                    checked: item.checked,
-                    store_id: item.store_id,
-                  })),
-                }));
-              })()
-            );
-            // Find the new section ID and remap
-            const newSection = result.find((s, i) => s.name === sectionRef.name && i === Math.min(originalIndex, result.length - 1))
-              || result.find(s => s.name === sectionRef.name);
-            if (newSection) {
-              sectionRef.id = newSection.id;
-              idRemapRef.current.set(prevId, newSection.id);
-              // Update local state with real IDs from server
-              optimisticVersionRef.current++;
-              setSections(result);
-            }
+            const created = await createGrocerySectionAPI(section.name, originalIndex);
+            sectionRef.id = created.id;
+            idRemapRef.current.set(prevId, created.id);
+            // Update local state with real ID
+            optimisticVersionRef.current++;
+            setSections(prev => prev.map(s => s.id === tempId ? { ...s, id: created.id } : s));
           } catch { /* offline queue would handle */ }
         }
         settleMutation();

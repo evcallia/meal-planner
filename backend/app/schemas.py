@@ -193,6 +193,11 @@ class GroceryReplacePayload(BaseModel):
     sections: list[GroceryReplaceSection]
 
 
+class GrocerySectionCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    position: int | None = None
+
+
 class GrocerySectionUpdate(BaseModel):
     name: str = Field(..., min_length=1)
 

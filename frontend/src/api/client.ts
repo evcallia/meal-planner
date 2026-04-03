@@ -316,6 +316,13 @@ export async function renameGrocerySection(sectionId: string, name: string): Pro
   });
 }
 
+export async function createGrocerySection(name: string, position?: number): Promise<GrocerySection> {
+  return fetchAPI<GrocerySection>('/grocery/sections', {
+    method: 'POST',
+    body: JSON.stringify({ name, position }),
+  });
+}
+
 export async function deleteGrocerySection(sectionId: string): Promise<void> {
   await fetchAPI(`/grocery/sections/${sectionId}`, { method: 'DELETE' });
 }
