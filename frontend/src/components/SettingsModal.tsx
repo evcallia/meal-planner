@@ -206,9 +206,6 @@ async function enrichPendingChanges(changes: PendingChange[]): Promise<EnrichedP
       case 'grocery-delete-section':
         detail = (payload?.name as string) || grocerySectionMap.get(payload?.sectionId as string) || '';
         break;
-      case 'pantry-move-item':
-        detail = pantryItemMap.get(payload?.id as string) || '';
-        break;
     }
     } catch { /* detail stays empty on error */ }
 
