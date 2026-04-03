@@ -377,6 +377,12 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     requestAnimationFrame(() => quickAddItemRef.current?.focus());
   }, [quickAddItemName, quickAddSection, quickAddQuantity, sections, addItem, mergeList]);
 
+  const resetQuickAdd = useCallback(() => {
+    setQuickAddSection('');
+    setQuickAddItemName('');
+    setQuickAddQuantity(1);
+  }, []);
+
   const handleClearChecked = useCallback(async () => {
     setShowClearMenu(false);
     await clearChecked();
@@ -417,6 +423,12 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     );
   }
 
+  const closeIcon = (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  );
+
   return (
     <div className="space-y-4">
       {/* Action bar: add items + clear */}
@@ -434,9 +446,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                     className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
                     aria-label="Close"
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
+                    {closeIcon}
                   </button>
                 </div>
                 <textarea
@@ -491,13 +501,11 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                   </h3>
                   {sections.length > 0 && (
                     <button
-                      onClick={() => { setAddMode('closed'); setQuickAddSection(''); setQuickAddItemName(''); setQuickAddQuantity(1); }}
+                      onClick={() => { setAddMode('closed'); resetQuickAdd(); }}
                       className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
                       aria-label="Close"
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
+                      {closeIcon}
                     </button>
                   )}
                 </div>
@@ -564,9 +572,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                           handleQuickAdd();
                         } else if (e.key === 'Escape') {
                           setAddMode('closed');
-                          setQuickAddSection('');
-                          setQuickAddItemName('');
-                          setQuickAddQuantity(1);
+                          resetQuickAdd();
                         }
                       }}
                       placeholder="Item name..."
