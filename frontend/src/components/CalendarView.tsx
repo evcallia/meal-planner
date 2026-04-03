@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { CalendarEvent, DayData } from '../types';
 import { DayCard } from './DayCard';
 import { getDays, getEvents, updateNotes, toggleItemized, hideCalendarEvent, unhideCalendarEvent, getHiddenCalendarEvents } from '../api/client';
@@ -196,7 +196,56 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     itemHeight: number;
   } | null>(null);
 
+  const [collapsedWeeks, setCollapsedWeeks] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('meal-planner-calendar-collapsed');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
+
+  const toggleWeekCollapsed = useCallback((weekKey: string) => {
+    setCollapsedWeeks(prev => {
+      const next = new Set(prev);
+      if (next.has(weekKey)) next.delete(weekKey);
+      else next.add(weekKey);
+      try { localStorage.setItem('meal-planner-calendar-collapsed', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }, []);
+
   const today = useRef(formatDate(new Date())).current;
+
+  // Group days into weeks (Sunday-based)
+  const weekGroups = useMemo(() => {
+    const groups: { key: string; label: string; days: DayData[] }[] = [];
+    const todayDate = new Date(today + 'T00:00:00');
+    const todaySunday = new Date(todayDate);
+    todaySunday.setDate(todayDate.getDate() - todayDate.getDay());
+
+    for (const day of days) {
+      const date = new Date(day.date + 'T00:00:00');
+      const sunday = new Date(date);
+      sunday.setDate(date.getDate() - date.getDay());
+      const weekKey = formatDate(sunday);
+
+      if (groups.length === 0 || groups[groups.length - 1].key !== weekKey) {
+        // Determine label
+        const diff = Math.round((sunday.getTime() - todaySunday.getTime()) / (7 * 24 * 60 * 60 * 1000));
+        let label: string;
+        if (diff === 0) label = 'This Week';
+        else if (diff === 1) label = 'Next Week';
+        else if (diff === -1) label = 'Last Week';
+        else if (diff > 1) label = `${diff} Weeks Out`;
+        else label = `${Math.abs(diff)} Weeks Ago`;
+
+        groups.push({ key: weekKey, label, days: [day] });
+      } else {
+        groups[groups.length - 1].days.push(day);
+      }
+    }
+    return groups;
+  }, [days, today]);
+
   const handleTodayRef = useCallback((node: HTMLDivElement | null) => {
     if (node) {
       todayRef.current = node;
@@ -1435,55 +1484,83 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
   }
 
   return (
-    <div className={compactView ? 'space-y-1' : 'space-y-4'}>
-      {/* Load Previous Week Button */}
-      <button
-        onClick={loadPreviousWeek}
-        disabled={loadingMore === 'prev'}
-        className={`
-          w-full font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors
-          ${compactView ? 'py-1.5 text-xs' : 'py-3 text-sm'}
-        `}
-      >
-        {loadingMore === 'prev' ? (
-          <span className="flex items-center justify-center gap-2">
-            <svg className={`animate-spin ${compactView ? 'h-3 w-3' : 'h-4 w-4'}`} fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            Loading...
-          </span>
-        ) : (
-          compactView ? 'Load previous' : 'Load previous week'
-        )}
-      </button>
+    <div>
+      {/* Sticky header: Load Previous Week */}
+      <div className="sticky z-[9] bg-gray-100 dark:bg-gray-900 -mx-4 px-4 pt-4 pb-2" style={{ top: 'var(--header-h, 52px)' }}>
+        <button
+          onClick={loadPreviousWeek}
+          disabled={loadingMore === 'prev'}
+          className={`
+            w-full font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors
+            ${compactView ? 'py-1.5 text-xs' : 'py-3 text-sm'}
+          `}
+        >
+          {loadingMore === 'prev' ? (
+            <span className="flex items-center justify-center gap-2">
+              <svg className={`animate-spin ${compactView ? 'h-3 w-3' : 'h-4 w-4'}`} fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              Loading...
+            </span>
+          ) : (
+            compactView ? 'Load previous' : 'Load previous week'
+          )}
+        </button>
+      </div>
 
-      {/* Day Cards */}
-      {days.map(day => (
-        <div key={day.date} data-date={day.date} data-day-date={day.date} ref={day.date === today ? handleTodayRef : undefined}>
-          <DayCard
-            day={day}
-            isToday={day.date === today}
-            onNotesChange={(notes) => handleNotesChange(day.date, notes)}
-            onToggleItemized={(lineIndex, itemized) => handleToggleItemized(day.date, lineIndex, itemized)}
-            onHideEvent={handleHideEvent}
-            eventsLoading={loadingEvents && day.events.length === 0}
-            showItemizedColumn={showItemizedColumn}
-            compactView={compactView}
-            showAllEvents={showAllEvents}
-            onMealReorder={handleMealReorder}
-            onMealDropOutside={handleMealDropOutside}
-            onMealDragMove={handleMealDragMove}
-            onMealDragStart={handleMealDragStart}
-            onMealDragEnd={handleMealDragEnd}
-            crossDragTargetIndex={crossDrag?.targetDate === day.date ? crossDrag.targetIndex : null}
-            crossDragItemHeight={crossDrag?.targetDate === day.date ? crossDrag.itemHeight : undefined}
-            onDeleteMeal={(lineIndex) => handleDeleteMeal(day.date, lineIndex)}
-            holidayColor={holidayColor}
-            calendarColor={calendarColor}
-          />
-        </div>
-      ))}
+      {/* Week Groups with Day Cards */}
+      {weekGroups.map(group => {
+        const isCollapsed = collapsedWeeks.has(group.key);
+        return (
+          <div key={group.key} className={compactView ? 'mt-1' : 'mt-4'}>
+            {/* Week header */}
+            <button
+              onClick={() => toggleWeekCollapsed(group.key)}
+              className="w-full flex items-center justify-between px-2 py-2 text-sm font-semibold text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
+            >
+              <span>{group.label}</span>
+              <svg
+                className={`h-4 w-4 transition-transform ${isCollapsed ? '-rotate-90' : ''}`}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {/* Day cards */}
+            {!isCollapsed && (
+              <div className={compactView ? 'space-y-1' : 'space-y-4'}>
+                {group.days.map(day => (
+                  <div key={day.date} data-date={day.date} data-day-date={day.date} ref={day.date === today ? handleTodayRef : undefined}>
+                    <DayCard
+                      day={day}
+                      isToday={day.date === today}
+                      onNotesChange={(notes) => handleNotesChange(day.date, notes)}
+                      onToggleItemized={(lineIndex, itemized) => handleToggleItemized(day.date, lineIndex, itemized)}
+                      onHideEvent={handleHideEvent}
+                      eventsLoading={loadingEvents && day.events.length === 0}
+                      showItemizedColumn={showItemizedColumn}
+                      compactView={compactView}
+                      showAllEvents={showAllEvents}
+                      onMealReorder={handleMealReorder}
+                      onMealDropOutside={handleMealDropOutside}
+                      onMealDragMove={handleMealDragMove}
+                      onMealDragStart={handleMealDragStart}
+                      onMealDragEnd={handleMealDragEnd}
+                      crossDragTargetIndex={crossDrag?.targetDate === day.date ? crossDrag.targetIndex : null}
+                      crossDragItemHeight={crossDrag?.targetDate === day.date ? crossDrag.itemHeight : undefined}
+                      onDeleteMeal={(lineIndex) => handleDeleteMeal(day.date, lineIndex)}
+                      holidayColor={holidayColor}
+                      calendarColor={calendarColor}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
 
       {/* Infinite scroll trigger / loading indicator */}
       <div ref={bottomRef} className={`flex items-center justify-center ${compactView ? 'py-2' : 'py-4'}`}>
