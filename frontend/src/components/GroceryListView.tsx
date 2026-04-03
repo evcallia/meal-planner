@@ -812,7 +812,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
 
       {/* Checked items */}
       {checkedItems.length > 0 && (
-        <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+        <div className="mt-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
           <h3 className="font-medium text-gray-400 dark:text-gray-500 mb-2 text-sm">
             Checked ({checkedItems.length})
           </h3>
