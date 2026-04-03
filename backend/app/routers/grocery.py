@@ -109,6 +109,23 @@ async def update_section(
     return section
 
 
+@router.delete("/sections/{section_id}", status_code=204)
+async def delete_section(
+    section_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    section = db.query(GrocerySection).options(joinedload(GrocerySection.items)).filter(GrocerySection.id == section_id).first()
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    if len(section.items) > 0:
+        raise HTTPException(status_code=400, detail="Cannot delete section with items")
+    db.delete(section)
+    db.commit()
+    await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
+
+
 @router.patch("/reorder-sections")
 async def reorder_sections(
     payload: GroceryReorderSections,

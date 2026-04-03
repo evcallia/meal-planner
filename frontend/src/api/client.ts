@@ -316,6 +316,10 @@ export async function renameGrocerySection(sectionId: string, name: string): Pro
   });
 }
 
+export async function deleteGrocerySection(sectionId: string): Promise<void> {
+  await fetchAPI(`/grocery/sections/${sectionId}`, { method: 'DELETE' });
+}
+
 export async function editGroceryItem(itemId: string, updates: { name?: string; quantity?: string | null; store_id?: string | null }): Promise<GroceryItem> {
   return fetchAPI<GroceryItem>(`/grocery/items/${itemId}`, {
     method: 'PATCH',

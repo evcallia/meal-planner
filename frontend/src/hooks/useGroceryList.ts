@@ -12,6 +12,7 @@ import {
   reorderGroceryItems as reorderGroceryItemsAPI,
   renameGrocerySection as renameGrocerySectionAPI,
   moveGroceryItem as moveGroceryItemAPI,
+  deleteGrocerySection as deleteGrocerySectionAPI,
 } from '../api/client';
 import {
   saveLocalGrocerySections,
@@ -289,7 +290,7 @@ export function useGroceryList() {
         }
         mergedSections.push({
           id: sectionId,
-          name: parsedSection.name,
+          name: toTitleCase(parsedSection.name),
           position: mergedSections.length,
           items: dedupedItems,
         });
@@ -1174,7 +1175,7 @@ export function useGroceryList() {
 
   // Rename a section
   const renameSection = useCallback(async (sectionId: string, newName: string) => {
-    const trimmed = newName.trim();
+    const trimmed = toTitleCase(newName.trim());
     if (!trimmed) return;
     const section = sections.find(s => s.id === sectionId);
     if (!section || section.name === trimmed) return;
@@ -1214,6 +1215,76 @@ export function useGroceryList() {
         setSections(prev => prev.map(s => s.id === sectionId ? { ...s, name: trimmed } : s));
         if (isOnline) {
           try { await renameGrocerySectionAPI(sectionId, trimmed); } catch { /* queue */ }
+        }
+        settleMutation();
+      },
+    });
+  }, [sections, isOnline, pushAction]);
+
+  // Delete an empty section
+  const deleteSection = useCallback(async (sectionId: string) => {
+    const section = sections.find(s => s.id === sectionId);
+    if (!section || section.items.length > 0) return;
+
+    const originalIndex = sections.indexOf(section);
+    const newSections = sections.filter(s => s.id !== sectionId);
+
+    optimisticVersionRef.current++;
+    pendingMutationsRef.current++;
+    setSections(newSections);
+
+    await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+
+    if (isOnline) {
+      try {
+        await deleteGrocerySectionAPI(sectionId);
+      } catch {
+        await queueChange('grocery-delete-section', '', { sectionId });
+      }
+    } else {
+      await queueChange('grocery-delete-section', '', { sectionId });
+    }
+    settleMutation();
+
+    pushAction({
+      type: 'delete-grocery-section',
+      undo: async () => {
+        optimisticVersionRef.current++;
+        pendingMutationsRef.current++;
+        // Restore section at original position
+        setSections(prev => {
+          const next = [...prev];
+          next.splice(Math.min(originalIndex, next.length), 0, section);
+          return next.map((s, i) => ({ ...s, position: i }));
+        });
+        if (isOnline) {
+          try {
+            // Re-create via replace to restore the section
+            await replaceGroceryListAPI(
+              (() => {
+                const restored = [...newSections];
+                restored.splice(Math.min(originalIndex, restored.length), 0, section);
+                return restored.map((s) => ({
+                  name: s.name,
+                  items: s.items.map(item => ({
+                    name: item.name,
+                    quantity: item.quantity,
+                    checked: item.checked,
+                    store_id: item.store_id,
+                  })),
+                }));
+              })()
+            );
+          } catch { /* offline queue would handle */ }
+        }
+        settleMutation();
+      },
+      redo: async () => {
+        optimisticVersionRef.current++;
+        pendingMutationsRef.current++;
+        setSections(prev => prev.filter(s => s.id !== sectionId));
+        if (isOnline) {
+          try { await deleteGrocerySectionAPI(sectionId); } catch { /* may be already deleted */ }
         }
         settleMutation();
       },
@@ -1334,5 +1405,5 @@ export function useGroceryList() {
     })));
   }, []);
 
-  return { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, moveItem, batchUpdateStoreId };
+  return { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, moveItem, batchUpdateStoreId };
 }

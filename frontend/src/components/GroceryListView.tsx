@@ -14,7 +14,7 @@ interface GroceryListViewProps {
 }
 
 export function GroceryListView({ compactView: _compactView }: GroceryListViewProps) {
-  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, moveItem, batchUpdateStoreId } = useGroceryList();
+  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, moveItem, batchUpdateStoreId } = useGroceryList();
   const { stores, createStore, renameStore, removeStore, reorderStores } = useStores({
     grocerySections: sections,
     onItemsStoreChanged: batchUpdateStoreId,
@@ -74,9 +74,10 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   }, [sections]);
 
   const filteredSections = useMemo(() => {
-    if (!quickAddSection.trim()) return sections.map(s => s.name);
+    const all = sections.map(s => ({ name: s.name, id: s.id, isEmpty: s.items.length === 0 }));
+    if (!quickAddSection.trim()) return all;
     const lower = quickAddSection.toLowerCase();
-    return sections.map(s => s.name).filter(name => name.toLowerCase().includes(lower));
+    return all.filter(s => s.name.toLowerCase().includes(lower));
   }, [sections, quickAddSection]);
 
   // Auto-deselect stores that no longer have unchecked items
@@ -357,7 +358,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
 
   const handleQuickAdd = useCallback(async () => {
     const trimmedName = quickAddItemName.trim();
-    const trimmedSection = quickAddSection.trim();
+    const trimmedSection = quickAddSection.trim().replace(/(^|\s)\S/g, c => c.toUpperCase());
     if (!trimmedName || !trimmedSection) return;
 
     const quantity = quickAddQuantity > 0 ? String(quickAddQuantity) : null;
@@ -533,18 +534,37 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                   />
                   {showSectionDropdown && filteredSections.length > 0 && (
                     <div className="absolute z-20 left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                      {filteredSections.map(name => (
-                        <button
-                          key={name}
-                          onClick={() => {
-                            setQuickAddSection(name);
-                            setShowSectionDropdown(false);
-                            requestAnimationFrame(() => quickAddItemRef.current?.focus());
-                          }}
-                          className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      {filteredSections.map(s => (
+                        <div
+                          key={s.id}
+                          className="flex items-center hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                         >
-                          {name}
-                        </button>
+                          <button
+                            onClick={() => {
+                              setQuickAddSection(s.name);
+                              setShowSectionDropdown(false);
+                              requestAnimationFrame(() => quickAddItemRef.current?.focus());
+                            }}
+                            className="flex-1 text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300"
+                          >
+                            {s.name}
+                          </button>
+                          {s.isEmpty && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteSection(s.id);
+                                if (quickAddSection === s.name) setQuickAddSection('');
+                              }}
+                              className="px-2 py-1 mr-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
+                              aria-label={`Delete section ${s.name}`}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
                       ))}
                     </div>
                   )}

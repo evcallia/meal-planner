@@ -39,6 +39,7 @@ import {
   reorderGrocerySections as reorderGrocerySectionsAPI,
   reorderGroceryItems as reorderGroceryItemsAPI,
   renameGrocerySection as renameGrocerySectionAPI,
+  deleteGrocerySection as deleteGrocerySectionAPI,
 } from '../api/client';
 import { ConnectionStatus } from '../types';
 
@@ -356,6 +357,14 @@ export function useSync() {
             if (mapped) realSectionId = mapped;
           }
           await renameGrocerySectionAPI(realSectionId, payload.name);
+        } else if (change.type === 'grocery-delete-section') {
+          const payload = change.payload as { sectionId: string };
+          let realSectionId = payload.sectionId;
+          if (isTempId(payload.sectionId)) {
+            const mapped = await getTempIdMapping(payload.sectionId);
+            if (mapped) realSectionId = mapped;
+          }
+          await deleteGrocerySectionAPI(realSectionId);
         }
         if (change.id) {
           await removePendingChange(change.id);

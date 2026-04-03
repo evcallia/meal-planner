@@ -33,6 +33,7 @@ export type ChangeType =
   | 'grocery-reorder-items'
   | 'grocery-rename-section'
   | 'grocery-move-item'
+  | 'grocery-delete-section'
   | 'pantry-move-item';
 
 export interface PendingChange {
