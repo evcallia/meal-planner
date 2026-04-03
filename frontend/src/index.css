@@ -12,9 +12,60 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Dark mode body */
+/* Dark mode body — gradient background */
 .dark body {
-  @apply bg-gray-900;
+  background: linear-gradient(145deg, #0c1a2e 0%, #0a1f1a 35%, #0f1b2d 60%, #091a1f 100%);
+  min-height: 100dvh;
+  background-attachment: fixed;
+}
+
+/* Liquid glass utilities */
+.glass {
+  background: rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+}
+
+.dark .glass {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.glass-nav {
+  background: rgba(255, 255, 255, 0.7);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+.dark .glass-nav {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.glass-subtle {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.dark .glass-subtle {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.glass-sticky {
+  background: rgba(255, 255, 255, 0.4);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.dark .glass-sticky {
+  background: rgba(255, 255, 255, 0.04);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
 
 /* Custom scrollbar for better mobile feel */
