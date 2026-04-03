@@ -161,7 +161,7 @@ export function PantryPanel() {
   return (
     <div>
       {/* Sticky header: action bar */}
-      <div className="sticky top-12 z-[9] bg-gray-100 dark:bg-gray-900 -mx-4 px-4 pt-4 pb-2">
+      <div className="sticky top-[52px] z-[9] bg-gray-100 dark:bg-gray-900 -mx-4 px-4 pt-4 pb-2">
       {/* Action bar */}
       <div className="flex items-center gap-2">
         {isAddingSection ? (
