@@ -261,10 +261,10 @@ function MealsPage({
 
   return (
     <>
-      <PageHeader title="Meal Planner" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
+      <PageHeader title="Meals" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         {settings.showMealIdeas && (
-          <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 52px) + 8px)' }}>
+          <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
             <MealIdeasPanel onSchedule={handleScheduleMeal} onUnschedule={handleUnscheduleMeal} compactView={settings.compactView} />
           </div>
         )}
@@ -313,7 +313,7 @@ function GroceryPage({
 }) {
   return (
     <>
-      <PageHeader title="Grocery List" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
+      <PageHeader title="Grocery" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         <GroceryListView compactView={settings.compactView} />
       </main>
