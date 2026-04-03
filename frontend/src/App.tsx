@@ -272,9 +272,13 @@ function MealsPage({
   return (
     <>
       <PageHeader title="Meal Planner" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
-      <main className="flex-1 max-w-lg mx-auto w-full px-4 py-4 pb-20 space-y-6">
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-20">
         <div ref={topSectionRef} />
-        {settings.showMealIdeas && <MealIdeasPanel onSchedule={handleScheduleMeal} onUnschedule={handleUnscheduleMeal} compactView={settings.compactView} />}
+        {settings.showMealIdeas && (
+          <div className="sticky z-[9] bg-gray-100 dark:bg-gray-900 -mx-4 px-4 pt-4 pb-2" style={{ top: 'var(--header-h, 52px)' }}>
+            <MealIdeasPanel onSchedule={handleScheduleMeal} onUnschedule={handleUnscheduleMeal} compactView={settings.compactView} />
+          </div>
+        )}
         <CalendarView
           onTodayRefReady={handleTodayRefReady}
           showItemizedColumn={settings.showItemizedColumn}
