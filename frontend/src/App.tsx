@@ -119,11 +119,11 @@ function PageHeader({
 
 function BottomNav({ currentPage, onChange, groceryCount }: { currentPage: Page; onChange: (page: Page) => void; groceryCount: number }) {
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-30 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 safe-area-bottom">
-      <div className="max-w-lg mx-auto flex">
+    <nav className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 glass-nav rounded-full px-6 safe-area-bottom">
+      <div className="flex gap-7">
         <button
           onClick={() => onChange('meals')}
-          className={`flex-1 flex flex-col items-center py-2 transition-colors ${
+          className={`flex flex-col items-center py-2 transition-colors ${
             currentPage === 'meals'
               ? 'text-blue-600 dark:text-blue-400'
               : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
@@ -137,7 +137,7 @@ function BottomNav({ currentPage, onChange, groceryCount }: { currentPage: Page;
         </button>
         <button
           onClick={() => onChange('pantry')}
-          className={`flex-1 flex flex-col items-center py-2 transition-colors ${
+          className={`flex flex-col items-center py-2 transition-colors ${
             currentPage === 'pantry'
               ? 'text-blue-600 dark:text-blue-400'
               : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
@@ -151,7 +151,7 @@ function BottomNav({ currentPage, onChange, groceryCount }: { currentPage: Page;
         </button>
         <button
           onClick={() => onChange('grocery')}
-          className={`flex-1 flex flex-col items-center py-2 transition-colors ${
+          className={`flex flex-col items-center py-2 transition-colors ${
             currentPage === 'grocery'
               ? 'text-blue-600 dark:text-blue-400'
               : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
@@ -272,10 +272,10 @@ function MealsPage({
   return (
     <>
       <PageHeader title="Meal Planner" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
-      <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-20">
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         <div ref={topSectionRef} />
         {settings.showMealIdeas && (
-          <div className="sticky z-[9] bg-gray-100 dark:bg-gray-900 -mx-4 px-4 pt-4 pb-2" style={{ top: 'var(--header-h, 52px)' }}>
+          <div className="sticky z-[9] glass-sticky -mx-4 px-4 pt-4 pb-2" style={{ top: 'var(--header-h, 52px)' }}>
             <MealIdeasPanel onSchedule={handleScheduleMeal} onUnschedule={handleUnscheduleMeal} compactView={settings.compactView} />
           </div>
         )}
@@ -337,7 +337,7 @@ function GroceryPage({
   return (
     <>
       <PageHeader title="Grocery List" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
-      <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-20">
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         <GroceryListView compactView={settings.compactView} />
       </main>
     </>
@@ -362,7 +362,7 @@ function PantryPage({
   return (
     <>
       <PageHeader title="Pantry" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
-      <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-20">
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         <PantryPanel />
       </main>
     </>
@@ -780,7 +780,7 @@ function AppContent() {
   if (loading) {
     return (
       <div
-        className="min-h-screen bg-gray-100 dark:bg-gray-900 flex items-center justify-center"
+        className="min-h-screen bg-gray-100 dark:bg-transparent flex items-center justify-center"
         data-testid="app-loading"
         aria-label="Loading"
       >
@@ -791,8 +791,8 @@ function AppContent() {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex items-center justify-center p-4">
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8 max-w-sm w-full text-center">
+      <div className="min-h-screen bg-gray-100 dark:bg-transparent flex items-center justify-center p-4">
+        <div className="glass rounded-lg p-8 max-w-sm w-full text-center">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">Meal Planner</h1>
           <p className="text-gray-600 dark:text-gray-400 mb-6">Plan your weekly meals with ease</p>
           <a
@@ -807,7 +807,7 @@ function AppContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex flex-col">
+    <div className="min-h-screen bg-gray-100 dark:bg-transparent flex flex-col">
       {/* Status Bar */}
       <StatusBar status={status} pendingCount={pendingCount} />
 
