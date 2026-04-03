@@ -4,16 +4,19 @@ import { NONE_STORE_ID } from './GroceryListView';
 
 interface StoreFilterBarProps {
   stores: Store[];
-  activeStoreId: string | null;
-  onFilterChange: (storeId: string | null) => void;
+  selectedStoreIds: Set<string>;
+  excludedStoreIds: Set<string>;
+  onToggleSelect: (storeId: string) => void;
+  onRemoveExclusion: (storeId: string) => void;
   onRename: (storeId: string, name: string) => void;
   onDelete: (storeId: string) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
+  onExclude: (storeId: string) => void;
   storeCounts?: Map<string, number>;
   noneCount?: number;
 }
 
-export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename, onDelete, onReorder, storeCounts, noneCount = 0 }: StoreFilterBarProps) {
+export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onToggleSelect, onRemoveExclusion, onRename, onDelete, onReorder, onExclude, storeCounts, noneCount = 0 }: StoreFilterBarProps) {
   const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -172,35 +175,59 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
     };
   }, []);
 
+  // Two-phase long-press: 300ms = drag-ready, 500ms = auto-open popover
+  const popoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearPopoverTimer = () => {
+    if (popoverTimerRef.current) {
+      clearTimeout(popoverTimerRef.current);
+      popoverTimerRef.current = null;
+    }
+  };
+
   const handlePointerDown = (index: number, storeId: string, storeName: string, clientX: number, clientY: number) => {
     didLongPressRef.current = false;
     dragStartXRef.current = clientX;
     dragStartYRef.current = clientY;
     longPressReadyRef.current = null;
+    clearPopoverTimer();
     longPressTimerRef.current = setTimeout(() => {
-      // Long-press fired — mark it, but don't start drag yet.
-      // If pointer moves → drag. If pointer releases → edit popover.
+      // 300ms: drag-ready. If pointer moves → drag. If not, popover opens at 500ms.
       didLongPressRef.current = true;
       longPressReadyRef.current = { index, storeId, storeName, clientX, clientY };
     }, 300);
+    popoverTimerRef.current = setTimeout(() => {
+      // 800ms: auto-open popover if no movement
+      if (!isDraggingRef.current) {
+        clearLongPress();
+        didLongPressRef.current = true;
+        longPressReadyRef.current = null;
+        setEditingStoreId(storeId);
+        setEditName(storeName);
+      }
+    }, 800);
   };
 
-  const handlePointerUp = (storeId: string, storeName: string) => {
+  const handlePointerUp = (storeId: string) => {
     clearLongPress();
+    clearPopoverTimer();
     if (isDraggingRef.current) {
       finishDrag();
       return;
     }
     if (longPressReadyRef.current && longPressReadyRef.current.storeId === storeId) {
-      // Long-press completed but no drag movement → open edit popover
+      // Long-press completed (300-500ms) but no drag movement and popover didn't auto-open yet
       setEditingStoreId(storeId);
-      setEditName(storeName);
+      setEditName(storeId === NONE_STORE_ID ? 'None' : longPressReadyRef.current.storeName);
       longPressReadyRef.current = null;
       return;
     }
     if (!didLongPressRef.current) {
-      // Short tap → toggle filter
-      onFilterChange(activeStoreId === storeId ? null : storeId);
+      if (excludedStoreIds.has(storeId)) {
+        onRemoveExclusion(storeId);
+      } else {
+        onToggleSelect(storeId);
+      }
     }
     longPressReadyRef.current = null;
   };
@@ -214,20 +241,26 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
       if (dx > 5 || dy > 5) {
         const { index, clientX, clientY } = longPressReadyRef.current;
         longPressReadyRef.current = null;
-        beginDrag(index, clientX, clientY);
+        clearPopoverTimer();
+        // None chip (index -1) is not draggable
+        if (index >= 0) beginDrag(index, clientX, clientY);
       }
       return;
     }
     // Cancel long-press timer if moved too far before it fires
     if (longPressTimerRef.current) {
       const dx = Math.abs(e.clientX - dragStartXRef.current);
-      if (dx > 10) clearLongPress();
+      if (dx > 10) {
+        clearLongPress();
+        clearPopoverTimer();
+      }
     }
   };
 
   const handlePointerLeave = () => {
     if (!isDraggingRef.current) {
       clearLongPress();
+      clearPopoverTimer();
       longPressReadyRef.current = null;
     }
   };
@@ -242,7 +275,6 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
   const handleDelete = () => {
     if (editingStoreId) {
       onDelete(editingStoreId);
-      if (activeStoreId === editingStoreId) onFilterChange(null);
     }
     setEditingStoreId(null);
   };
@@ -254,6 +286,8 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
       <div ref={containerRef} className="flex flex-wrap gap-2 pb-2 px-1 -mx-1">
         {stores.map((store, i) => {
           const isDragged = dragIndex === i;
+          const isSelected = selectedStoreIds.has(store.id);
+          const isExcluded = excludedStoreIds.has(store.id);
           // During drag, compute where this chip should visually move to
           let transformStyle: string | undefined;
           if (dragIndex !== null && dragOverIndex !== null && dragIndex !== dragOverIndex && !isDragged && chipRectsRef.current.length === stores.length) {
@@ -281,7 +315,7 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
               key={store.id}
               data-chip-index={i}
               onPointerDown={(e) => handlePointerDown(i, store.id, store.name, e.clientX, e.clientY)}
-              onPointerUp={() => handlePointerUp(store.id, store.name)}
+              onPointerUp={() => handlePointerUp(store.id)}
               onPointerMove={handlePointerMove}
               onPointerLeave={handlePointerLeave}
               style={{
@@ -291,16 +325,18 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
               }}
               className={`
                 px-3 py-1 rounded-full text-sm font-medium transition-colors select-none touch-none
-                ${activeStoreId === store.id
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                ${isExcluded
+                  ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through opacity-60'
+                  : isSelected
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                 }
               `}
             >
               {store.name}
               {storeCounts && (storeCounts.get(store.id) ?? 0) > 0 && (
                 <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center ${
-                  activeStoreId === store.id
+                  isSelected
                     ? 'bg-blue-400/30 text-white'
                     : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
                 }`}>
@@ -310,59 +346,90 @@ export function StoreFilterBar({ stores, activeStoreId, onFilterChange, onRename
             </button>
           );
         })}
-        {noneCount > 0 && (
-          <button
-            onPointerDown={(e) => {
-              // Short tap only — no long-press/drag for None chip
-              e.stopPropagation();
-            }}
-            onPointerUp={() => {
-              onFilterChange(activeStoreId === NONE_STORE_ID ? null : NONE_STORE_ID);
-            }}
-            className={`
-              px-3 py-1 rounded-full text-sm font-medium transition-colors select-none touch-none
-              ${activeStoreId === NONE_STORE_ID
-                ? 'bg-blue-500 text-white'
-                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-              }
-            `}
-          >
-            None
-            <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center ${
-              activeStoreId === NONE_STORE_ID
-                ? 'bg-blue-400/30 text-white'
-                : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
-            }`}>
-              {noneCount}
-            </span>
-          </button>
-        )}
+        {(noneCount > 0 || excludedStoreIds.has(NONE_STORE_ID)) && (() => {
+          const noneIsSelected = selectedStoreIds.has(NONE_STORE_ID);
+          const noneIsExcluded = excludedStoreIds.has(NONE_STORE_ID);
+          return (
+            <button
+              onPointerDown={(e) => {
+                // Long-press for exclude popover, no drag for None chip
+                handlePointerDown(-1, NONE_STORE_ID, 'None', e.clientX, e.clientY);
+              }}
+              onPointerUp={() => handlePointerUp(NONE_STORE_ID)}
+              onPointerMove={handlePointerMove}
+              onPointerLeave={handlePointerLeave}
+              className={`
+                px-3 py-1 rounded-full text-sm font-medium transition-colors select-none touch-none
+                ${noneIsExcluded
+                  ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through opacity-60'
+                  : noneIsSelected
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                }
+              `}
+            >
+              None
+              {noneCount > 0 && (
+                <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center ${
+                  noneIsSelected
+                    ? 'bg-blue-400/30 text-white'
+                    : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
+                }`}>
+                  {noneCount}
+                </span>
+              )}
+            </button>
+          );
+        })()}
       </div>
 
       {editingStoreId && (
         <div className="absolute top-full left-0 right-0 mt-1 z-50">
           <div className="bg-white dark:bg-gray-800 border dark:border-gray-600 rounded-lg shadow-lg p-3 mx-2">
-            <input
-              type="text"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveRename(); if (e.key === 'Escape') setEditingStoreId(null); }}
-              autoFocus
-              className="w-full text-sm px-2 py-1 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"
-            />
-            <div className="flex justify-between">
-              <button onClick={handleDelete} className="text-sm text-red-500 hover:text-red-700">
-                Delete
+            {editingStoreId !== NONE_STORE_ID && (
+              <input
+                type="text"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveRename(); if (e.key === 'Escape') setEditingStoreId(null); }}
+                autoFocus
+                className="w-full text-sm px-2 py-1 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"
+              />
+            )}
+            {excludedStoreIds.has(editingStoreId) ? (
+              <button
+                onClick={() => { onRemoveExclusion(editingStoreId); setEditingStoreId(null); }}
+                className="w-full text-left text-sm text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 mb-2"
+              >
+                Include in list
               </button>
-              <div className="flex gap-2">
-                <button onClick={() => setEditingStoreId(null)} className="text-sm text-gray-500">
-                  Cancel
+            ) : (
+              <button
+                onClick={() => { onExclude(editingStoreId); setEditingStoreId(null); }}
+                className="w-full text-left text-sm text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300 mb-2"
+              >
+                Exclude from list
+              </button>
+            )}
+            {editingStoreId === NONE_STORE_ID ? (
+              <button onClick={() => setEditingStoreId(null)} className="w-full text-left text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                Cancel
+              </button>
+            ) : (
+              <div className="flex justify-between">
+                <button onClick={handleDelete} className="text-sm text-red-500 hover:text-red-700">
+                  Delete
                 </button>
-                <button onClick={handleSaveRename} className="text-sm text-blue-500 font-medium">
-                  Save
-                </button>
+                <div className="flex gap-2">
+                  <button onClick={() => setEditingStoreId(null)} className="text-sm text-gray-500">
+                    Cancel
+                  </button>
+                  <button onClick={handleSaveRename} className="text-sm text-blue-500 font-medium">
+                    Save
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}

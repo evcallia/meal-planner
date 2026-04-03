@@ -9,7 +9,9 @@ const stores: Store[] = [
 ];
 
 describe('StoreFilterBar', () => {
-  const mockOnFilterChange = vi.fn();
+  const mockOnToggleSelect = vi.fn();
+  const mockOnRemoveExclusion = vi.fn();
+  const mockOnExclude = vi.fn();
   const mockOnRename = vi.fn();
   const mockOnDelete = vi.fn();
   const mockOnReorder = vi.fn();
@@ -22,8 +24,11 @@ describe('StoreFilterBar', () => {
     const { container } = render(
       <StoreFilterBar
         stores={[]}
-        activeStoreId={null}
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set()}
+        excludedStoreIds={new Set()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -36,8 +41,11 @@ describe('StoreFilterBar', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId={null}
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set()}
+        excludedStoreIds={new Set()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -47,12 +55,15 @@ describe('StoreFilterBar', () => {
     expect(screen.getByText("Trader Joe's")).toBeInTheDocument();
   });
 
-  it('highlights active store chip', () => {
+  it('highlights selected store chips with blue', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId="st1"
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set(['st1'])}
+        excludedStoreIds={new Set()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -62,12 +73,15 @@ describe('StoreFilterBar', () => {
     expect(costcoButton.className).toContain('bg-blue-500');
   });
 
-  it('short tap (pointerDown + pointerUp) on chip toggles filter', () => {
+  it('short tap calls onToggleSelect', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId={null}
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set()}
+        excludedStoreIds={new Set()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -76,32 +90,38 @@ describe('StoreFilterBar', () => {
     const costcoButton = screen.getByText('Costco');
     fireEvent.pointerDown(costcoButton, { clientX: 100, clientY: 100 });
     fireEvent.pointerUp(costcoButton);
-    expect(mockOnFilterChange).toHaveBeenCalledWith('st1');
+    expect(mockOnToggleSelect).toHaveBeenCalledWith('st1');
   });
 
-  it('short tap on active store deselects it', () => {
+  it('multiple chips can be selected simultaneously', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId="st1"
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set(['st1', 'st2'])}
+        excludedStoreIds={new Set()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
       />
     );
     const costcoButton = screen.getByText('Costco');
-    fireEvent.pointerDown(costcoButton, { clientX: 100, clientY: 100 });
-    fireEvent.pointerUp(costcoButton);
-    expect(mockOnFilterChange).toHaveBeenCalledWith(null);
+    const traderButton = screen.getByText("Trader Joe's");
+    expect(costcoButton.className).toContain('bg-blue-500');
+    expect(traderButton.className).toContain('bg-blue-500');
   });
 
   it('does not show edit popover initially', () => {
     render(
       <StoreFilterBar
         stores={stores}
-        activeStoreId={null}
-        onFilterChange={mockOnFilterChange}
+        selectedStoreIds={new Set()}
+        excludedStoreIds={new Set()}
+        onToggleSelect={mockOnToggleSelect}
+        onRemoveExclusion={mockOnRemoveExclusion}
+        onExclude={mockOnExclude}
         onRename={mockOnRename}
         onDelete={mockOnDelete}
         onReorder={mockOnReorder}
@@ -109,5 +129,101 @@ describe('StoreFilterBar', () => {
     );
     expect(screen.queryByText('Save')).not.toBeInTheDocument();
     expect(screen.queryByText('Delete')).not.toBeInTheDocument();
+  });
+
+  describe('exclude in edit popover', () => {
+    it('shows "Exclude from list" for non-excluded store in popover', () => {
+      vi.useFakeTimers();
+      render(
+        <StoreFilterBar
+          stores={stores}
+          selectedStoreIds={new Set()}
+          excludedStoreIds={new Set()}
+          onToggleSelect={mockOnToggleSelect}
+          onRemoveExclusion={mockOnRemoveExclusion}
+          onExclude={mockOnExclude}
+          onRename={mockOnRename}
+          onDelete={mockOnDelete}
+          onReorder={mockOnReorder}
+        />
+      );
+      const costcoButton = screen.getByText('Costco');
+      fireEvent.pointerDown(costcoButton, { clientX: 100, clientY: 100 });
+      vi.advanceTimersByTime(300);
+      fireEvent.pointerUp(costcoButton);
+      expect(screen.getByText('Exclude from list')).toBeInTheDocument();
+      vi.useRealTimers();
+    });
+
+    it('shows "Include in list" for excluded store in popover', () => {
+      vi.useFakeTimers();
+      render(
+        <StoreFilterBar
+          stores={stores}
+          selectedStoreIds={new Set()}
+          excludedStoreIds={new Set(['st1'])}
+          onToggleSelect={mockOnToggleSelect}
+          onRemoveExclusion={mockOnRemoveExclusion}
+          onExclude={mockOnExclude}
+          onRename={mockOnRename}
+          onDelete={mockOnDelete}
+          onReorder={mockOnReorder}
+        />
+      );
+      const costcoButton = screen.getByText('Costco');
+      fireEvent.pointerDown(costcoButton, { clientX: 100, clientY: 100 });
+      vi.advanceTimersByTime(300);
+      fireEvent.pointerUp(costcoButton);
+      expect(screen.getByText('Include in list')).toBeInTheDocument();
+      vi.useRealTimers();
+    });
+
+    it('clicking "Exclude from list" calls onExclude', () => {
+      vi.useFakeTimers();
+      render(
+        <StoreFilterBar
+          stores={stores}
+          selectedStoreIds={new Set()}
+          excludedStoreIds={new Set()}
+          onToggleSelect={mockOnToggleSelect}
+          onRemoveExclusion={mockOnRemoveExclusion}
+          onExclude={mockOnExclude}
+          onRename={mockOnRename}
+          onDelete={mockOnDelete}
+          onReorder={mockOnReorder}
+        />
+      );
+      const costcoButton = screen.getByText('Costco');
+      fireEvent.pointerDown(costcoButton, { clientX: 100, clientY: 100 });
+      vi.advanceTimersByTime(300);
+      fireEvent.pointerUp(costcoButton);
+      fireEvent.click(screen.getByText('Exclude from list'));
+      expect(mockOnExclude).toHaveBeenCalledWith('st1');
+      vi.useRealTimers();
+    });
+
+    it('clicking "Include in list" calls onRemoveExclusion', () => {
+      vi.useFakeTimers();
+      render(
+        <StoreFilterBar
+          stores={stores}
+          selectedStoreIds={new Set()}
+          excludedStoreIds={new Set(['st1'])}
+          onToggleSelect={mockOnToggleSelect}
+          onRemoveExclusion={mockOnRemoveExclusion}
+          onExclude={mockOnExclude}
+          onRename={mockOnRename}
+          onDelete={mockOnDelete}
+          onReorder={mockOnReorder}
+        />
+      );
+      const costcoButton = screen.getByText('Costco');
+      fireEvent.pointerDown(costcoButton, { clientX: 100, clientY: 100 });
+      vi.advanceTimersByTime(300);
+      fireEvent.pointerUp(costcoButton);
+      fireEvent.click(screen.getByText('Include in list'));
+      expect(mockOnRemoveExclusion).toHaveBeenCalledWith('st1');
+      vi.useRealTimers();
+    });
   });
 });

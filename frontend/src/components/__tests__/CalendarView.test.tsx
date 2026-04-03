@@ -168,16 +168,7 @@ describe('CalendarView', () => {
     expect(screen.getByTestId(`meal-notes-${todayStr}`)).toHaveTextContent('Breakfast notes');
   });
 
-  it('should load previous week when button is clicked', async () => {
-    const prevDays = [
-      {
-        date: formatDate(addDays(today, -7)),
-        meal_note: null,
-        events: [],
-      },
-    ];
-    mockGetDays.mockResolvedValueOnce(mockDays).mockResolvedValueOnce(prevDays);
-
+  it('should load previous week from cache when within prefetched range', async () => {
     render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
 
     await waitFor(() => {
@@ -187,7 +178,9 @@ describe('CalendarView', () => {
     fireEvent.click(screen.getByText('Load previous week'));
 
     await waitFor(() => {
-      expect(mockGetDays).toHaveBeenCalledTimes(2);
+      // Initial load fetches days once; previous week is within the prefetched
+      // range (-14 to +56 days) so no additional API call is made
+      expect(mockGetDays).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -53,6 +53,15 @@ Key details:
 - `holidayColor` / `calendarColor` settings allow per-user color customization for holiday vs regular events
 - `EVENT_COLORS` map in `DayCard.tsx` maps color names to Tailwind class sets (text, bg, border, hover variants for light/dark)
 
+## Store Chip Filtering
+- **Multi-select**: `selectedStoreIds: Set<string>` in GroceryListView — tap multiple store chips to filter by several stores. Persisted to localStorage (`meal-planner-selected-stores`)
+- **Exclude**: `excludedStoreIds: Set<string>` — long-press chip (800ms auto-opens popover) to exclude a store. Excluded chips show dimmed with strikethrough. Tap excluded chip to un-exclude. Persisted to localStorage (`meal-planner-excluded-stores`)
+- **Filtering priority**: (1) remove excluded stores' items, (2) if any selected, show only those, (3) otherwise show all non-excluded
+- **Chip visibility**: Only show chips for stores with unchecked items (or excluded stores). "Show all stores" toggle in kebab menu overrides this (persisted to localStorage `meal-planner-show-all-stores`)
+- **None chip**: Supports multi-select, exclude, and long-press popover (exclude/include + cancel only, no rename/delete). Uses `NONE_STORE_ID = '__none__'`
+- **Auto-deselect**: `useEffect` watches `storeCounts` — when a selected store's count drops to 0, it's removed from the selection
+- **Two-phase long-press**: 300ms = drag-ready (movement starts drag), 800ms = auto-open popover (no release needed). None chip uses index `-1` to skip drag
+
 ## Drag & Drop Patterns
 - `useDragReorder` hook supports both touch (long-press 300ms) and mouse (handle-based immediate drag)
 - **containerRef approach**: Hook accepts a `containerRef` pointing to the container of draggable items. Items must have `data-drag-index` attributes. Uses `:scope > [data-drag-index]` to find draggable children — avoids broken `parentElement` traversal when DOM nesting doesn't match expectations
@@ -117,6 +126,8 @@ Key details:
 - **Focus/reconnect refresh**: `broadcastFullRefresh()` in App.tsx calls `fetchAllData()` (resets flags + re-fetches all data) and dispatches a synthetic `calendar.refreshed` event. Called on `visibilitychange` (hidden→visible) and online reconnect
 - **Background cache warmer**: App.tsx SSE handler updates IndexedDB for inactive tabs (grocery, pantry, stores, meal-ideas, notes, item, calendar events, hidden events). Active tab's hooks handle their own SSE events
 - **Calendar single-fetch**: CalendarView init fetches one `getDays` call for the full range (past 2 weeks through future 8 weeks) and one `getEvents` call, instead of separate calls per range
+- **Calendar prefetch range**: Module-level `prefetchedStart`/`prefetchedEnd` strings track the pre-fetched date range. `loadNextWeek`/`loadPreviousWeek` skip API calls when the requested range falls within these boundaries — only hit API when scrolling past the prefetched window
+- **Calendar remount guard**: `showAllEvents`/`showHolidays` effect uses prev-value refs to only fire on actual changes, not on component remount (prevents redundant API calls on tab switch)
 
 ## Testing Patterns
 - Mock `authEvents` in test files that import modules using it: `vi.mock('../../authEvents', () => ({ emitAuthFailure: vi.fn(), onAuthFailure: vi.fn(() => vi.fn()) }))`

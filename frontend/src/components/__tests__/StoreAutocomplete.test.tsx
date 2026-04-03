@@ -90,9 +90,17 @@ describe('StoreAutocomplete', () => {
     render(
       <StoreAutocomplete stores={stores} selectedStoreId="st1" onSelect={mockOnSelect} onCreate={mockOnCreate} />
     );
-    // The clear button is the ✕ character
-    fireEvent.click(screen.getByText('✕'));
+    fireEvent.click(screen.getByRole('button', { name: /remove store/i }));
     expect(mockOnSelect).toHaveBeenCalledWith(null);
+  });
+
+  it('clear button has red styling and visible text', () => {
+    render(
+      <StoreAutocomplete stores={stores} selectedStoreId="st1" onSelect={mockOnSelect} onCreate={mockOnCreate} />
+    );
+    const clearButton = screen.getByRole('button', { name: /remove store/i });
+    expect(clearButton).toBeInTheDocument();
+    expect(clearButton.className).toContain('text-red');
   });
 
   it('shows "change" button when store is selected', () => {

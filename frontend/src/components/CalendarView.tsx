@@ -131,7 +131,10 @@ function localNotesToDayData(localNotes: LocalMealNote[], startDate: string, end
 }
 
 let sessionLoaded = false;
-export function resetCalendarSessionLoaded() { sessionLoaded = false; }
+// Track the pre-fetched date range so loadNext/PrevWeek can skip API calls within it
+let prefetchedStart: string | null = null;
+let prefetchedEnd: string | null = null;
+export function resetCalendarSessionLoaded() { sessionLoaded = false; prefetchedStart = null; prefetchedEnd = null; }
 export function markCalendarSessionLoaded() { sessionLoaded = true; }
 
 interface CalendarViewProps {
@@ -335,9 +338,14 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     };
   }, [isOnline, loadEventsForRange, refreshHiddenKeys]);
 
-  // Reload events when showAllEvents or showHolidays setting changes
+  // Reload events when showAllEvents or showHolidays setting changes (not on mount)
+  const prevShowAllEventsRef = useRef(showAllEvents);
+  const prevShowHolidaysRef = useRef(showHolidays);
   useEffect(() => {
     if (!initialLoadDone.current) return;
+    if (showAllEvents === prevShowAllEventsRef.current && showHolidays === prevShowHolidaysRef.current) return;
+    prevShowAllEventsRef.current = showAllEvents;
+    prevShowHolidaysRef.current = showHolidays;
     // Reset ALL load states to force fresh reload
     setEventsLoadState({});
     // Force online fetch if available to get fresh data with correct include_hidden / include_holidays
@@ -415,6 +423,8 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
           // Single events fetch for the full range
           loadEventsForRange(fullStart, fullEnd, true);
           backgroundCacheDone.current = true;
+          prefetchedStart = fullStartStr;
+          prefetchedEnd = fullEndStr;
           sessionLoaded = true;
         } catch (error) {
           console.error('Failed to load days from API:', error);
@@ -788,8 +798,9 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       await loadFromLocalCache();
       loadEventsForRange(newStart, newEnd, false);
 
-      // 2. If online, fetch from API in background and update
-      if (isOnline) {
+      // 2. If online, fetch from API in background (skip if background cache already covers this range)
+      const withinPrefetch = prefetchedStart !== null && prefetchedEnd !== null && startStr >= prefetchedStart && endStr <= prefetchedEnd;
+      if (isOnline && !withinPrefetch) {
         try {
           const requestStart = perfNow();
           const data = await getDays(startStr, endStr);
@@ -873,8 +884,9 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       await loadFromLocalCache();
       loadEventsForRange(newStart, newEnd, false);
 
-      // 2. If online, fetch from API in background and update
-      if (isOnline) {
+      // 2. If online, fetch from API in background (skip if background cache already covers this range)
+      const withinPrefetch = prefetchedStart !== null && prefetchedEnd !== null && startStr >= prefetchedStart && endStr <= prefetchedEnd;
+      if (isOnline && !withinPrefetch) {
         try {
           const requestStart = perfNow();
           const data = await getDays(startStr, endStr);
