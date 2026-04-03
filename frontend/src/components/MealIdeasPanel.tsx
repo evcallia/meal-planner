@@ -136,7 +136,7 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="Add meal..."
-            className="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1 text-xs text-gray-900 dark:text-gray-100"
+            className="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white/50 dark:bg-white/[0.06] px-2 py-1 text-xs text-gray-900 dark:text-gray-100"
             required
           />
           <button
@@ -158,12 +158,12 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
                   onChange={(event) => updateIdea(idea.id, { title: event.target.value })}
                   onFocus={() => setEditing(true)}
                   onBlur={() => setEditing(false)}
-                  className="flex-1 min-w-0 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-1.5 py-0.5 text-xs text-gray-900 dark:text-gray-100"
+                  className="flex-1 min-w-0 rounded border border-gray-300 dark:border-gray-600 bg-white/50 dark:bg-white/[0.06] px-1.5 py-0.5 text-xs text-gray-900 dark:text-gray-100"
                 />
                 <select
                   value={scheduleDates[idea.id] ?? ''}
                   onChange={(event) => setScheduleDates(prev => ({ ...prev, [idea.id]: event.target.value }))}
-                  className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-1 py-0.5 text-xs text-gray-900 dark:text-gray-100"
+                  className="rounded border border-gray-300 dark:border-gray-600 bg-white/50 dark:bg-white/[0.06] px-1 py-0.5 text-xs text-gray-900 dark:text-gray-100"
                   aria-label={`Schedule ${idea.title}`}
                 >
                   <option value="">Day</option>
@@ -224,7 +224,7 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="e.g. Salmon Bites"
-            className="mt-1 w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
+            className="mt-1 w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white/50 dark:bg-white/[0.06] px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
             required
           />
         </div>
@@ -247,14 +247,14 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
                 onChange={(event) => updateIdea(idea.id, { title: event.target.value })}
                 onFocus={() => setEditing(true)}
                 onBlur={() => setEditing(false)}
-                className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1.5 text-sm text-gray-900 dark:text-gray-100"
+                className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white/50 dark:bg-white/[0.06] px-2 py-1.5 text-sm text-gray-900 dark:text-gray-100"
               />
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-2">
                   <select
                     value={scheduleDates[idea.id] ?? ''}
                     onChange={(event) => setScheduleDates(prev => ({ ...prev, [idea.id]: event.target.value }))}
-                    className="rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1.5 text-sm text-gray-900 dark:text-gray-100"
+                    className="rounded-md border border-gray-300 dark:border-gray-600 bg-white/50 dark:bg-white/[0.06] px-2 py-1.5 text-sm text-gray-900 dark:text-gray-100"
                     aria-label={`Schedule ${idea.title}`}
                   >
                     <option value="">Select a day</option>

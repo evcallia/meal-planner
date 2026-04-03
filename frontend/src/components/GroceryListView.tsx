@@ -548,7 +548,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                     )}
                   </div>
                   {showSectionDropdown && filteredSections.length > 0 && (
-                    <div className="absolute z-20 left-0 right-0 mt-1 glass rounded-lg max-h-40 overflow-y-auto">
+                    <div className="absolute z-20 left-0 right-0 mt-1 glass-menu rounded-lg max-h-40 overflow-y-auto">
                       {filteredSections.map(s => (
                         <div
                           key={s.id}
@@ -672,7 +672,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                   </svg>
                 </button>
                 {showClearMenu && (
-                  <div className="absolute right-0 top-full mt-1 glass rounded-lg py-1 z-20 min-w-[220px]">
+                  <div className="absolute right-0 top-full mt-1 glass-menu rounded-lg py-1 z-20 min-w-[220px]">
                     {visibleSections.length > 0 && (
                       <button
                         onClick={handleCopyList}

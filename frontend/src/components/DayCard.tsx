@@ -598,7 +598,7 @@ export function DayCard({
         {contextMenu && onHideEvent && (
           <div
             ref={contextMenuRef}
-            className="fixed z-50 min-w-[180px] glass rounded-md py-1 text-sm"
+            className="fixed z-50 min-w-[180px] glass-menu rounded-md py-1 text-sm"
             style={{ left: contextMenu.x, top: contextMenu.y }}
             role="menu"
           >
@@ -799,7 +799,7 @@ export function DayCard({
       {contextMenu && onHideEvent && (
         <div
           ref={contextMenuRef}
-          className="fixed z-50 min-w-[180px] glass rounded-md py-1 text-sm"
+          className="fixed z-50 min-w-[180px] glass-menu rounded-md py-1 text-sm"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           role="menu"
         >

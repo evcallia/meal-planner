@@ -214,7 +214,7 @@ export function PantryPanel() {
                 </svg>
               </button>
               {showClearMenu && (
-                <div className="absolute right-0 top-full mt-1 glass rounded-lg py-1 z-20 min-w-[180px]">
+                <div className="absolute right-0 top-full mt-1 glass-menu rounded-lg py-1 z-20 min-w-[180px]">
                   {sections.length > 1 && (
                     collapsedSections.size > 0 ? (
                       <button

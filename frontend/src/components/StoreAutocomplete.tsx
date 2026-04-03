@@ -84,7 +84,7 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
         )}
       </div>
       {isOpen && (
-        <div className="absolute z-50 mt-1 w-full glass rounded max-h-40 overflow-y-auto">
+        <div className="absolute z-50 mt-1 w-full glass-menu rounded max-h-40 overflow-y-auto">
           {filtered.map(store => (
             <button
               key={store.id}
