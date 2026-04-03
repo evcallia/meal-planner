@@ -106,13 +106,31 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
     }
   };
 
+  const toggleCollapsed = () => {
+    setCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem('meal-planner-ideas-collapsed', String(next)); } catch {}
+      return next;
+    });
+  };
+
   if (compactView) {
     return (
       <section className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm">
-        <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Future Meals</h2>
-        </div>
+        <button
+          onClick={toggleCollapsed}
+          className={`w-full px-3 py-2 flex items-center justify-between ${collapsed ? '' : 'border-b border-gray-200 dark:border-gray-700'}`}
+        >
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Future Meals{ideas.length > 0 ? ` (${ideas.length})` : ''}</h2>
+          <svg
+            className={`h-4 w-4 text-gray-400 transition-transform flex-shrink-0 ${collapsed ? '-rotate-90' : ''}`}
+            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
 
+        {!collapsed && <>
         <form onSubmit={handleSubmit} className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex gap-2">
           <input
             value={title}
@@ -175,17 +193,10 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
             ))
           )}
         </div>
+        </>}
       </section>
     );
   }
-
-  const toggleCollapsed = () => {
-    setCollapsed(prev => {
-      const next = !prev;
-      try { localStorage.setItem('meal-planner-ideas-collapsed', String(next)); } catch {}
-      return next;
-    });
-  };
 
   return (
     <section className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm">
