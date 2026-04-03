@@ -641,7 +641,7 @@ export function DayCard({
           px-4 py-3 border-b
           ${isToday
             ? 'bg-blue-50 border-blue-100 dark:bg-blue-900/30 dark:border-blue-800'
-            : 'bg-gray-50 border-gray-100 dark:bg-gray-800 dark:border-gray-700'}
+            : 'glass-subtle border-gray-100 dark:border-gray-700'}
         `}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">

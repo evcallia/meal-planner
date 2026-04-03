@@ -30,7 +30,7 @@ export function MealItem({
   showHeader,
   showItemizedColumn = true,
   compact = false,
-  bgClass = 'bg-white dark:bg-gray-800',
+  bgClass = 'bg-transparent',
   dragHandleMouseDown,
 }: MealItemProps) {
   const decodedHtml = decodeHtmlEntities(html);
