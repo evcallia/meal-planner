@@ -21,7 +21,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   });
   const [addMode, setAddMode] = useState<'closed' | 'quick' | 'paste'>('closed');
   const [quickAddSection, setQuickAddSection] = useState('');
-  const [quickAddQuantity, setQuickAddQuantity] = useState(1);
+  const [quickAddQuantity, setQuickAddQuantity] = useState(0);
   const [quickAddItemName, setQuickAddItemName] = useState('');
   const [showSectionDropdown, setShowSectionDropdown] = useState(false);
   const [inputText, setInputText] = useState('');
@@ -374,14 +374,14 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     }
 
     setQuickAddItemName('');
-    setQuickAddQuantity(1);
+    setQuickAddQuantity(0);
     requestAnimationFrame(() => quickAddItemRef.current?.focus());
   }, [quickAddItemName, quickAddSection, quickAddQuantity, sections, addItem, mergeList]);
 
   const resetQuickAdd = useCallback(() => {
     setQuickAddSection('');
     setQuickAddItemName('');
-    setQuickAddQuantity(1);
+    setQuickAddQuantity(0);
   }, []);
 
   const handleClearChecked = useCallback(async () => {

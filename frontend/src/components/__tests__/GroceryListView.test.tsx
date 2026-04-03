@@ -215,7 +215,7 @@ describe('GroceryListView', () => {
     fireEvent.click(screen.getByTestId('quick-add-submit'));
 
     await waitFor(() => {
-      expect(mockAddItem).toHaveBeenCalledWith('s1', 'Celery', '1');
+      expect(mockAddItem).toHaveBeenCalledWith('s1', 'Celery', null);
     });
   });
 
@@ -233,7 +233,7 @@ describe('GroceryListView', () => {
 
     await waitFor(() => {
       expect(mockMergeList).toHaveBeenCalledWith([
-        { name: 'Bakery', items: [{ name: 'Sourdough', quantity: '1' }] },
+        { name: 'Bakery', items: [{ name: 'Sourdough', quantity: null }] },
       ]);
     });
   });
@@ -267,8 +267,9 @@ describe('GroceryListView', () => {
     render(<GroceryListView />);
     fireEvent.click(screen.getByText('Add items'));
 
-    // Click + button twice (1 → 2 → 3)
+    // Click + button 3 times (0 → 1 → 2 → 3)
     const plusButton = screen.getAllByText('+')[0];
+    fireEvent.click(plusButton);
     fireEvent.click(plusButton);
     fireEvent.click(plusButton);
     expect(screen.getByText('3')).toBeInTheDocument();
