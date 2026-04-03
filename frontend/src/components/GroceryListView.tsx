@@ -444,7 +444,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                   <button
                     onClick={() => { setAddMode('closed'); setInputText(''); }}
                     className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-                    aria-label="Close"
+                    aria-label="Close add items"
                   >
                     {closeIcon}
                   </button>
@@ -503,7 +503,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                     <button
                       onClick={() => { setAddMode('closed'); resetQuickAdd(); }}
                       className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-                      aria-label="Close"
+                      aria-label="Close add items"
                     >
                       {closeIcon}
                     </button>

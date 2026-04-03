@@ -193,7 +193,7 @@ describe('GroceryListView', () => {
     render(<GroceryListView />);
     fireEvent.click(screen.getByText('Add items'));
     expect(screen.getByTestId('quick-add-section')).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText('Close'));
+    fireEvent.click(screen.getByLabelText('Close add items'));
     expect(screen.queryByTestId('quick-add-section')).not.toBeInTheDocument();
   });
 
