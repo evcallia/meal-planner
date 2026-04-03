@@ -19,7 +19,11 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     grocerySections: sections,
     onItemsStoreChanged: batchUpdateStoreId,
   });
-  const [showInputArea, setShowInputArea] = useState(false);
+  const [addMode, setAddMode] = useState<'closed' | 'quick' | 'paste'>('closed');
+  const [quickAddSection, setQuickAddSection] = useState('');
+  const [quickAddQuantity, setQuickAddQuantity] = useState(1);
+  const [quickAddItemName, setQuickAddItemName] = useState('');
+  const [showSectionDropdown, setShowSectionDropdown] = useState(false);
   const [inputText, setInputText] = useState('');
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
   const [newItemName, setNewItemName] = useState('');
@@ -52,6 +56,8 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const clearMenuRef = useRef<HTMLDivElement>(null);
   const sectionContainerRef = useRef<HTMLDivElement>(null);
+  const sectionDropdownRef = useRef<HTMLDivElement>(null);
+  const quickAddItemRef = useRef<HTMLInputElement>(null);
 
   const storeCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -66,6 +72,12 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     }
     return counts;
   }, [sections]);
+
+  const filteredSections = useMemo(() => {
+    if (!quickAddSection.trim()) return sections.map(s => s.name);
+    const lower = quickAddSection.toLowerCase();
+    return sections.map(s => s.name).filter(name => name.toLowerCase().includes(lower));
+  }, [sections, quickAddSection]);
 
   // Auto-deselect stores that no longer have unchecked items
   useEffect(() => {
@@ -308,6 +320,17 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showClearMenu]);
 
+  useEffect(() => {
+    if (!showSectionDropdown) return;
+    const handleClick = (e: MouseEvent) => {
+      if (sectionDropdownRef.current && !sectionDropdownRef.current.contains(e.target as Node)) {
+        setShowSectionDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showSectionDropdown]);
+
   const handleSubmitText = useCallback(async () => {
     const text = inputText.trim();
     if (!text) return;
@@ -316,7 +339,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     if (parsed.length > 0) {
       await mergeList(parsed);
       setInputText('');
-      setShowInputArea(false);
+      setAddMode('closed');
     }
   }, [inputText, mergeList]);
 
@@ -331,6 +354,28 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     setNewItemName('');
     setAddingToSection(null);
   }, [newItemName, addItem]);
+
+  const handleQuickAdd = useCallback(async () => {
+    const trimmedName = quickAddItemName.trim();
+    const trimmedSection = quickAddSection.trim();
+    if (!trimmedName || !trimmedSection) return;
+
+    const quantity = quickAddQuantity > 0 ? String(quickAddQuantity) : null;
+
+    const existingSection = sections.find(
+      s => s.name.toLowerCase() === trimmedSection.toLowerCase()
+    );
+
+    if (existingSection) {
+      await addItem(existingSection.id, trimmedName, quantity);
+    } else {
+      await mergeList([{ name: trimmedSection, items: [{ name: trimmedName, quantity }] }]);
+    }
+
+    setQuickAddItemName('');
+    setQuickAddQuantity(1);
+    requestAnimationFrame(() => quickAddItemRef.current?.focus());
+  }, [quickAddItemName, quickAddSection, quickAddQuantity, sections, addItem, mergeList]);
 
   const handleClearChecked = useCallback(async () => {
     setShowClearMenu(false);
@@ -376,62 +421,183 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     <div className="space-y-4">
       {/* Action bar: add items + clear */}
       <div className="flex items-center gap-2">
-        {sections.length === 0 || showInputArea ? (
+        {sections.length === 0 || addMode !== 'closed' ? (
           <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              {sections.length === 0 ? 'Add your grocery list' : 'Add items to grocery list'}
-            </h3>
-            <textarea
-              ref={textareaRef}
-              value={inputText}
-              onChange={e => setInputText(e.target.value)}
-              placeholder={'Type or paste grocery list...\n\n[Produce]\n(2) Bananas\nArugula\n\n[Dairy]\nMilk\nYogurt'}
-              className="w-full h-32 p-3 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <div className="flex items-center gap-2 mt-2">
-              <button
-                onClick={handleSubmitText}
-                disabled={!inputText.trim()}
-                className="px-4 py-1.5 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-600 rounded-lg transition-colors"
-              >
-                Add items
-              </button>
-              {showInputArea && (
+            {addMode === 'paste' ? (
+              <>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Paste grocery list
+                  </h3>
+                  <button
+                    onClick={() => { setAddMode('closed'); setInputText(''); }}
+                    className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                    aria-label="Close"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <textarea
+                  ref={textareaRef}
+                  value={inputText}
+                  onChange={e => setInputText(e.target.value)}
+                  placeholder={'Type or paste grocery list...\n\n[Produce]\n(2) Bananas\nArugula\n\n[Dairy]\nMilk\nYogurt'}
+                  className="w-full h-32 p-3 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    onClick={handleSubmitText}
+                    disabled={!inputText.trim()}
+                    className="px-4 py-1.5 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-600 rounded-lg transition-colors"
+                  >
+                    Add items
+                  </button>
+                  <button
+                    onClick={() => {
+                      const ta = textareaRef.current;
+                      if (!ta) return;
+                      const pos = ta.selectionStart;
+                      const before = inputText.slice(0, pos);
+                      const after = inputText.slice(pos);
+                      const needsNewline = before.length > 0 && !before.endsWith('\n');
+                      const insert = (needsNewline ? '\n' : '') + '[]';
+                      const newText = before + insert + after;
+                      const cursorPos = pos + insert.length - 1;
+                      setInputText(newText);
+                      requestAnimationFrame(() => {
+                        ta.focus();
+                        ta.setSelectionRange(cursorPos, cursorPos);
+                      });
+                    }}
+                    className="ml-auto text-sm text-blue-500 hover:text-blue-700 dark:hover:text-blue-300"
+                  >
+                    Add section
+                  </button>
+                </div>
                 <button
-                  onClick={() => { setShowInputArea(false); setInputText(''); }}
-                  className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                  onClick={() => setAddMode('quick')}
+                  className="mt-2 text-xs text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                 >
-                  Cancel
+                  Back to quick add
                 </button>
-              )}
-              <button
-                onClick={() => {
-                  const ta = textareaRef.current;
-                  if (!ta) return;
-                  const pos = ta.selectionStart;
-                  const before = inputText.slice(0, pos);
-                  const after = inputText.slice(pos);
-                  // Insert on its own line
-                  const needsNewline = before.length > 0 && !before.endsWith('\n');
-                  const insert = (needsNewline ? '\n' : '') + '[]';
-                  const newText = before + insert + after;
-                  const cursorPos = pos + insert.length - 1; // between the brackets
-                  setInputText(newText);
-                  requestAnimationFrame(() => {
-                    ta.focus();
-                    ta.setSelectionRange(cursorPos, cursorPos);
-                  });
-                }}
-                className="ml-auto text-sm text-blue-500 hover:text-blue-700 dark:hover:text-blue-300"
-              >
-                Add section
-              </button>
-            </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {sections.length === 0 ? 'Add your grocery list' : 'Add Items'}
+                  </h3>
+                  {sections.length > 0 && (
+                    <button
+                      onClick={() => { setAddMode('closed'); setQuickAddSection(''); setQuickAddItemName(''); setQuickAddQuantity(1); }}
+                      className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                      aria-label="Close"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+
+                {/* Section combobox */}
+                <div className="relative mb-3" ref={sectionDropdownRef}>
+                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Section</label>
+                  <input
+                    data-testid="quick-add-section"
+                    type="text"
+                    value={quickAddSection}
+                    onChange={e => { setQuickAddSection(e.target.value); setShowSectionDropdown(true); }}
+                    onFocus={() => setShowSectionDropdown(true)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === 'Tab') {
+                        setShowSectionDropdown(false);
+                      } else if (e.key === 'Escape') {
+                        setShowSectionDropdown(false);
+                      }
+                    }}
+                    placeholder="e.g. Produce, Dairy..."
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {showSectionDropdown && filteredSections.length > 0 && (
+                    <div className="absolute z-20 left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                      {filteredSections.map(name => (
+                        <button
+                          key={name}
+                          onClick={() => {
+                            setQuickAddSection(name);
+                            setShowSectionDropdown(false);
+                            requestAnimationFrame(() => quickAddItemRef.current?.focus());
+                          }}
+                          className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Quantity + Item row */}
+                <div className="flex items-end gap-2 mb-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Qty</label>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button onClick={() => setQuickAddQuantity(q => Math.max(0, q - 1))} className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold">&minus;</button>
+                      <span className="w-8 text-center text-sm font-medium text-blue-600 dark:text-blue-400">{quickAddQuantity || '\u2013'}</span>
+                      <button onClick={() => setQuickAddQuantity(q => q + 1)} className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold">+</button>
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Item</label>
+                    <input
+                      ref={quickAddItemRef}
+                      data-testid="quick-add-item"
+                      type="text"
+                      value={quickAddItemName}
+                      onChange={e => setQuickAddItemName(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleQuickAdd();
+                        } else if (e.key === 'Escape') {
+                          setAddMode('closed');
+                          setQuickAddSection('');
+                          setQuickAddItemName('');
+                          setQuickAddQuantity(1);
+                        }
+                      }}
+                      placeholder="Item name..."
+                      className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Add Item button */}
+                <button
+                  data-testid="quick-add-submit"
+                  onClick={handleQuickAdd}
+                  disabled={!quickAddItemName.trim() || !quickAddSection.trim()}
+                  className="w-full py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-600 rounded-lg transition-colors"
+                >
+                  Add Item
+                </button>
+
+                <button
+                  onClick={() => setAddMode('paste')}
+                  className="mt-2 text-xs text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                >
+                  Paste a list instead
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <>
             <button
-              onClick={() => setShowInputArea(true)}
+              onClick={() => setAddMode('quick')}
               className="flex-1 py-3 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
             >
               Add items
