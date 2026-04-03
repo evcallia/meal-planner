@@ -431,7 +431,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   );
 
   return (
-    <div className="space-y-4">
+    <div>
+      {/* Sticky header: action bar + store chips */}
+      <div className="sticky top-0 z-10 bg-gray-100 dark:bg-gray-900 -mx-4 px-4 pb-2 space-y-4">
       {/* Action bar: add items + clear */}
       <div className="flex items-center gap-2">
         {sections.length === 0 || addMode !== 'closed' ? (
@@ -740,9 +742,10 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
         storeCounts={storeCounts}
         noneCount={storeCounts.get(NONE_STORE_ID) ?? 0}
       />
+      </div>
 
       {/* Sections with unchecked items */}
-      <div ref={sectionContainerRef}>
+      <div ref={sectionContainerRef} className="mt-4">
         {visibleSections.map((section, sectionIndex) => {
           const isBeingDragged = sectionDragState.isDragging && sectionDragState.dragIndex === sectionIndex;
           const shiftStyle = computeShiftTransform(sectionIndex, sectionDragState);
