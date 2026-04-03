@@ -7,6 +7,9 @@ const _listeners = new Set<() => void>();
 let _checking = false;
 let _interval: ReturnType<typeof setInterval> | null = null;
 let _subscriberCount = 0;
+const POLL_ONLINE = 30000;   // 30s when online
+const POLL_OFFLINE = 5000;   // 5s when offline (server down)
+const TIMEOUT_OFFLINE = 5000; // 5s fetch timeout when offline
 
 export function resetOnlineStatus() {
   _isOnline = navigator.onLine;
@@ -20,10 +23,19 @@ function notify() {
   for (const l of _listeners) l();
 }
 
+function restartInterval() {
+  if (_interval) clearInterval(_interval);
+  const rate = _isOnline ? POLL_ONLINE : POLL_OFFLINE;
+  _interval = setInterval(() => {
+    if (navigator.onLine) checkConnectivity();
+  }, rate);
+}
+
 function setOnline(value: boolean) {
   if (_isOnline !== value) {
     _isOnline = value;
     notify();
+    if (_subscriberCount > 0) restartInterval();
   }
 }
 
@@ -32,7 +44,8 @@ async function checkConnectivity() {
   _checking = true;
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const timeout = _isOnline ? 2000 : TIMEOUT_OFFLINE;
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
     const response = await fetch('/api/health', {
       method: 'GET',
       signal: controller.signal,
@@ -61,7 +74,7 @@ function subscribe(callback: () => void) {
     if (navigator.onLine) checkConnectivity();
     _interval = setInterval(() => {
       if (navigator.onLine) checkConnectivity();
-    }, 30000);
+    }, _isOnline ? POLL_ONLINE : POLL_OFFLINE);
   }
   _subscriberCount++;
 
