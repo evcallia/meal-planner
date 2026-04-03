@@ -385,7 +385,7 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
 
       {editingStoreId && (
         <div className="absolute top-full left-0 right-0 mt-1 z-50">
-          <div className="bg-white dark:bg-gray-800 border dark:border-gray-600 rounded-lg shadow-lg p-3 mx-2">
+          <div className="glass rounded-lg p-3 mx-2">
             {editingStoreId !== NONE_STORE_ID && (
               <input
                 type="text"

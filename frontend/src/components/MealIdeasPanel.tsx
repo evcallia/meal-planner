@@ -116,7 +116,7 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
 
   if (compactView) {
     return (
-      <section className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm">
+      <section className="glass rounded-lg">
         <button
           onClick={toggleCollapsed}
           className={`w-full px-3 py-2 flex items-center justify-between ${collapsed ? '' : 'border-b border-gray-200 dark:border-gray-700'}`}
@@ -199,7 +199,7 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
   }
 
   return (
-    <section className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm">
+    <section className="glass rounded-lg">
       <button
         onClick={toggleCollapsed}
         className={`w-full px-4 py-3 flex items-center justify-between ${collapsed ? '' : 'border-b border-gray-200 dark:border-gray-700'}`}
