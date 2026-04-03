@@ -192,8 +192,6 @@ function MealsPage({
 }) {
   const isOnline = useOnlineStatus();
   const todayRefElement = useRef<HTMLDivElement | null>(null);
-  const topSectionRef = useRef<HTMLDivElement | null>(null);
-
   const handleTodayRefReady = useCallback((ref: HTMLDivElement | null) => {
     todayRefElement.current = ref;
   }, []);
@@ -201,14 +199,6 @@ function MealsPage({
   const scrollToToday = () => {
     if (todayRefElement.current) {
       scrollToElementWithOffset(todayRefElement.current, 'smooth');
-    }
-  };
-
-  const scrollToTopSection = () => {
-    if (topSectionRef.current) {
-      scrollToElementWithOffset(topSectionRef.current, 'smooth');
-    } else {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
@@ -273,7 +263,6 @@ function MealsPage({
     <>
       <PageHeader title="Meal Planner" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
-        <div ref={topSectionRef} />
         {settings.showMealIdeas && (
           <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 52px) + 8px)' }}>
             <MealIdeasPanel onSchedule={handleScheduleMeal} onUnschedule={handleUnscheduleMeal} compactView={settings.compactView} />
@@ -292,18 +281,6 @@ function MealsPage({
 
       {/* Floating Action Buttons */}
       <div className="fixed bottom-20 right-4 z-20 flex flex-col gap-2">
-        {settings.showMealIdeas && (
-          <button
-            onClick={scrollToTopSection}
-            className="glass-nav rounded-full px-3 py-1.5 transition-all duration-200 hover:scale-105 flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400"
-            aria-label="Jump to meal ideas"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
-            </svg>
-            <span className="font-medium">Ideas</span>
-          </button>
-        )}
         <button
           onClick={scrollToToday}
           className="glass-nav rounded-full px-3 py-1.5 transition-all duration-200 hover:scale-105 flex items-center gap-1.5 text-sm text-blue-600 dark:text-blue-400"
