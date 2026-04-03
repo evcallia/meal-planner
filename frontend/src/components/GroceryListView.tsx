@@ -433,7 +433,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   return (
     <div>
       {/* Sticky header: action bar + store chips */}
-      <div className="sticky top-[52px] z-[9] bg-gray-100 dark:bg-gray-900 -mx-4 px-4 pt-4 pb-2 space-y-4">
+      <div className="sticky z-[9] bg-gray-100 dark:bg-gray-900 -mx-4 px-4 pt-4 pb-2 space-y-4" style={{ top: 'var(--header-h, 52px)' }}>
       {/* Action bar: add items + clear */}
       <div className="flex items-center gap-2">
         {sections.length === 0 || addMode !== 'closed' ? (
