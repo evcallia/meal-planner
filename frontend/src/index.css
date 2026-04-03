@@ -11,7 +11,23 @@ html {
 }
 
 .dark {
-  background: #0c1a2e;
+  background: linear-gradient(145deg, #0c1a2e 0%, #0a1f1a 35%, #0f1b2d 60%, #091a1f 100%);
+  background-attachment: fixed;
+  min-height: 100dvh;
+}
+
+@supports (-webkit-touch-callout: none) {
+  /* iOS doesn't support background-attachment: fixed — use a pseudo-element */
+  .dark {
+    background: #0c1a2e;
+  }
+  .dark::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background: linear-gradient(145deg, #0c1a2e 0%, #0a1f1a 35%, #0f1b2d 60%, #091a1f 100%);
+  }
 }
 
 body {
@@ -21,11 +37,9 @@ body {
   background: #f3f4f6;
 }
 
-/* Dark mode body — gradient background */
+/* Dark mode body — transparent so html gradient shows through */
 .dark body {
-  background: linear-gradient(145deg, #0c1a2e 0%, #0a1f1a 35%, #0f1b2d 60%, #091a1f 100%);
-  min-height: 100dvh;
-  background-attachment: fixed;
+  background: transparent;
 }
 
 /* Liquid glass utilities */
