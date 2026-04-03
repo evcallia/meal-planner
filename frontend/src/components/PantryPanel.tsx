@@ -161,11 +161,11 @@ export function PantryPanel() {
   return (
     <div>
       {/* Sticky header: action bar */}
-      <div className="sticky z-[9] bg-gray-100 dark:bg-gray-900 -mx-4 px-4 pt-4 pb-2" style={{ top: 'var(--header-h, 52px)' }}>
+      <div className="sticky z-[9] glass-sticky -mx-4 px-4 pt-4 pb-2" style={{ top: 'var(--header-h, 52px)' }}>
       {/* Action bar */}
       <div className="flex items-center gap-2">
         {isAddingSection ? (
-          <div className="flex-1 flex items-center gap-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 px-3 py-2">
+          <div className="flex-1 flex items-center gap-2 glass rounded-lg px-3 py-2">
             <input
               ref={sectionInputRef}
               type="text"
@@ -194,7 +194,7 @@ export function PantryPanel() {
         ) : (
           <button
             onClick={() => setIsAddingSection(true)}
-            className="px-3 py-2 text-sm text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            className="px-3 py-2 text-sm text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 glass rounded-lg hover:brightness-110 transition-colors"
           >
             + Add section
           </button>
@@ -214,7 +214,7 @@ export function PantryPanel() {
                 </svg>
               </button>
               {showClearMenu && (
-                <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-20 min-w-[180px]">
+                <div className="absolute right-0 top-full mt-1 glass rounded-lg py-1 z-20 min-w-[180px]">
                   {sections.length > 1 && (
                     collapsedSections.size > 0 ? (
                       <button
@@ -245,7 +245,7 @@ export function PantryPanel() {
         )}
       </div>
       {!hasItems && !isAddingSection && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
+        <div className="glass rounded-lg p-4">
           <p className="text-sm text-gray-500 dark:text-gray-400">No pantry items yet. Add a section to get started.</p>
         </div>
       )}
@@ -382,7 +382,7 @@ function PantrySectionCard({
   });
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+    <div className="glass rounded-lg overflow-hidden">
       {/* Section Header */}
       <div
         className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2"
