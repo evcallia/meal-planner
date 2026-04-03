@@ -291,11 +291,11 @@ function MealsPage({
       </main>
 
       {/* Floating Action Buttons */}
-      <div className="fixed bottom-16 right-4 z-20 flex flex-col gap-2">
+      <div className="fixed bottom-20 right-4 z-20 flex flex-col gap-2">
         {settings.showMealIdeas && (
           <button
             onClick={scrollToTopSection}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-full px-3 py-1.5 shadow-lg transition-all duration-200 hover:scale-105 flex items-center gap-1.5 text-sm"
+            className="glass-nav rounded-full px-3 py-1.5 transition-all duration-200 hover:scale-105 flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400"
             aria-label="Jump to meal ideas"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -306,7 +306,7 @@ function MealsPage({
         )}
         <button
           onClick={scrollToToday}
-          className="bg-blue-500 hover:bg-blue-600 text-white rounded-full px-3 py-1.5 shadow-lg transition-all duration-200 hover:scale-105 flex items-center gap-1.5 text-sm"
+          className="glass-nav rounded-full px-3 py-1.5 transition-all duration-200 hover:scale-105 flex items-center gap-1.5 text-sm text-blue-600 dark:text-blue-400"
           aria-label="Jump to today"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
