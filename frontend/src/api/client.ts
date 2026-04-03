@@ -48,6 +48,10 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(`API error: ${response.status}`);
   }
 
+  if (response.status === 204) {
+    logPerf('api.response', { path, method, status: 204 });
+    return undefined as T;
+  }
   const parseStart = perfNow();
   const data = await response.json();
   logPerf('api.response', { path, method, status: response.status });
@@ -314,6 +318,17 @@ export async function renameGrocerySection(sectionId: string, name: string): Pro
     method: 'PATCH',
     body: JSON.stringify({ name }),
   });
+}
+
+export async function createGrocerySection(name: string, position?: number): Promise<GrocerySection> {
+  return fetchAPI<GrocerySection>('/grocery/sections', {
+    method: 'POST',
+    body: JSON.stringify({ name, position }),
+  });
+}
+
+export async function deleteGrocerySection(sectionId: string): Promise<void> {
+  await fetchAPI(`/grocery/sections/${sectionId}`, { method: 'DELETE' });
 }
 
 export async function editGroceryItem(itemId: string, updates: { name?: string; quantity?: string | null; store_id?: string | null }): Promise<GroceryItem> {

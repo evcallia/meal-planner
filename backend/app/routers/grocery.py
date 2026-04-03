@@ -14,6 +14,7 @@ from app.schemas import (
     GroceryReplacePayload,
     GroceryReorderSections,
     GroceryReorderItems,
+    GrocerySectionCreate,
     GrocerySectionUpdate,
     GroceryMoveItem,
 )
@@ -105,6 +106,43 @@ async def update_section(
     db.commit()
     db.refresh(section)
     section.items.sort(key=lambda item: (item.checked, item.position))
+    await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
+    return section
+
+
+@router.delete("/sections/{section_id}", status_code=204)
+async def delete_section(
+    section_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    section = db.query(GrocerySection).options(joinedload(GrocerySection.items)).filter(GrocerySection.id == section_id).first()
+    if not section:
+        return  # Already deleted — idempotent
+    if len(section.items) > 0:
+        raise HTTPException(status_code=400, detail="Cannot delete section with items")
+    db.delete(section)
+    db.commit()
+    await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
+
+
+@router.post("/sections", response_model=GrocerySectionSchema, status_code=201)
+async def create_section(
+    payload: GrocerySectionCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    if payload.position is not None:
+        position = payload.position
+    else:
+        max_pos = db.query(GrocerySection).count()
+        position = max_pos
+    section = GrocerySection(name=payload.name.strip(), position=position)
+    db.add(section)
+    db.commit()
+    db.refresh(section)
     await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
     return section
 

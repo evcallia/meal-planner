@@ -40,9 +40,20 @@ function PageHeader({
   updateAvailable?: boolean;
 }) {
   const { canUndo, canRedo, undo, redo } = useUndo();
+  const headerRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const update = () => document.documentElement.style.setProperty('--header-h', `${el.offsetHeight}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <header className={`bg-white dark:bg-gray-800 shadow-sm sticky z-10 ${status !== 'online' ? 'top-10' : 'top-0'}`}>
+    <header ref={headerRef} className={`bg-white dark:bg-gray-800 shadow-sm sticky z-10 ${status !== 'online' ? 'top-10' : 'top-0'}`}>
       <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
         <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h1>
         <div className="flex items-center gap-3">
@@ -261,9 +272,13 @@ function MealsPage({
   return (
     <>
       <PageHeader title="Meal Planner" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
-      <main className="flex-1 max-w-lg mx-auto w-full px-4 py-4 pb-20 space-y-6">
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-20">
         <div ref={topSectionRef} />
-        {settings.showMealIdeas && <MealIdeasPanel onSchedule={handleScheduleMeal} onUnschedule={handleUnscheduleMeal} compactView={settings.compactView} />}
+        {settings.showMealIdeas && (
+          <div className="sticky z-[9] bg-gray-100 dark:bg-gray-900 -mx-4 px-4 pt-4 pb-2" style={{ top: 'var(--header-h, 52px)' }}>
+            <MealIdeasPanel onSchedule={handleScheduleMeal} onUnschedule={handleUnscheduleMeal} compactView={settings.compactView} />
+          </div>
+        )}
         <CalendarView
           onTodayRefReady={handleTodayRefReady}
           showItemizedColumn={settings.showItemizedColumn}
@@ -322,7 +337,7 @@ function GroceryPage({
   return (
     <>
       <PageHeader title="Grocery List" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
-      <main className="flex-1 max-w-lg mx-auto w-full px-4 py-4 pb-20 space-y-6">
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-20">
         <GroceryListView compactView={settings.compactView} />
       </main>
     </>
@@ -347,7 +362,7 @@ function PantryPage({
   return (
     <>
       <PageHeader title="Pantry" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
-      <main className="flex-1 max-w-lg mx-auto w-full px-4 py-4 pb-20 space-y-6">
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-20">
         <PantryPanel />
       </main>
     </>

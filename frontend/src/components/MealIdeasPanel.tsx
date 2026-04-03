@@ -14,6 +14,10 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
   const [title, setTitle] = useState('');
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('meal-planner-ideas-collapsed') === 'true'; }
+    catch { return false; }
+  });
   const [scheduleDates, setScheduleDates] = useState<Record<string, string>>({});
   const [schedulingId, setSchedulingId] = useState<string | null>(null);
   const upcomingDays = useMemo(() => {
@@ -102,13 +106,31 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
     }
   };
 
+  const toggleCollapsed = () => {
+    setCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem('meal-planner-ideas-collapsed', String(next)); } catch {}
+      return next;
+    });
+  };
+
   if (compactView) {
     return (
       <section className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm">
-        <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Future Meals</h2>
-        </div>
+        <button
+          onClick={toggleCollapsed}
+          className={`w-full px-3 py-2 flex items-center justify-between ${collapsed ? '' : 'border-b border-gray-200 dark:border-gray-700'}`}
+        >
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Future Meals{ideas.length > 0 ? ` (${ideas.length})` : ''}</h2>
+          <svg
+            className={`h-4 w-4 text-gray-400 transition-transform flex-shrink-0 ${collapsed ? '-rotate-90' : ''}`}
+            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
 
+        {!collapsed && <>
         <form onSubmit={handleSubmit} className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex gap-2">
           <input
             value={title}
@@ -171,17 +193,30 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
             ))
           )}
         </div>
+        </>}
       </section>
     );
   }
 
   return (
     <section className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm">
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Future Meals</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400">Capture meals you want to schedule later.</p>
-      </div>
+      <button
+        onClick={toggleCollapsed}
+        className={`w-full px-4 py-3 flex items-center justify-between ${collapsed ? '' : 'border-b border-gray-200 dark:border-gray-700'}`}
+      >
+        <div className="text-left">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Future Meals{ideas.length > 0 ? ` (${ideas.length})` : ''}</h2>
+          {!collapsed && <p className="text-sm text-gray-500 dark:text-gray-400">Capture meals you want to schedule later.</p>}
+        </div>
+        <svg
+          className={`h-5 w-5 text-gray-400 transition-transform flex-shrink-0 ${collapsed ? '-rotate-90' : ''}`}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
 
+      {!collapsed && <>
       <form onSubmit={handleSubmit} className="px-4 py-4 border-b border-gray-200 dark:border-gray-700 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
         <div>
           <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Meal</label>
@@ -248,6 +283,7 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
           ))
         )}
       </div>
+      </>}
     </section>
   );
 }

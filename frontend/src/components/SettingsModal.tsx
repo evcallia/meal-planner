@@ -73,6 +73,7 @@ const typeLabels: Record<ChangeType, string> = {
   'grocery-reorder-items': 'Reorder grocery items',
   'grocery-rename-section': 'Rename grocery section',
   'grocery-move-item': 'Move grocery item',
+  'grocery-delete-section': 'Delete grocery section',
   'pantry-move-item': 'Move pantry item',
 };
 
@@ -202,8 +203,8 @@ async function enrichPendingChanges(changes: PendingChange[]): Promise<EnrichedP
       case 'grocery-move-item':
         detail = groceryItemMap.get(payload?.id as string) || '';
         break;
-      case 'pantry-move-item':
-        detail = pantryItemMap.get(payload?.id as string) || '';
+      case 'grocery-delete-section':
+        detail = (payload?.name as string) || grocerySectionMap.get(payload?.sectionId as string) || '';
         break;
     }
     } catch { /* detail stays empty on error */ }

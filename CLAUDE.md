@@ -27,6 +27,7 @@ Key details:
 - `AuthError` class in `api/client.ts` for distinguishing auth errors from network errors in catch blocks
 - `ConnectionStatus` type includes `'auth-required'` state (in addition to online/offline/syncing)
 - Service worker has a `cacheWillUpdate` plugin that rejects HTML responses for API routes (prevents CF challenge caching)
+- `fetchAPI` handles 204 No Content responses by returning `undefined` without parsing JSON body
 
 ## Server-Side User Settings
 - `user_settings` table: `sub` (PK, from OIDC), `settings` (JSON), `updated_at` (DateTime)
@@ -87,6 +88,31 @@ Key details:
 - **Push undo before API call**: For destructive operations like `deleteItem`, push the undo action BEFORE making the API call so the user can undo immediately (especially important with snackbar undo buttons)
 - **Undo/redo with replaceGroceryListAPI**: For complex state changes (delete, clear), both undo and redo use `replaceGroceryListAPI` with full list snapshots rather than trying to reverse individual operations. Simpler and more reliable
 - All mutation functions follow the same pattern: capture `prevSections`, increment `optimisticVersionRef`, optimistic `setSections`, save locally, API call (or queue offline), `pushAction` with undo/redo that also use the version/mutation refs
+
+## Grocery Quick-Add Form
+- **Add mode state**: `addMode: 'closed' | 'quick' | 'paste'` replaces old `showInputArea` boolean in GroceryListView
+- **Quick-add form** (default): Section combobox + quantity stepper + item name input + full-width Add button
+- **Section combobox**: Filters existing sections as user types; unmatched input creates a new section. Clear button (X) inside input. Empty sections show red X delete button in dropdown
+- **Paste mode**: Toggle via "Paste a list instead" link; existing textarea with `[Section]` / `(N) Item` format
+- **Rapid entry**: After add, item name clears, quantity resets to 0 (–), section stays selected, focus returns to item input
+- **Section name title-casing**: Applied via `toTitleCase` at all entry points: `parseGroceryText`, `mergeList`, `renameSection`, `handleQuickAdd`
+- **Delete empty sections**: `DELETE /api/grocery/sections/{id}` (idempotent — returns 204 if already gone), `deleteSection` in `useGroceryList` with targeted `POST /api/grocery/sections` for undo (not replace), mutable `sectionRef` + `idRemapRef` for ID tracking across undo/redo
+
+## Grocery Section API Endpoints
+- `POST /api/grocery/sections` — creates empty section with name and optional position, returns `GrocerySectionSchema` (201)
+- `DELETE /api/grocery/sections/{id}` — idempotent delete (204 even if already gone), rejects 400 if section has items
+- `PATCH /api/grocery/sections/{id}` — rename section (existing)
+
+## Sticky Sub-Headers Pattern
+- **PageHeader measures itself**: `ResizeObserver` sets `--header-h` CSS variable on `:root` with the header's `offsetHeight`
+- **Sub-bar positioning**: Grocery action bar, pantry action bar, and Future Meals panel use `sticky` with `style={{ top: 'var(--header-h, 52px)' }}` and `z-[9]` (below PageHeader's `z-10`)
+- **Background match**: Sticky divs use `bg-gray-100 dark:bg-gray-900` to match page background, with `-mx-4 px-4` to extend full width
+- **No scroll gap**: Pages with sticky sub-bars use `pt-0` on `<main>` and `pt-4` inside the sticky div
+
+## Collapsible Future Meals Panel
+- `MealIdeasPanel` has a collapse toggle on both compact and regular views
+- Collapsed state persisted to `localStorage` key `meal-planner-ideas-collapsed`
+- When collapsed, shows "Future Meals (N)" count + chevron; hides form and idea list
 
 ## Pantry Undo Patterns
 - **Section delete undo preserves order**: `deleteSection` captures `originalIndex = sections.indexOf(section)` at deletion time. Both online and offline undo paths use `splice(Math.min(originalIndex, next.length), 0, ...)` to insert at the original position, then reindex positions with `.map((s, i) => ({ ...s, position: i }))`. Online undo also calls `reorderPantrySectionsAPI` to persist the order on the server.

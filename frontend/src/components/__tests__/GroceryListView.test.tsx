@@ -88,11 +88,12 @@ describe('GroceryListView', () => {
     expect(screen.getByTestId('grocery-loading')).toBeInTheDocument();
   });
 
-  it('shows add textarea when no sections exist', () => {
+  it('shows quick-add form when no sections exist', () => {
     mockSections = [];
     render(<GroceryListView />);
     expect(screen.getByText('Add your grocery list')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/Type or paste grocery list/)).toBeInTheDocument();
+    expect(screen.getByTestId('quick-add-section')).toBeInTheDocument();
+    expect(screen.getByTestId('quick-add-item')).toBeInTheDocument();
   });
 
   it('shows sections with unchecked items', () => {
@@ -109,11 +110,12 @@ describe('GroceryListView', () => {
     expect(screen.getByText('Add items')).toBeInTheDocument();
   });
 
-  it('clicking "Add items" shows textarea', () => {
+  it('clicking "Add items" shows quick-add form', () => {
     mockSections = sampleSections;
     render(<GroceryListView />);
     fireEvent.click(screen.getByText('Add items'));
-    expect(screen.getByText('Add items to grocery list')).toBeInTheDocument();
+    expect(screen.getByText('Add Items')).toBeInTheDocument();
+    expect(screen.getByTestId('quick-add-section')).toBeInTheDocument();
   });
 
   it('shows checked items section at bottom', () => {
@@ -167,9 +169,12 @@ describe('GroceryListView', () => {
     expect(mockClearChecked).toHaveBeenCalled();
   });
 
-  it('submitting text input calls mergeList', async () => {
+  it('submitting paste textarea calls mergeList', async () => {
     mockSections = [];
     render(<GroceryListView />);
+
+    // Switch to paste mode
+    fireEvent.click(screen.getByText('Paste a list instead'));
 
     const textarea = screen.getByPlaceholderText(/Type or paste grocery list/);
     fireEvent.change(textarea, { target: { value: '[Produce]\nBananas' } });
@@ -183,12 +188,121 @@ describe('GroceryListView', () => {
     });
   });
 
-  it('cancel button hides input area', () => {
+  it('close button hides quick-add form', () => {
     mockSections = sampleSections;
     render(<GroceryListView />);
     fireEvent.click(screen.getByText('Add items'));
-    expect(screen.getByText('Cancel')).toBeInTheDocument();
-    fireEvent.click(screen.getByText('Cancel'));
-    expect(screen.queryByText('Add items to grocery list')).not.toBeInTheDocument();
+    expect(screen.getByTestId('quick-add-section')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Close add items'));
+    expect(screen.queryByTestId('quick-add-section')).not.toBeInTheDocument();
+  });
+
+  it('quick-add calls addItem for existing section', async () => {
+    mockSections = sampleSections;
+    render(<GroceryListView />);
+    fireEvent.click(screen.getByText('Add items'));
+
+    const sectionInput = screen.getByTestId('quick-add-section');
+    fireEvent.change(sectionInput, { target: { value: 'Produce' } });
+    fireEvent.focus(sectionInput);
+    // Click the dropdown option (not the section header)
+    const produceOptions = screen.getAllByText('Produce');
+    const dropdownOption = produceOptions.find(el => el.closest('[class*="absolute"]'));
+    fireEvent.click(dropdownOption!);
+
+    const itemInput = screen.getByTestId('quick-add-item');
+    fireEvent.change(itemInput, { target: { value: 'Celery' } });
+    fireEvent.click(screen.getByTestId('quick-add-submit'));
+
+    await waitFor(() => {
+      expect(mockAddItem).toHaveBeenCalledWith('s1', 'Celery', null);
+    });
+  });
+
+  it('quick-add calls mergeList for new section', async () => {
+    mockSections = sampleSections;
+    render(<GroceryListView />);
+    fireEvent.click(screen.getByText('Add items'));
+
+    const sectionInput = screen.getByTestId('quick-add-section');
+    fireEvent.change(sectionInput, { target: { value: 'Bakery' } });
+
+    const itemInput = screen.getByTestId('quick-add-item');
+    fireEvent.change(itemInput, { target: { value: 'Sourdough' } });
+    fireEvent.click(screen.getByTestId('quick-add-submit'));
+
+    await waitFor(() => {
+      expect(mockMergeList).toHaveBeenCalledWith([
+        { name: 'Bakery', items: [{ name: 'Sourdough', quantity: null }] },
+      ]);
+    });
+  });
+
+  it('quick-add clears item and keeps section after submit', async () => {
+    mockSections = sampleSections;
+    render(<GroceryListView />);
+    fireEvent.click(screen.getByText('Add items'));
+
+    const sectionInput = screen.getByTestId('quick-add-section');
+    fireEvent.change(sectionInput, { target: { value: 'Produce' } });
+    fireEvent.focus(sectionInput);
+    const produceOptions = screen.getAllByText('Produce');
+    const dropdownOption = produceOptions.find(el => el.closest('[class*="absolute"]'));
+    fireEvent.click(dropdownOption!);
+
+    const itemInput = screen.getByTestId('quick-add-item');
+    fireEvent.change(itemInput, { target: { value: 'Celery' } });
+    fireEvent.click(screen.getByTestId('quick-add-submit'));
+
+    await waitFor(() => {
+      expect(mockAddItem).toHaveBeenCalled();
+    });
+
+    expect(screen.getByTestId('quick-add-section')).toHaveValue('Produce');
+    expect(screen.getByTestId('quick-add-item')).toHaveValue('');
+  });
+
+  it('quick-add quantity stepper adjusts quantity', async () => {
+    mockSections = sampleSections;
+    render(<GroceryListView />);
+    fireEvent.click(screen.getByText('Add items'));
+
+    // Click + button 3 times (0 → 1 → 2 → 3)
+    const plusButton = screen.getAllByText('+')[0];
+    fireEvent.click(plusButton);
+    fireEvent.click(plusButton);
+    fireEvent.click(plusButton);
+    expect(screen.getByText('3')).toBeInTheDocument();
+
+    // Select section and add item
+    const sectionInput = screen.getByTestId('quick-add-section');
+    fireEvent.change(sectionInput, { target: { value: 'Produce' } });
+    fireEvent.focus(sectionInput);
+    const produceOptions = screen.getAllByText('Produce');
+    const dropdownOption = produceOptions.find(el => el.closest('[class*="absolute"]'));
+    fireEvent.click(dropdownOption!);
+
+    const itemInput = screen.getByTestId('quick-add-item');
+    fireEvent.change(itemInput, { target: { value: 'Limes' } });
+    fireEvent.click(screen.getByTestId('quick-add-submit'));
+
+    await waitFor(() => {
+      expect(mockAddItem).toHaveBeenCalledWith('s1', 'Limes', '3');
+    });
+  });
+
+  it('paste toggle switches to textarea and back', () => {
+    mockSections = sampleSections;
+    render(<GroceryListView />);
+    fireEvent.click(screen.getByText('Add items'));
+
+    expect(screen.getByTestId('quick-add-section')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Paste a list instead'));
+    expect(screen.getByPlaceholderText(/Type or paste grocery list/)).toBeInTheDocument();
+    expect(screen.queryByTestId('quick-add-section')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Back to quick add'));
+    expect(screen.getByTestId('quick-add-section')).toBeInTheDocument();
   });
 });

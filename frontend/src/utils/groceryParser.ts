@@ -25,6 +25,8 @@ export function parseGroceryText(text: string): ParsedGrocerySection[] {
   const sections: ParsedGrocerySection[] = [];
   let currentSection: ParsedGrocerySection | null = null;
 
+  const titleCase = (s: string) => s.replace(/(^|\s)\S/g, c => c.toUpperCase());
+
   for (const raw of lines) {
     const line = raw.trim();
     if (!line) continue;
@@ -32,7 +34,7 @@ export function parseGroceryText(text: string): ParsedGrocerySection[] {
     // Check for section header: [Section Name]
     const sectionMatch = line.match(/^\[(.+)\]$/);
     if (sectionMatch) {
-      currentSection = { name: sectionMatch[1].trim(), items: [] };
+      currentSection = { name: titleCase(sectionMatch[1].trim()), items: [] };
       sections.push(currentSection);
       continue;
     }
