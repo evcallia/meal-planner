@@ -712,6 +712,76 @@ class TestStoresAPI:
         assert stores[1]["id"] == a_id
 
 
+class TestGrocerySections:
+    """Test grocery section CRUD endpoints."""
+
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_create_section(self, mock_broadcast, authenticated_client: TestClient):
+        """Test creating an empty grocery section."""
+        response = authenticated_client.post("/api/grocery/sections", json={"name": "Produce"})
+        assert response.status_code == 201
+        data = response.json()
+        assert data["name"] == "Produce"
+        assert data["items"] == []
+        mock_broadcast.assert_awaited()
+
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_create_section_with_position(self, mock_broadcast, authenticated_client: TestClient):
+        """Test creating a section at a specific position."""
+        response = authenticated_client.post("/api/grocery/sections", json={"name": "Dairy", "position": 2})
+        assert response.status_code == 201
+        assert response.json()["position"] == 2
+
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_delete_empty_section(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test deleting an empty grocery section."""
+        section = GrocerySection(name="Empty", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+
+        response = authenticated_client.delete(f"/api/grocery/sections/{section.id}")
+        assert response.status_code == 204
+        mock_broadcast.assert_awaited()
+
+        # Verify deleted
+        assert db_session.query(GrocerySection).filter(GrocerySection.id == section.id).first() is None
+
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_delete_section_with_items_fails(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test that deleting a section with items returns 400."""
+        section = GrocerySection(name="HasItems", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+
+        item = GroceryItem(section_id=section.id, name="Milk", position=0)
+        db_session.add(item)
+        db_session.commit()
+
+        response = authenticated_client.delete(f"/api/grocery/sections/{section.id}")
+        assert response.status_code == 400
+
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_delete_section_idempotent(self, mock_broadcast, authenticated_client: TestClient):
+        """Test that deleting a non-existent section returns 204 (idempotent)."""
+        response = authenticated_client.delete("/api/grocery/sections/00000000-0000-0000-0000-000000000001")
+        assert response.status_code == 204
+
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_rename_grocery_section(self, mock_broadcast, authenticated_client: TestClient, db_session: Session):
+        """Test renaming a grocery section."""
+        section = GrocerySection(name="Old Name", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+
+        response = authenticated_client.patch(f"/api/grocery/sections/{section.id}", json={"name": "New Name"})
+        assert response.status_code == 200
+        assert response.json()["name"] == "New Name"
+        mock_broadcast.assert_awaited()
+
+
 class TestGroceryStoreDefaults:
     @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
     @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
