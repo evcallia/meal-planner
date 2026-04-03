@@ -159,7 +159,9 @@ export function PantryPanel() {
   }
 
   return (
-    <div className="space-y-4">
+    <div>
+      {/* Sticky header: action bar */}
+      <div className="sticky top-12 z-[9] bg-gray-100 dark:bg-gray-900 -mx-4 px-4 pb-2">
       {/* Action bar */}
       <div className="flex items-center gap-2">
         {isAddingSection ? (
@@ -247,9 +249,10 @@ export function PantryPanel() {
           <p className="text-sm text-gray-500 dark:text-gray-400">No pantry items yet. Add a section to get started.</p>
         </div>
       )}
+      </div>
 
       {/* Sections */}
-      <div ref={sectionContainerRef}>
+      <div ref={sectionContainerRef} className="mt-4">
         {sections.map((section, sectionIndex) => {
           const isBeingDragged = sectionDragState.isDragging && sectionDragState.dragIndex === sectionIndex;
           const shiftStyle = computeShiftTransform(sectionIndex, sectionDragState);
