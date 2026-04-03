@@ -119,7 +119,7 @@ async def delete_section(
 ):
     section = db.query(GrocerySection).options(joinedload(GrocerySection.items)).filter(GrocerySection.id == section_id).first()
     if not section:
-        raise HTTPException(status_code=404, detail="Section not found")
+        return  # Already deleted — idempotent
     if len(section.items) > 0:
         raise HTTPException(status_code=400, detail="Cannot delete section with items")
     db.delete(section)
