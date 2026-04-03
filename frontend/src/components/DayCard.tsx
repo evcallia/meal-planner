@@ -425,8 +425,8 @@ export function DayCard({
         <div
           data-day-date={day.date}
           className={`
-            bg-white dark:bg-gray-800 rounded-md shadow-sm border overflow-hidden transition-all duration-200
-            ${isToday ? 'border-blue-400 ring-1 ring-blue-100 dark:ring-blue-900' : 'border-gray-200 dark:border-gray-700'}
+            glass rounded-md overflow-hidden transition-all duration-200
+            ${isToday ? 'border-blue-400 ring-1 ring-blue-100 dark:ring-blue-900' : ''}
             ${crossDragTargetIndex != null ? 'ring-2 ring-blue-500 border-blue-500' : ''}
           `}
         >
@@ -598,7 +598,7 @@ export function DayCard({
         {contextMenu && onHideEvent && (
           <div
             ref={contextMenuRef}
-            className="fixed z-50 min-w-[180px] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-sm"
+            className="fixed z-50 min-w-[180px] glass rounded-md py-1 text-sm"
             style={{ left: contextMenu.x, top: contextMenu.y }}
             role="menu"
           >
@@ -631,8 +631,8 @@ export function DayCard({
       <div
         data-day-date={day.date}
         className={`
-          bg-white dark:bg-gray-800 rounded-lg shadow-sm border overflow-hidden transition-all duration-200
-          ${isToday ? 'border-blue-400 ring-1 ring-blue-100 dark:ring-blue-900' : 'border-gray-200 dark:border-gray-700'}
+          glass rounded-lg overflow-hidden transition-all duration-200
+          ${isToday ? 'border-blue-400 ring-1 ring-blue-100 dark:ring-blue-900' : ''}
           ${crossDragTargetIndex != null ? 'ring-2 ring-blue-500 border-blue-500' : ''}
         `}
       >
@@ -658,7 +658,7 @@ export function DayCard({
 
       {/* Events Loading Skeleton */}
       {eventsLoading && (
-        <div className="px-4 py-2 bg-gray-50 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700">
+        <div className="px-4 py-2 glass-subtle border-b border-gray-100 dark:border-gray-700">
           <div className="flex items-center gap-2 text-sm py-1 animate-pulse">
             <div className="w-4 h-4 bg-gray-200 dark:bg-gray-600 rounded" />
             <div className="h-4 bg-gray-200 dark:bg-gray-600 rounded w-32" />
@@ -799,7 +799,7 @@ export function DayCard({
       {contextMenu && onHideEvent && (
         <div
           ref={contextMenuRef}
-          className="fixed z-50 min-w-[180px] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-sm"
+          className="fixed z-50 min-w-[180px] glass rounded-md py-1 text-sm"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           role="menu"
         >
