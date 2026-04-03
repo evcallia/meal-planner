@@ -169,7 +169,7 @@ const mockRemovePendingChange = vi.mocked(removePendingChange)
     const { fireEvent } = await import('@testing-library/react')
     await renderModal()
     
-    const modalContent = screen.getByText('Settings').closest('[class*="bg-white"]')
+    const modalContent = screen.getByText('Settings').closest('[class*="glass"]')
     expect(modalContent).toBeInTheDocument()
     
     fireEvent.click(modalContent!)

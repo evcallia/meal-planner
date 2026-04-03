@@ -398,13 +398,13 @@ describe('DayCard', () => {
 
   it('applies correct styling for today vs other days', () => {
     const { rerender } = render(<DayCard {...defaultProps} isToday={false} />)
-    
-    let card = document.querySelector('.bg-white.dark\\:bg-gray-800.rounded-lg.shadow-sm.border')
-    expect(card).toHaveClass('border-gray-200')
-    
+
+    let card = document.querySelector('.glass.rounded-lg')
+    expect(card).not.toHaveClass('border-blue-400')
+
     rerender(<DayCard {...defaultProps} isToday={true} />)
-    
-    card = document.querySelector('.bg-white.dark\\:bg-gray-800.rounded-lg.shadow-sm.border')
+
+    card = document.querySelector('.glass.rounded-lg')
     expect(card).toHaveClass('border-blue-400')
   })
 })
