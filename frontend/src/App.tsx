@@ -275,7 +275,7 @@ function MealsPage({
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         <div ref={topSectionRef} />
         {settings.showMealIdeas && (
-          <div className="sticky z-[9] glass-sticky -mx-4 px-4 pt-4 pb-2" style={{ top: 'var(--header-h, 52px)' }}>
+          <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 52px) + 8px)' }}>
             <MealIdeasPanel onSchedule={handleScheduleMeal} onUnschedule={handleUnscheduleMeal} compactView={settings.compactView} />
           </div>
         )}

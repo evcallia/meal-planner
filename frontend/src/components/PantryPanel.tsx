@@ -161,7 +161,7 @@ export function PantryPanel() {
   return (
     <div>
       {/* Sticky header: action bar */}
-      <div className="sticky z-[9] glass-sticky -mx-4 px-4 pt-4 pb-2" style={{ top: 'var(--header-h, 52px)' }}>
+      <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 52px) + 8px)' }}>
       {/* Action bar */}
       <div className="flex items-center gap-2">
         {isAddingSection ? (
