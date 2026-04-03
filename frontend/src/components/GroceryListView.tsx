@@ -439,15 +439,17 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
               <>
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Paste grocery list
+                    {sections.length === 0 ? 'Add your grocery list' : 'Paste grocery list'}
                   </h3>
-                  <button
-                    onClick={() => { setAddMode('closed'); setInputText(''); }}
-                    className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-                    aria-label="Close add items"
-                  >
-                    {closeIcon}
-                  </button>
+                  {sections.length > 0 && (
+                    <button
+                      onClick={() => { setAddMode('closed'); setInputText(''); }}
+                      className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                      aria-label="Close add items"
+                    >
+                      {closeIcon}
+                    </button>
+                  )}
                 </div>
                 <textarea
                   ref={textareaRef}
