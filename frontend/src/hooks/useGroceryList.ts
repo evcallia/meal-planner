@@ -1227,43 +1227,31 @@ export function useGroceryList() {
     if (!section || section.items.length > 0) return;
 
     const originalIndex = sections.indexOf(section);
-    const newSections = sections.filter(s => s.id !== sectionId);
+    const sectionRef = { id: sectionId, name: section.name };
 
-    optimisticVersionRef.current++;
-    pendingMutationsRef.current++;
-    setSections(newSections);
-
-    await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
-
-    if (isOnline) {
-      try {
-        await deleteGrocerySectionAPI(sectionId);
-      } catch {
-        await queueChange('grocery-delete-section', '', { sectionId, name: section.name });
-      }
-    } else {
-      await queueChange('grocery-delete-section', '', { sectionId, name: section.name });
-    }
-    settleMutation();
-
+    // Push undo BEFORE delete so it's available immediately
     pushAction({
       type: 'delete-grocery-section',
       undo: async () => {
+        const prevId = sectionRef.id;
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        // Restore section at original position
+        // Restore section at original position with a temp ID
+        const tempId = generateTempId();
+        const restoredSection: GrocerySection = { ...section, id: tempId, items: [] };
         setSections(prev => {
           const next = [...prev];
-          next.splice(Math.min(originalIndex, next.length), 0, section);
+          next.splice(Math.min(originalIndex, next.length), 0, restoredSection);
           return next.map((s, i) => ({ ...s, position: i }));
         });
         if (isOnline) {
           try {
-            // Re-create via replace to restore the section
-            await replaceGroceryListAPI(
+            // Re-create via replace and find the restored section by name
+            const result = await replaceGroceryListAPI(
               (() => {
-                const restored = [...newSections];
-                restored.splice(Math.min(originalIndex, restored.length), 0, section);
+                const current = sections.filter(s => s.id !== sectionRef.id);
+                const restored = [...current];
+                restored.splice(Math.min(originalIndex, restored.length), 0, { ...section, items: [] });
                 return restored.map((s) => ({
                   name: s.name,
                   items: s.items.map(item => ({
@@ -1275,20 +1263,48 @@ export function useGroceryList() {
                 }));
               })()
             );
+            // Find the new section ID and remap
+            const newSection = result.find((s, i) => s.name === sectionRef.name && i === Math.min(originalIndex, result.length - 1))
+              || result.find(s => s.name === sectionRef.name);
+            if (newSection) {
+              sectionRef.id = newSection.id;
+              idRemapRef.current.set(prevId, newSection.id);
+              // Update local state with real IDs from server
+              optimisticVersionRef.current++;
+              setSections(result);
+            }
           } catch { /* offline queue would handle */ }
         }
         settleMutation();
       },
       redo: async () => {
+        const currentId = sectionRef.id;
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        setSections(prev => prev.filter(s => s.id !== sectionId));
+        setSections(prev => prev.filter(s => s.id !== currentId));
         if (isOnline) {
-          try { await deleteGrocerySectionAPI(sectionId); } catch { /* may be already deleted */ }
+          try { await deleteGrocerySectionAPI(currentId); } catch { /* may be already deleted */ }
         }
         settleMutation();
       },
     });
+
+    optimisticVersionRef.current++;
+    pendingMutationsRef.current++;
+    setSections(sections.filter(s => s.id !== sectionId));
+
+    await saveLocalGrocerySections(sections.filter(s => s.id !== sectionId).map(s => ({ id: s.id, name: s.name, position: s.position })));
+
+    if (isOnline) {
+      try {
+        await deleteGrocerySectionAPI(sectionId);
+      } catch {
+        await queueChange('grocery-delete-section', '', { sectionId, name: section.name });
+      }
+    } else {
+      await queueChange('grocery-delete-section', '', { sectionId, name: section.name });
+    }
+    settleMutation();
   }, [sections, isOnline, pushAction]);
 
   // Move item between sections
