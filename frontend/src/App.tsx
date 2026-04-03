@@ -322,7 +322,7 @@ function GroceryPage({
   return (
     <>
       <PageHeader title="Grocery List" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
-      <main className="flex-1 max-w-lg mx-auto w-full px-4 py-4 pb-20 space-y-6">
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 pt-0 pb-20 space-y-6">
         <GroceryListView compactView={settings.compactView} />
       </main>
     </>
@@ -347,7 +347,7 @@ function PantryPage({
   return (
     <>
       <PageHeader title="Pantry" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
-      <main className="flex-1 max-w-lg mx-auto w-full px-4 py-4 pb-20 space-y-6">
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 pt-0 pb-20 space-y-6">
         <PantryPanel />
       </main>
     </>
