@@ -433,11 +433,11 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   return (
     <div>
       {/* Sticky header: action bar + store chips */}
-      <div className="sticky z-[9] bg-gray-100 dark:bg-gray-900 -mx-4 px-4 pt-4 pb-2 space-y-4" style={{ top: 'var(--header-h, 52px)' }}>
+      <div className="sticky z-[9] glass-sticky -mx-4 px-4 pt-4 pb-2 space-y-4" style={{ top: 'var(--header-h, 52px)' }}>
       {/* Action bar: add items + clear */}
       <div className="flex items-center gap-2">
         {sections.length === 0 || addMode !== 'closed' ? (
-          <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
+          <div className="flex-1 glass rounded-lg p-4">
             {addMode === 'paste' ? (
               <>
                 <div className="flex items-center justify-between mb-2">
@@ -548,7 +548,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                     )}
                   </div>
                   {showSectionDropdown && filteredSections.length > 0 && (
-                    <div className="absolute z-20 left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                    <div className="absolute z-20 left-0 right-0 mt-1 glass rounded-lg max-h-40 overflow-y-auto">
                       {filteredSections.map(s => (
                         <div
                           key={s.id}
@@ -672,7 +672,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                   </svg>
                 </button>
                 {showClearMenu && (
-                  <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-20 min-w-[220px]">
+                  <div className="absolute right-0 top-full mt-1 glass rounded-lg py-1 z-20 min-w-[220px]">
                     {visibleSections.length > 0 && (
                       <button
                         onClick={handleCopyList}
@@ -901,7 +901,7 @@ function SectionCard({
   });
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
+    <div className="glass rounded-lg">
       {/* Section Header -- long-press to drag section */}
       <div
         className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 rounded-t-lg"
