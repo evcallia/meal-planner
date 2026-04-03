@@ -436,29 +436,8 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   return (
     <div>
       {/* Sticky header: action bar + store chips */}
-      <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
-      {/* Collapse toggle row when collapsed */}
-      {!toolbarExpanded && addMode === 'closed' && sections.length > 0 ? (
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setAddMode('quick')}
-            className="flex-1 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
-          >
-            Add items
-          </button>
-          <button
-            onClick={() => { setToolbarExpanded(true); try { localStorage.setItem('meal-planner-toolbar-expanded', 'true'); } catch {} }}
-            className="p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-            aria-label="Expand toolbar"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-        </div>
-      ) : (
-      <div className="space-y-4">
-      {/* Action bar: add items + clear */}
+      <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3 space-y-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
+      {/* Action bar: add items + sort + kebab + chevron */}
       <div className="flex items-center gap-2">
         {sections.length === 0 || addMode !== 'closed' ? (
           <div className="flex-1 glass rounded-lg p-4">
@@ -748,37 +727,38 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 )}
               </div>
             )}
+
+            {/* Chevron toggle for store chips */}
+            {visibleStores.length > 0 && (
+              <button
+                onClick={() => { const next = !toolbarExpanded; setToolbarExpanded(next); try { localStorage.setItem('meal-planner-toolbar-expanded', String(next)); } catch {} }}
+                className="p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                aria-label={toolbarExpanded ? 'Hide store filters' : 'Show store filters'}
+              >
+                <svg className={`w-4 h-4 transition-transform ${toolbarExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            )}
           </>
         )}
       </div>
 
-      {/* Store filter bar */}
-      <StoreFilterBar
-        stores={visibleStores}
-        selectedStoreIds={selectedStoreIds}
-        excludedStoreIds={excludedStoreIds}
-        onToggleSelect={handleToggleSelect}
-        onRemoveExclusion={handleRemoveExclusion}
-        onRename={renameStore}
-        onDelete={removeStore}
-        onReorder={reorderStores}
-        onExclude={handleExclude}
-        storeCounts={storeCounts}
-        noneCount={storeCounts.get(NONE_STORE_ID) ?? 0}
-      />
-      {/* Collapse button */}
-      {addMode === 'closed' && sections.length > 0 && (
-        <button
-          onClick={() => { setToolbarExpanded(false); try { localStorage.setItem('meal-planner-toolbar-expanded', 'false'); } catch {} }}
-          className="w-full flex items-center justify-center pt-1 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-          aria-label="Collapse toolbar"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-          </svg>
-        </button>
-      )}
-      </div>
+      {/* Store filter bar — collapsible */}
+      {toolbarExpanded && (
+        <StoreFilterBar
+          stores={visibleStores}
+          selectedStoreIds={selectedStoreIds}
+          excludedStoreIds={excludedStoreIds}
+          onToggleSelect={handleToggleSelect}
+          onRemoveExclusion={handleRemoveExclusion}
+          onRename={renameStore}
+          onDelete={removeStore}
+          onReorder={reorderStores}
+          onExclude={handleExclude}
+          storeCounts={storeCounts}
+          noneCount={storeCounts.get(NONE_STORE_ID) ?? 0}
+        />
       )}
       </div>
 

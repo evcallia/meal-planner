@@ -20,6 +20,9 @@ export function useDarkMode() {
     } else {
       document.documentElement.classList.remove('dark');
     }
+    // Update iOS status bar / theme-color to match
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', isDark ? '#0c1a2e' : '#f3f4f6');
   }, [isDark]);
 
   const toggle = () => setIsDark(!isDark);
