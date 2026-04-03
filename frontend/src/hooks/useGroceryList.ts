@@ -1239,10 +1239,10 @@ export function useGroceryList() {
       try {
         await deleteGrocerySectionAPI(sectionId);
       } catch {
-        await queueChange('grocery-delete-section', '', { sectionId });
+        await queueChange('grocery-delete-section', '', { sectionId, name: section.name });
       }
     } else {
-      await queueChange('grocery-delete-section', '', { sectionId });
+      await queueChange('grocery-delete-section', '', { sectionId, name: section.name });
     }
     settleMutation();
 
