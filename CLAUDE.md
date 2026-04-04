@@ -103,11 +103,20 @@ Key details:
 - `DELETE /api/grocery/sections/{id}` — idempotent delete (204 even if already gone), rejects 400 if section has items
 - `PATCH /api/grocery/sections/{id}` — rename section (existing)
 
-## Sticky Sub-Headers Pattern
+## Liquid Glass Styling
+- **CSS utility classes** in `index.css`: `.glass` (cards/panels), `.glass-nav` (nav bar + bottom nav + FABs), `.glass-menu` (dropdowns/popovers — near-opaque to avoid nested backdrop-filter issues), `.glass-subtle` (section headers), `.glass-sticky` (unused after toolbar refactor)
+- **Dark mode gradient**: on `<html>` element with `background-attachment: fixed`; iOS fallback uses `position: fixed` pseudo-element via `@supports (-webkit-touch-callout: none)`. Body is transparent in dark mode
+- **Nested backdrop-filter limitation**: `backdrop-filter` doesn't work on elements nested inside a parent with `backdrop-filter`. Dropdowns/menus inside glass panels use `.glass-menu` with 97% opacity instead of relying on blur
+- **iOS status bar**: Single `<meta name="theme-color">` tag, dynamically updated in `useDarkMode` hook when dark mode toggles. `apple-mobile-web-app-status-bar-style` set to `black-translucent`. `<html>` background set to `#0c1a2e` in dark mode so iOS safe area matches
+- **Nav bar**: Floating glass pill (`glass-nav rounded-2xl h-12 mx-2 mt-2`), sticky with `z-10`
+- **Bottom nav**: Floating island (`glass-nav rounded-full`), fixed `bottom-4`, centered with `left-1/2 -translate-x-1/2`
+- **`color-scheme: dark`** on `select` elements in dark mode for white dropdown arrows
+
+## Sticky Toolbars
 - **PageHeader measures itself**: `ResizeObserver` sets `--header-h` CSS variable on `:root` with the header's `offsetHeight`
-- **Sub-bar positioning**: Grocery action bar, pantry action bar, and Future Meals panel use `sticky` with `style={{ top: 'var(--header-h, 52px)' }}` and `z-[9]` (below PageHeader's `z-10`)
-- **Background match**: Sticky divs use `bg-gray-100 dark:bg-gray-900` to match page background, with `-mx-4 px-4` to extend full width
-- **No scroll gap**: Pages with sticky sub-bars use `pt-0` on `<main>` and `pt-4` inside the sticky div
+- **Toolbar positioning**: Grocery action bar, pantry action bar, and Future Meals panel use `sticky` with `style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}` and `z-[9]` (below nav bar's `z-10`). The `24px` accounts for nav bar margin + gap
+- **Toolbar styling**: Rounded glass pills (`glass rounded-2xl p-3`)
+- **Grocery toolbar collapse**: Store filter chips toggle via inline chevron button. State persisted to localStorage (`meal-planner-toolbar-expanded`). Action bar row (Add items + sort + kebab + chevron) always visible
 
 ## Collapsible Future Meals Panel
 - `MealIdeasPanel` has a collapse toggle on both compact and regular views
