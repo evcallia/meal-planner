@@ -444,7 +444,7 @@ describe('App', () => {
     });
   });
 
-  it('scrolls to meal ideas and today when buttons are clicked', async () => {
+  it('scrolls to today when button is clicked', async () => {
     const mockUser = { id: '123', name: 'Test User', email: 'test@example.com' };
     mockGetCurrentUser.mockResolvedValue(mockUser);
 
@@ -454,7 +454,6 @@ describe('App', () => {
       expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByLabelText('Jump to meal ideas'));
     fireEvent.click(screen.getByLabelText('Jump to today'));
 
     expect(mockScrollToElementWithOffset).toHaveBeenCalled();
