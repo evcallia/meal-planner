@@ -80,6 +80,19 @@ Key details:
 - **Meal drag reordering**: DayCard uses `useDragReorder` for within-day reorder + cross-day moves. CalendarView bridges cross-day via `findMealDropTarget` (queries `[data-day-date]` DOM elements). Dragged item hidden with `opacity: 0` so shifted items are visible. `handleMealReorder` remaps `line_index` for itemized checkboxes. `handleMoveMeal` accepts optional `insertAt` for precise cross-day insertion position
 - **Collapsed state with replace APIs**: When `replaceGroceryListAPI`/`replacePantryListAPI` recreates sections (new server IDs), local state keyed by ID resets. Fix: lift collapsed state to parent component, keyed by section **name** (stable across replace operations)
 
+## Offline Patterns
+- **Full documentation**: See `docs/offline-patterns.md` for all canonical patterns
+- **No destructive replacements**: Never use `grocery-replace`/`pantry-replace` for CRUD ops — use targeted change types (`pantry-create-section`, `grocery-add`, etc.). Replacements overwrite other users' concurrent changes. Only use for `clearAll`/`clearChecked`/`mergeList`.
+- **ID resolution**: Use `resolveId()` (sync, in-memory) in undo/redo handlers. Use `resolveIdAsync()` (async, IndexedDB fallback) in main mutation API calls — temp IDs may have been synced externally by `useSync`.
+- **ID remap chain**: Use `remapId()` (not `idRemapRef.current.set()`) when recording new server IDs — it flattens the entire chain for multi-cycle undo/redo.
+- **Undo/redo serialization**: `UndoContext` blocks concurrent undo/redo to prevent race conditions with ID remaps.
+- All mutations must: (1) update state optimistically, (2) persist to IndexedDB, (3) call API if online or queue change if offline
+- Undo/redo handlers must use `isOnlineRef.current` (not stale `isOnline`), always queue on failure/offline, always call `settleMutation()`
+- Every `ChangeType` in `db.ts` must have a matching handler in `useSync.ts`
+- Temp IDs must be mapped via `saveTempIdMapping`/`remapId` and resolved in `useSync.ts` for ALL ID fields (item, section, store)
+- Queue payloads must include fallback fields (e.g., `sectionName`) for name-based resolution when temp IDs can't be mapped
+- Delete endpoints must be idempotent (return 200 not 404 when already deleted)
+
 ## Optimistic Update Patterns (useGroceryList)
 - **Optimistic version tracking**: `optimisticVersionRef` (useRef counter) incremented on every local/optimistic update. `loadGroceryList` captures the version before fetching; if the version changed while the fetch was in-flight, discard the stale server response. This prevents realtime/refetch responses from overwriting newer local state
 - **Pending mutations + deferred load**: `pendingMutationsRef` tracks count of in-flight mutation API calls. While > 0, realtime-triggered refetches (`grocery.updated` events) set `deferredLoadRef = true` instead of calling `loadGroceryList`. When all mutations settle (counter hits 0), the deferred load fires. Pattern: increment before API call, decrement in `finally` block via `settleMutation()`

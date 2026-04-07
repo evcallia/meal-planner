@@ -27,6 +27,9 @@ vi.mock('../../db', () => ({
   saveLocalGroceryItem: vi.fn(),
   deleteLocalGroceryItem: vi.fn(),
   getPendingChanges: vi.fn(() => Promise.resolve([])),
+  saveTempIdMapping: vi.fn(),
+  getTempIdMapping: vi.fn(() => Promise.resolve(undefined)),
+  isTempId: vi.fn((id: string) => id.startsWith('temp-')),
 }));
 
 vi.mock('../useOnlineStatus', () => ({

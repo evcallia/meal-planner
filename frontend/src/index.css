@@ -107,6 +107,37 @@ body {
   backdrop-filter: blur(12px);
 }
 
+/*
+ * Mobile keyboard layout fix.
+ * iOS PWA breaks position:sticky when the keyboard is open because the
+ * visual viewport scrolls independently. Fix: lock the document scroll
+ * and make <main> the scroll container. The header is a sibling of <main>
+ * so it stays at the top without needing sticky.
+ */
+.keyboard-open,
+.keyboard-open body {
+  height: 100% !important;
+  overflow: hidden !important;
+}
+
+.keyboard-open #root > div {
+  height: 100% !important;
+  overflow: hidden !important;
+}
+
+.keyboard-open main {
+  flex: 1 !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  min-height: 0 !important;
+}
+
+/* Sticky toolbars inside main: top offset should not include the header
+   height since the header is outside the <main> scroll container */
+.keyboard-open main .sticky {
+  top: 4px !important;
+}
+
 /* Dark mode select arrows */
 .dark select {
   color-scheme: dark;

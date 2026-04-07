@@ -125,10 +125,10 @@ describe('useMealIdeas', () => {
       .mockResolvedValueOnce([
         { id: '1', title: 'Idea', updated_at: '2026-02-03T12:00:00Z' },
       ])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValue([]);
     mockDeleteMealIdea.mockResolvedValue();
 
-    const { result } = renderHook(() => useMealIdeas());
+    const { result, unmount } = renderHook(() => useMealIdeas());
 
     await waitFor(() => expect(result.current.ideas).toHaveLength(1));
 
@@ -136,13 +136,16 @@ describe('useMealIdeas', () => {
       result.current.removeIdea('1');
     });
 
+    // Wait for the full async chain (delete API + settleMutation) to complete
     await waitFor(() => {
       expect(mockDeleteMealIdea).toHaveBeenCalledWith('1');
+      // Verify ideas list is empty (settleMutation's deferred load has resolved)
+      expect(result.current.ideas).toHaveLength(0);
     });
-
   });
 
   it('refreshes when a realtime meal-ideas update arrives', async () => {
+    mockGetMealIdeas.mockReset();
     let shouldReturnUpdated = false;
     mockGetMealIdeas.mockImplementation(() => Promise.resolve(
       shouldReturnUpdated
@@ -156,11 +159,11 @@ describe('useMealIdeas', () => {
     await waitFor(() => expect(result.current.ideas).toHaveLength(0));
 
     shouldReturnUpdated = true;
+
     act(() => {
       window.dispatchEvent(new CustomEvent('meal-planner-realtime', { detail: { type: 'meal-ideas.updated' } }));
     });
 
-    await waitFor(() => expect(mockGetMealIdeas).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(result.current.ideas).toHaveLength(1));
   });
 

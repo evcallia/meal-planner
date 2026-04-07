@@ -11,14 +11,11 @@ import { useSync } from './hooks/useSync';
 import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
 import { useRealtime } from './hooks/useRealtime';
+import { useKeyboardOpen } from './hooks/useKeyboardOpen';
 import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryList, getStores as getStoresAPI, getPantryList, getMealIdeas } from './api/client';
 import { UserInfo } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
-import { markGrocerySessionLoaded } from './hooks/useGroceryList';
-import { markPantrySessionLoaded } from './hooks/usePantry';
-import { markMealIdeasSessionLoaded } from './hooks/useMealIdeas';
-import { markStoresSessionLoaded } from './hooks/useStores';
 import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
@@ -117,7 +114,8 @@ function PageHeader({
   );
 }
 
-function BottomNav({ currentPage, onChange, groceryCount }: { currentPage: Page; onChange: (page: Page) => void; groceryCount: number }) {
+function BottomNav({ currentPage, onChange, groceryCount, hidden }: { currentPage: Page; onChange: (page: Page) => void; groceryCount: number; hidden?: boolean }) {
+  if (hidden) return null;
   return (
     <nav className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 glass-nav rounded-full px-6 safe-area-bottom">
       <div className="flex gap-7">
@@ -231,9 +229,11 @@ function MealsPage({
         return existingNotes;
       } catch (error) {
         console.error('Failed to schedule meal online:', error);
+        // Fall through to offline fallback — queue for later sync
       }
     }
 
+    // Offline (or online API failed) — save locally and queue
     const local = await getLocalNote(date);
     existingNotes = local?.notes ?? '';
     const nextNotes = appendMealLine(existingNotes, title);
@@ -386,6 +386,7 @@ function AppContent() {
   const { settings, updateSettings } = useSettings();
   const isOnline = useOnlineStatus();
   useRealtime();
+  const keyboardOpen = useKeyboardOpen();
 
   // PWA update detection (SW lifecycle)
   const {
@@ -498,34 +499,47 @@ function AppContent() {
   // Fetch all data and write to local cache so tab switches never need API calls.
   // Called on initial load, focus-return, and online-reconnect.
   const fetchAllData = useCallback(() => {
-    markGrocerySessionLoaded();
-    markStoresSessionLoaded();
-    markPantrySessionLoaded();
-    markMealIdeasSessionLoaded();
-    getGroceryList().then(async (data) => {
-      try { localStorage.setItem('meal-planner-grocery', JSON.stringify(data)); } catch { /* full */ }
-      setGroceryCount(data.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0));
-      await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
-      await saveLocalGroceryItems(data.flatMap(s => s.items.map(i => ({
-        id: i.id, section_id: i.section_id, name: i.name,
-        quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
-      }))));
-    }).catch(() => { /* best-effort */ });
-    getStoresAPI().then(async (stores) => {
-      await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
-    }).catch(() => { /* best-effort */ });
-    getPantryList().then(async (data) => {
-      try { localStorage.setItem('meal-planner-pantry-sections', JSON.stringify(data)); } catch { /* full */ }
-      await saveLocalPantrySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
-      await saveLocalPantryItems(data.flatMap(s => s.items.map(i => ({
-        id: i.id, section_id: i.section_id, name: i.name,
-        quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-      }))));
-    }).catch(() => { /* best-effort */ });
-    getMealIdeas().then(async (ideas) => {
-      await clearLocalMealIdeas();
-      for (const idea of ideas) await saveLocalMealIdea(idea);
-      try { localStorage.setItem('meal-planner-meal-ideas', JSON.stringify(ideas)); } catch { /* full */ }
+    // Skip cache-warming for entities with pending offline changes to avoid
+    // overwriting optimistic state before sync processes the queued changes.
+    getPendingChanges().then(pending => {
+      const hasGroceryChanges = pending.some(c => c.type.startsWith('grocery-'));
+      const hasPantryChanges = pending.some(c => c.type.startsWith('pantry-'));
+      const hasMealIdeaChanges = pending.some(c => c.type.startsWith('meal-idea-'));
+
+      if (!hasGroceryChanges) {
+        getGroceryList().then(async (data) => {
+          try { localStorage.setItem('meal-planner-grocery', JSON.stringify(data)); } catch { /* full */ }
+          setGroceryCount(data.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0));
+          await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+          await saveLocalGroceryItems(data.flatMap(s => s.items.map(i => ({
+            id: i.id, section_id: i.section_id, name: i.name,
+            quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
+          }))));
+        }).catch(() => { /* best-effort */ });
+      }
+
+      getStoresAPI().then(async (stores) => {
+        await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
+      }).catch(() => { /* best-effort */ });
+
+      if (!hasPantryChanges) {
+        getPantryList().then(async (data) => {
+          try { localStorage.setItem('meal-planner-pantry-sections', JSON.stringify(data)); } catch { /* full */ }
+          await saveLocalPantrySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+          await saveLocalPantryItems(data.flatMap(s => s.items.map(i => ({
+            id: i.id, section_id: i.section_id, name: i.name,
+            quantity: i.quantity, position: i.position, updated_at: i.updated_at,
+          }))));
+        }).catch(() => { /* best-effort */ });
+      }
+
+      if (!hasMealIdeaChanges) {
+        getMealIdeas().then(async (ideas) => {
+          await clearLocalMealIdeas();
+          for (const idea of ideas) await saveLocalMealIdea(idea);
+          try { localStorage.setItem('meal-planner-meal-ideas', JSON.stringify(ideas)); } catch { /* full */ }
+        }).catch(() => { /* best-effort */ });
+      }
     }).catch(() => { /* best-effort */ });
   }, []);
 
@@ -535,10 +549,6 @@ function AppContent() {
   // Mark flags during render (before child effects run) so hooks that
   // mount in this cycle see sessionLoaded=true and skip their own API fetch.
   if (user && isOnline && !preCacheDoneRef.current) {
-    markGrocerySessionLoaded();
-    markStoresSessionLoaded();
-    markPantrySessionLoaded();
-    markMealIdeasSessionLoaded();
   }
   useEffect(() => {
     if (!user || !isOnline || preCacheDoneRef.current) return;
@@ -849,7 +859,7 @@ function AppContent() {
       <UpdateNotification updateAvailable={updateAvailable} onApplyUpdate={applyUpdate} updating={updating} />
 
       {/* Bottom Navigation */}
-      <BottomNav currentPage={currentPage} onChange={handlePageChange} groceryCount={groceryCount} />
+      <BottomNav currentPage={currentPage} onChange={handlePageChange} groceryCount={groceryCount} hidden={keyboardOpen} />
     </div>
   );
 }

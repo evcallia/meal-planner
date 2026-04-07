@@ -28,6 +28,8 @@ vi.mock('../../db', () => ({
   deleteLocalPantryItem: vi.fn(),
   clearLocalPantryItems: vi.fn(),
   getPendingChanges: vi.fn(() => Promise.resolve([])),
+  getTempIdMapping: vi.fn(() => Promise.resolve(undefined)),
+  isTempId: vi.fn((id: string) => id.startsWith('temp-')),
 }));
 
 vi.mock('../useOnlineStatus', () => ({

@@ -100,7 +100,7 @@ async def delete_store(
 ):
     store = db.query(Store).filter(Store.id == store_id).first()
     if not store:
-        raise HTTPException(status_code=404, detail="Store not found")
+        return {"status": "ok"}  # Idempotent — already deleted
     db.delete(store)
     db.commit()
     await broadcast_event("stores.updated", {"id": str(store_id), "deleted": True}, source_id=request.headers.get("x-source-id"))

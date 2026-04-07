@@ -426,9 +426,10 @@ export function DayCard({
           data-day-date={day.date}
           className={`
             glass rounded-md overflow-hidden transition-all duration-200
-            ${isToday ? 'border-blue-400 ring-1 ring-blue-100 dark:ring-blue-900' : ''}
+            ${isToday ? 'ring-1 ring-blue-100 dark:ring-blue-900' : ''}
             ${crossDragTargetIndex != null ? 'ring-2 ring-blue-500 border-blue-500' : ''}
           `}
+          style={isToday ? { borderColor: 'rgb(96, 165, 250)' } : undefined}
         >
           {/* Compact Header - inline with content */}
           <div className="px-2 py-1.5 flex items-start gap-2">
@@ -632,9 +633,10 @@ export function DayCard({
         data-day-date={day.date}
         className={`
           glass rounded-lg overflow-hidden transition-all duration-200
-          ${isToday ? 'border-blue-400 ring-1 ring-blue-100 dark:ring-blue-900' : ''}
+          ${isToday ? 'ring-1 ring-blue-100 dark:ring-blue-900' : ''}
           ${crossDragTargetIndex != null ? 'ring-2 ring-blue-500 border-blue-500' : ''}
         `}
+        style={isToday ? { borderColor: 'rgb(96, 165, 250)' } : undefined}
       >
         {/* Header */}
         <div className={`

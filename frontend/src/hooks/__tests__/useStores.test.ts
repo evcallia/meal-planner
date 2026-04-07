@@ -15,6 +15,9 @@ vi.mock('../../api/client', () => ({
 vi.mock('../../db', () => ({
   saveLocalStores: vi.fn(),
   getLocalStores: vi.fn(() => Promise.resolve([])),
+  queueChange: vi.fn(),
+  generateTempId: vi.fn(() => `temp-${Date.now()}`),
+  getPendingChanges: vi.fn(() => Promise.resolve([])),
 }));
 
 vi.mock('../useOnlineStatus', () => ({
@@ -110,7 +113,7 @@ describe('useStores', () => {
     expect(mockCreateStoreAPI).toHaveBeenCalledWith('Whole Foods');
   });
 
-  it('createStore returns null on error', async () => {
+  it('createStore returns temp store and queues on error', async () => {
     mockCreateStoreAPI.mockRejectedValue(new Error('fail'));
 
     const { result } = renderHook(() => useStores());
@@ -121,7 +124,10 @@ describe('useStores', () => {
       created = await result.current.createStore('Bad Store');
     });
 
-    expect(created).toBeNull();
+    // Returns a temp store (optimistic) even on API failure
+    expect(created).not.toBeNull();
+    expect(created!.name).toBe('Bad Store');
+    expect(result.current.stores.some(s => s.name === 'Bad Store')).toBe(true);
   });
 
   it('renameStore optimistically updates name', async () => {

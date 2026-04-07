@@ -621,10 +621,10 @@ class TestMealIdeasAPI:
 
     @patch("app.routers.meal_ideas.broadcast_event", new_callable=AsyncMock)
     def test_delete_meal_idea_not_found(self, mock_broadcast, authenticated_client: TestClient):
-        """Test deleting non-existent meal idea fails."""
+        """Test deleting non-existent meal idea is idempotent (returns 200)."""
         response = authenticated_client.delete("/api/meal-ideas/00000000-0000-0000-0000-000000000001")
-        assert response.status_code == 404
-        assert "Idea not found" in response.json()["detail"]
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
 
 
 class TestStoresAPI:

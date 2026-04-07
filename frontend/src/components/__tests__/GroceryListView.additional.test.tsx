@@ -237,7 +237,7 @@ describe('GroceryListView - additional coverage', () => {
 
     render(<GroceryListView />);
     fireEvent.click(screen.getByLabelText('Clear options'));
-    fireEvent.click(screen.getByText('Copy list'));
+    fireEvent.click(screen.getByText('Copy full list'));
 
     expect(writeTextMock).toHaveBeenCalled();
   });

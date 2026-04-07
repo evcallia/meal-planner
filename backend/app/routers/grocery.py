@@ -36,7 +36,7 @@ async def list_grocery(
     )
     # Sort items within each section: unchecked first by position, checked last by position
     for section in sections:
-        section.items.sort(key=lambda item: (item.checked, item.position))
+        section.items.sort(key=lambda item: (item.checked, item.position if not item.checked else -item.updated_at.timestamp()))
     return sections
 
 
@@ -86,7 +86,7 @@ async def replace_grocery(
         .all()
     )
     for section in result:
-        section.items.sort(key=lambda item: (item.checked, item.position))
+        section.items.sort(key=lambda item: (item.checked, item.position if not item.checked else -item.updated_at.timestamp()))
     await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
     return result
 
@@ -105,7 +105,7 @@ async def update_section(
     section.name = payload.name.strip()
     db.commit()
     db.refresh(section)
-    section.items.sort(key=lambda item: (item.checked, item.position))
+    section.items.sort(key=lambda item: (item.checked, item.position if not item.checked else -item.updated_at.timestamp()))
     await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
     return section
 
@@ -356,6 +356,6 @@ async def clear_grocery_items(
         .all()
     )
     for section in result:
-        section.items.sort(key=lambda item: (item.checked, item.position))
+        section.items.sort(key=lambda item: (item.checked, item.position if not item.checked else -item.updated_at.timestamp()))
     await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
     return result

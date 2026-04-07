@@ -37,6 +37,7 @@ export function UndoProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const undo = useCallback(async () => {
+    if (isUndoRedoInProgress.current) return; // Serialize: don't overlap with in-flight undo/redo
     const action = pastRef.current[pastRef.current.length - 1];
     if (!action) return;
     // Update state first
@@ -52,6 +53,7 @@ export function UndoProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const redo = useCallback(async () => {
+    if (isUndoRedoInProgress.current) return; // Serialize: don't overlap with in-flight undo/redo
     const action = futureRef.current[futureRef.current.length - 1];
     if (!action) return;
     // Update state first

@@ -64,6 +64,8 @@ export function useSettings() {
   const [settings, setSettings] = useState<Settings>(initial.settings);
   const updatedAtRef = useRef<string | null>(initial.updated_at);
   const isOnline = useOnlineStatus();
+  const isOnlineRef = useRef(isOnline);
+  isOnlineRef.current = isOnline;
   const syncedRef = useRef(false);
 
   // Sync with server on mount (and when coming back online)
@@ -136,7 +138,7 @@ export function useSettings() {
       saveToLocalStorage(next, now);
 
       // Fire-and-forget server save
-      if (navigator.onLine) {
+      if (isOnlineRef.current) {
         putSettings(next as unknown as Record<string, unknown>, now).catch(() => {
           // Will sync on next reconnect
         });

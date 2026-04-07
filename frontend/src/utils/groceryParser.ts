@@ -1,6 +1,7 @@
 export interface ParsedGroceryItem {
   name: string;
   quantity: string | null;
+  store_id?: string | null;
 }
 
 export interface ParsedGrocerySection {

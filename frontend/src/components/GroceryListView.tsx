@@ -26,9 +26,19 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   const [quickAddSection, setQuickAddSection] = useState('');
   const [quickAddQuantity, setQuickAddQuantity] = useState(0);
   const [quickAddItemName, setQuickAddItemName] = useState('');
+  const [quickAddStoreId, setQuickAddStoreId] = useState<string | null>(null);
   const [showSectionDropdown, setShowSectionDropdown] = useState(false);
   const [inputText, setInputText] = useState('');
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const commitEditingRef = useRef<(() => void) | null>(null);
+  const handleEditingItemChange = useCallback((id: string | null) => {
+    // If switching to a new item, commit the current edit first
+    if (id !== null && editingItemId !== null && id !== editingItemId) {
+      commitEditingRef.current?.();
+    }
+    setEditingItemId(id);
+  }, [editingItemId]);
   const [newItemName, setNewItemName] = useState('');
   const [showClearMenu, setShowClearMenu] = useState(false);
   const [selectedStoreIds, setSelectedStoreIds] = useState<Set<string>>(() => {
@@ -361,8 +371,8 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
 
   const handleQuickAdd = useCallback(async () => {
     const trimmedName = quickAddItemName.trim();
-    const trimmedSection = quickAddSection.trim().replace(/(^|\s)\S/g, c => c.toUpperCase());
-    if (!trimmedName || !trimmedSection) return;
+    const trimmedSection = (quickAddSection.trim() || 'Default').replace(/(^|\s)\S/g, c => c.toUpperCase());
+    if (!trimmedName) return;
 
     const quantity = quickAddQuantity > 0 ? String(quickAddQuantity) : null;
 
@@ -371,20 +381,22 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     );
 
     if (existingSection) {
-      await addItem(existingSection.id, trimmedName, quantity);
+      await addItem(existingSection.id, trimmedName, quantity, quickAddStoreId);
     } else {
-      await mergeList([{ name: trimmedSection, items: [{ name: trimmedName, quantity }] }]);
+      await mergeList([{ name: trimmedSection, items: [{ name: trimmedName, quantity, store_id: quickAddStoreId }] }]);
     }
 
     setQuickAddItemName('');
     setQuickAddQuantity(0);
+    setQuickAddStoreId(null);
     requestAnimationFrame(() => quickAddItemRef.current?.focus());
-  }, [quickAddItemName, quickAddSection, quickAddQuantity, sections, addItem, mergeList]);
+  }, [quickAddItemName, quickAddSection, quickAddQuantity, quickAddStoreId, sections, addItem, mergeList]);
 
   const resetQuickAdd = useCallback(() => {
     setQuickAddSection('');
     setQuickAddItemName('');
     setQuickAddQuantity(0);
+    setQuickAddStoreId(null);
   }, []);
 
   const handleClearChecked = useCallback(async () => {
@@ -402,9 +414,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
   }, [sections]);
 
-  const handleCopyList = useCallback(() => {
+  const formatSectionsForCopy = (secs: typeof sections) => {
     const lines: string[] = [];
-    for (const section of sections) {
+    for (const section of secs) {
       const unchecked = section.items.filter(i => !i.checked);
       if (unchecked.length === 0) continue;
       lines.push(`[${section.name}]`);
@@ -413,9 +425,18 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
       }
       lines.push('');
     }
-    navigator.clipboard.writeText(lines.join('\n').trim());
+    return lines.join('\n').trim();
+  };
+
+  const handleCopyFullList = useCallback(() => {
+    navigator.clipboard.writeText(formatSectionsForCopy(sections));
     setShowClearMenu(false);
   }, [sections]);
+
+  const handleCopyFiltered = useCallback(() => {
+    navigator.clipboard.writeText(formatSectionsForCopy(visibleSections));
+    setShowClearMenu(false);
+  }, [visibleSections]);
 
   const hasItems = sections.length > 0;
 
@@ -503,7 +524,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
               </>
             ) : (
               <>
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
                     {sections.length === 0 ? 'Add your grocery list' : 'Add Items'}
                   </h3>
@@ -518,16 +539,55 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                   )}
                 </div>
 
-                {/* Section combobox */}
-                <div className="relative mb-3" ref={sectionDropdownRef}>
-                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Section</label>
-                  <div className="relative">
+                {/* Item + Qty row */}
+                <div className="flex items-center gap-2 mb-2">
+                  <input
+                    ref={quickAddItemRef}
+                    data-testid="quick-add-item"
+                    type="text"
+                    value={quickAddItemName}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setQuickAddItemName(val);
+                      // Auto-populate store from existing items with same name
+                      const trimmed = val.trim().toLowerCase();
+                      if (trimmed) {
+                        const match = sections.flatMap(s => s.items).find(
+                          i => i.name.toLowerCase() === trimmed && i.store_id
+                        );
+                        setQuickAddStoreId(match?.store_id ?? null);
+                      } else {
+                        setQuickAddStoreId(null);
+                      }
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleQuickAdd();
+                      } else if (e.key === 'Escape') {
+                        setAddMode('closed');
+                        resetQuickAdd();
+                      }
+                    }}
+                    placeholder="Item name..."
+                    className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button onClick={() => setQuickAddQuantity(q => Math.max(0, q - 1))} className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold">&minus;</button>
+                    <span className="w-6 text-center text-sm font-medium text-blue-600 dark:text-blue-400">{quickAddQuantity || '\u2013'}</span>
+                    <button onClick={() => setQuickAddQuantity(q => q + 1)} className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold">+</button>
+                  </div>
+                </div>
+
+                {/* Section + Store row */}
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="relative flex-1 min-w-0" ref={sectionDropdownRef}>
                     <input
                       data-testid="quick-add-section"
                       type="text"
                       value={quickAddSection}
                       onChange={e => { setQuickAddSection(e.target.value); setShowSectionDropdown(true); }}
-                      onFocus={() => setShowSectionDropdown(true)}
+                      onFocus={e => { e.target.select(); setShowSectionDropdown(true); }}
                       onKeyDown={e => {
                         if (e.key === 'Enter' || e.key === 'Tab') {
                           setShowSectionDropdown(false);
@@ -535,8 +595,8 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                           setShowSectionDropdown(false);
                         }
                       }}
-                      placeholder="e.g. Produce, Dairy..."
-                      className="w-full px-3 py-2 pr-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Section..."
+                      className="w-full px-3 py-1.5 pr-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     {quickAddSection && (
                       <button
@@ -549,94 +609,70 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                         </svg>
                       </button>
                     )}
-                  </div>
-                  {showSectionDropdown && filteredSections.length > 0 && (
-                    <div className="absolute z-20 left-0 right-0 mt-1 glass-menu rounded-lg max-h-40 overflow-y-auto">
-                      {filteredSections.map(s => (
-                        <div
-                          key={s.id}
-                          className="flex items-center hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                        >
-                          <button
-                            onClick={() => {
-                              setQuickAddSection(s.name);
-                              setShowSectionDropdown(false);
-                              requestAnimationFrame(() => quickAddItemRef.current?.focus());
-                            }}
-                            className="flex-1 text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300"
+                    {showSectionDropdown && filteredSections.length > 0 && (
+                      <div className="absolute z-20 left-0 right-0 mt-1 glass-menu rounded-lg max-h-40 overflow-y-auto">
+                        {filteredSections.map(s => (
+                          <div
+                            key={s.id}
+                            className="flex items-center hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                           >
-                            {s.name}
-                          </button>
-                          {s.isEmpty && (
                             <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteSection(s.id);
-                                if (quickAddSection === s.name) setQuickAddSection('');
+                              onClick={() => {
+                                setQuickAddSection(s.name);
+                                setShowSectionDropdown(false);
+                                requestAnimationFrame(() => quickAddItemRef.current?.focus());
                               }}
-                              className="px-2 py-1 mr-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
-                              aria-label={`Delete section ${s.name}`}
+                              className="flex-1 text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300"
                             >
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                              </svg>
+                              {s.name}
                             </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Quantity + Item row */}
-                <div className="flex items-end gap-2 mb-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Qty</label>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <button onClick={() => setQuickAddQuantity(q => Math.max(0, q - 1))} className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold">&minus;</button>
-                      <span className="w-8 text-center text-sm font-medium text-blue-600 dark:text-blue-400">{quickAddQuantity || '\u2013'}</span>
-                      <button onClick={() => setQuickAddQuantity(q => q + 1)} className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold">+</button>
-                    </div>
+                            {s.isEmpty && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteSection(s.id);
+                                  if (quickAddSection === s.name) setQuickAddSection('');
+                                }}
+                                className="px-2 py-1 mr-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
+                                aria-label={`Delete section ${s.name}`}
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <div className="flex-1">
-                    <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Item</label>
-                    <input
-                      ref={quickAddItemRef}
-                      data-testid="quick-add-item"
-                      type="text"
-                      value={quickAddItemName}
-                      onChange={e => setQuickAddItemName(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleQuickAdd();
-                        } else if (e.key === 'Escape') {
-                          setAddMode('closed');
-                          resetQuickAdd();
-                        }
-                      }}
-                      placeholder="Item name..."
-                      className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  <div className="flex-1 min-w-0">
+                    <StoreAutocomplete
+                      stores={stores}
+                      selectedStoreId={quickAddStoreId}
+                      onSelect={setQuickAddStoreId}
+                      onCreate={createStore}
                     />
                   </div>
                 </div>
 
-                {/* Add Item button */}
-                <button
-                  data-testid="quick-add-submit"
-                  onClick={handleQuickAdd}
-                  disabled={!quickAddItemName.trim() || !quickAddSection.trim()}
-                  className="w-full py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-600 rounded-lg transition-colors"
-                >
-                  Add Item
-                </button>
-
-                <button
-                  onClick={() => setAddMode('paste')}
-                  className="mt-2 text-xs text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                >
-                  Paste a list instead
-                </button>
+                {/* Add Item button + paste link */}
+                <div className="flex items-center gap-2">
+                  <button
+                    data-testid="quick-add-submit"
+                    onClick={handleQuickAdd}
+                    disabled={!quickAddItemName.trim()}
+                    className="flex-1 py-1.5 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-600 rounded-lg transition-colors"
+                  >
+                    Add Item
+                  </button>
+                  <button
+                    onClick={() => setAddMode('paste')}
+                    className="text-xs text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                  >
+                    Paste a list
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -676,12 +712,20 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 </button>
                 {showClearMenu && (
                   <div className="absolute right-0 top-full mt-1 glass-menu rounded-lg py-1 z-20 min-w-[220px]">
-                    {visibleSections.length > 0 && (
+                    {visibleSections.length > 0 && (selectedStoreIds.size > 0 || excludedStoreIds.size > 0) && (
                       <button
-                        onClick={handleCopyList}
+                        onClick={handleCopyFiltered}
                         className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                       >
-                        Copy list
+                        Copy filtered list
+                      </button>
+                    )}
+                    {sections.some(s => s.items.some(i => !i.checked)) && (
+                      <button
+                        onClick={handleCopyFullList}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        Copy full list
                       </button>
                     )}
                     {stores.length > 0 && (
@@ -732,12 +776,15 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
             {visibleStores.length > 0 && (
               <button
                 onClick={() => { const next = !toolbarExpanded; setToolbarExpanded(next); try { localStorage.setItem('meal-planner-toolbar-expanded', String(next)); } catch {} }}
-                className="p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                className="relative p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                 aria-label={toolbarExpanded ? 'Hide store filters' : 'Show store filters'}
               >
                 <svg className={`w-4 h-4 transition-transform ${toolbarExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
+                {!toolbarExpanded && (selectedStoreIds.size > 0 || excludedStoreIds.size > 0) && (
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500" />
+                )}
               </button>
             )}
           </>
@@ -804,6 +851,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 stores={stores}
                 onStoreAssign={handleStoreAssign}
                 onCreateStore={createStore}
+                editingItemId={editingItemId}
+                onEditingItemChange={handleEditingItemChange}
+                commitEditingRef={commitEditingRef}
               />
             </div>
           );
@@ -827,6 +877,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 stores={stores}
                 onStoreAssign={handleStoreAssign}
                 onCreateStore={createStore}
+                editingItemId={editingItemId}
+                onEditingItemChange={handleEditingItemChange}
+                commitEditingRef={commitEditingRef}
               />
             ))}
           </div>
@@ -861,6 +914,9 @@ interface SectionCardProps {
   stores: Store[];
   onStoreAssign: (itemId: string, storeId: string | null) => void;
   onCreateStore: (name: string) => Promise<Store | null>;
+  editingItemId: string | null;
+  onEditingItemChange: (id: string | null) => void;
+  commitEditingRef: React.MutableRefObject<(() => void) | null>;
 }
 
 function SectionCard({
@@ -887,6 +943,9 @@ function SectionCard({
   stores,
   onStoreAssign,
   onCreateStore,
+  editingItemId,
+  onEditingItemChange,
+  commitEditingRef,
 }: SectionCardProps) {
   const uncheckedItems = section.items.filter(i => !i.checked);
   const itemContainerRef = useRef<HTMLDivElement>(null);
@@ -1004,6 +1063,9 @@ function SectionCard({
                   stores={stores}
                   onStoreAssign={onStoreAssign}
                   onCreateStore={onCreateStore}
+                  editingItemId={editingItemId}
+                  onEditingItemChange={onEditingItemChange}
+                  commitEditingRef={commitEditingRef}
                 />
               </div>
             );
@@ -1068,12 +1130,15 @@ interface GroceryItemRowProps {
   stores: Store[];
   onStoreAssign: (itemId: string, storeId: string | null) => void;
   onCreateStore: (name: string) => Promise<Store | null>;
+  editingItemId: string | null;
+  onEditingItemChange: (id: string | null) => void;
+  commitEditingRef: React.MutableRefObject<(() => void) | null>;
 }
 
-function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging, stores, onStoreAssign, onCreateStore }: GroceryItemRowProps) {
+function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging, stores, onStoreAssign, onCreateStore, editingItemId, onEditingItemChange, commitEditingRef }: GroceryItemRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
+  const isEditing = editingItemId === item.id;
   const [editName, setEditName] = useState(item.name);
   const [editQuantity, setEditQuantity] = useState(item.quantity ?? '');
   const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -1085,17 +1150,19 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
   const SWIPE_THRESHOLD = 50;
   const SWIPE_MAX = 80;
 
+  const commitEditRef = useRef<(() => void) | null>(null) as React.MutableRefObject<(() => void) | null>;
+
   const startEditing = useCallback(() => {
     if (item.checked) return;
     setEditName(item.name);
     setEditQuantity(item.quantity ?? '');
-    setIsEditing(true);
-  }, [item.name, item.quantity, item.checked]);
+    onEditingItemChange(item.id);
+  }, [item.id, item.name, item.quantity, item.checked, onEditingItemChange]);
 
   const commitEdit = useCallback(() => {
     const trimmedName = editName.trim();
     if (!trimmedName) {
-      setIsEditing(false);
+      onEditingItemChange(null);
       return;
     }
 
@@ -1108,14 +1175,22 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
     if (Object.keys(updates).length > 0) {
       onEdit(item.id, updates);
     }
-    setIsEditing(false);
-  }, [editName, editQuantity, item.id, item.name, item.quantity, onEdit]);
+    onEditingItemChange(null);
+  }, [editName, editQuantity, item.id, item.name, item.quantity, onEdit, onEditingItemChange]);
 
   const cancelEdit = useCallback(() => {
-    setIsEditing(false);
+    onEditingItemChange(null);
     setEditName(item.name);
     setEditQuantity(item.quantity ?? '');
-  }, [item.name, item.quantity]);
+  }, [item.name, item.quantity, onEditingItemChange]);
+
+  // Expose commitEdit so parent can call it before switching to another item
+  commitEditRef.current = commitEdit;
+  useEffect(() => {
+    if (isEditing) {
+      commitEditingRef.current = () => commitEditRef.current?.();
+    }
+  }, [isEditing, commitEditingRef]);
 
   useEffect(() => {
     if (isEditing && nameInputRef.current) {

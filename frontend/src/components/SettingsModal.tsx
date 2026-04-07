@@ -55,6 +55,8 @@ const typeLabels: Record<ChangeType, string> = {
   'pantry-update': 'Update pantry item',
   'pantry-delete': 'Delete from pantry',
   'pantry-replace': 'Replace pantry list',
+  'pantry-create-section': 'Create pantry section',
+  'pantry-delete-section': 'Delete pantry section',
   'pantry-reorder-sections': 'Reorder pantry sections',
   'pantry-reorder-items': 'Reorder pantry items',
   'pantry-rename-section': 'Rename pantry section',
@@ -64,6 +66,7 @@ const typeLabels: Record<ChangeType, string> = {
   'calendar-hide': 'Hide calendar event',
   'calendar-unhide': 'Unhide calendar event',
   'grocery-replace': 'Replace grocery list',
+  'grocery-create-section': 'Create grocery section',
   'grocery-check': 'Check grocery item',
   'grocery-add': 'Add to grocery list',
   'grocery-delete': 'Delete from grocery list',
@@ -75,6 +78,10 @@ const typeLabels: Record<ChangeType, string> = {
   'grocery-move-item': 'Move grocery item',
   'grocery-delete-section': 'Delete grocery section',
   'pantry-move-item': 'Move pantry item',
+  'store-create': 'Create store',
+  'store-rename': 'Rename store',
+  'store-delete': 'Delete store',
+  'store-reorder': 'Reorder stores',
 };
 
 async function enrichPendingChanges(changes: PendingChange[]): Promise<EnrichedPendingChange[]> {

@@ -150,7 +150,7 @@ describe('GroceryListView', () => {
     fireEvent.click(screen.getByLabelText('Clear options'));
     expect(screen.getByText('Clear all items')).toBeInTheDocument();
     expect(screen.getByText(/Clear checked/)).toBeInTheDocument();
-    expect(screen.getByText('Copy list')).toBeInTheDocument();
+    expect(screen.getByText('Copy full list')).toBeInTheDocument();
   });
 
   it('clear all calls clearAll', async () => {
@@ -174,7 +174,7 @@ describe('GroceryListView', () => {
     render(<GroceryListView />);
 
     // Switch to paste mode
-    fireEvent.click(screen.getByText('Paste a list instead'));
+    fireEvent.click(screen.getByText('Paste a list'));
 
     const textarea = screen.getByPlaceholderText(/Type or paste grocery list/);
     fireEvent.change(textarea, { target: { value: '[Produce]\nBananas' } });
@@ -215,7 +215,7 @@ describe('GroceryListView', () => {
     fireEvent.click(screen.getByTestId('quick-add-submit'));
 
     await waitFor(() => {
-      expect(mockAddItem).toHaveBeenCalledWith('s1', 'Celery', null);
+      expect(mockAddItem).toHaveBeenCalledWith('s1', 'Celery', null, null);
     });
   });
 
@@ -233,7 +233,7 @@ describe('GroceryListView', () => {
 
     await waitFor(() => {
       expect(mockMergeList).toHaveBeenCalledWith([
-        { name: 'Bakery', items: [{ name: 'Sourdough', quantity: null }] },
+        { name: 'Bakery', items: [{ name: 'Sourdough', quantity: null, store_id: null }] },
       ]);
     });
   });
@@ -287,7 +287,7 @@ describe('GroceryListView', () => {
     fireEvent.click(screen.getByTestId('quick-add-submit'));
 
     await waitFor(() => {
-      expect(mockAddItem).toHaveBeenCalledWith('s1', 'Limes', '3');
+      expect(mockAddItem).toHaveBeenCalledWith('s1', 'Limes', '3', null);
     });
   });
 
@@ -298,7 +298,7 @@ describe('GroceryListView', () => {
 
     expect(screen.getByTestId('quick-add-section')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('Paste a list instead'));
+    fireEvent.click(screen.getByText('Paste a list'));
     expect(screen.getByPlaceholderText(/Type or paste grocery list/)).toBeInTheDocument();
     expect(screen.queryByTestId('quick-add-section')).not.toBeInTheDocument();
 
