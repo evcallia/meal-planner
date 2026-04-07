@@ -124,7 +124,7 @@ Key details:
 - **Dark mode gradient**: on `<html>` element with `background-attachment: fixed`; iOS fallback uses `position: fixed` pseudo-element via `@supports (-webkit-touch-callout: none)`. Body is transparent in dark mode
 - **Nested backdrop-filter limitation**: `backdrop-filter` doesn't work on elements nested inside a parent with `backdrop-filter`. Dropdowns/menus inside glass panels use `.glass-menu` with 97% opacity instead of relying on blur
 - **iOS status bar**: Single `<meta name="theme-color">` tag, dynamically updated in `useDarkMode` hook when dark mode toggles. `apple-mobile-web-app-status-bar-style` set to `black-translucent`. `<html>` background set to `#0c1a2e` in dark mode so iOS safe area matches
-- **Nav bar**: Floating glass pill (`glass-nav rounded-2xl h-12 mx-2 mt-2`), sticky with `z-10`
+- **Nav bar**: `<header>` uses `max-w-lg mx-auto w-full px-4` (same as `<main>`) with glass pill as inner `<div>` — matches toolbar width. Sticky with `z-10`
 - **Bottom nav**: Floating island (`glass-nav rounded-full`), fixed `bottom-4`, centered with `left-1/2 -translate-x-1/2`
 - **`color-scheme: dark`** on `select` elements in dark mode for white dropdown arrows
 
@@ -179,6 +179,8 @@ Key details:
 - **Calendar single-fetch**: CalendarView init fetches one `getDays` call for the full range (past 2 weeks through future 8 weeks) and one `getEvents` call, instead of separate calls per range
 - **Calendar prefetch range**: Module-level `prefetchedStart`/`prefetchedEnd` strings track the pre-fetched date range. `loadNextWeek`/`loadPreviousWeek` skip API calls when the requested range falls within these boundaries — only hit API when scrolling past the prefetched window
 - **Calendar remount guard**: `showAllEvents`/`showHolidays` effect uses prev-value refs to only fire on actual changes, not on component remount (prevents redundant API calls on tab switch)
+- **Calendar scroll-to-today**: `scrollToElementWithOffset` accounts for nav bar height (`--header-h` CSS var), sticky panels (`.sticky.z-\[9\]`), and a 48px extra offset so "Load previous" button is also visible
+- **Calendar load-previous scroll preservation**: `loadPreviousWeek` uses `flushSync` + scroll anchor pattern — captures first visible day card's position, flushes the state update synchronously, then adjusts `window.scrollBy` so the view stays in place while new days appear above
 
 ## Testing Patterns
 - Mock `authEvents` in test files that import modules using it: `vi.mock('../../authEvents', () => ({ emitAuthFailure: vi.fn(), onAuthFailure: vi.fn(() => vi.fn()) }))`

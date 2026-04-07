@@ -50,8 +50,8 @@ function PageHeader({
   }, []);
 
   return (
-    <header ref={headerRef} className={`glass-nav sticky z-10 mx-2 mt-2 rounded-2xl h-12 ${status !== 'online' ? 'top-10' : 'top-2'}`}>
-      <div className="max-w-lg mx-auto px-5 h-full flex items-center justify-between">
+    <header ref={headerRef} className={`sticky z-10 mt-2 ${status !== 'online' ? 'top-10' : 'top-2'} max-w-lg mx-auto w-full px-4`}>
+      <div className="glass-nav rounded-2xl h-12 px-5 flex items-center justify-between">
         <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h1>
         <div className="flex items-center gap-3">
           {/* Refresh button */}

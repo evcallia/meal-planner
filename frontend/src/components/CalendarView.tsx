@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { CalendarEvent, DayData } from '../types';
 import { DayCard } from './DayCard';
 import { getDays, getEvents, updateNotes, toggleItemized, hideCalendarEvent, unhideCalendarEvent, getHiddenCalendarEvents } from '../api/client';
@@ -758,13 +759,25 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       }
     }
 
-    // Helper to add days to display
+    // Helper to add days to display, preserving scroll position
     const addDaysToDisplay = (newDays: DayData[]) => {
-      setDays(prev => {
-        const existingMap = new Map(prev.map(d => [d.date, d]));
-        newDays.forEach(d => existingMap.set(d.date, d));
-        return Array.from(existingMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+      // Find the first visible day card to anchor scroll position
+      const anchor = document.querySelector<HTMLElement>('[data-day-date]');
+      const anchorTop = anchor ? anchor.getBoundingClientRect().top : null;
+
+      flushSync(() => {
+        setDays(prev => {
+          const existingMap = new Map(prev.map(d => [d.date, d]));
+          newDays.forEach(d => existingMap.set(d.date, d));
+          return Array.from(existingMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+        });
       });
+
+      // Restore scroll so the anchor card stays in the same visual position
+      if (anchor && anchorTop !== null) {
+        const newAnchorTop = anchor.getBoundingClientRect().top;
+        window.scrollBy(0, newAnchorTop - anchorTop);
+      }
       displayStartRef.current = newStart;
     };
 
