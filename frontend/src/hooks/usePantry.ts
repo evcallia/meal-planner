@@ -180,6 +180,13 @@ export function usePantry() {
     return () => window.removeEventListener('meal-planner-realtime', handler);
   }, [loadPantryList]);
 
+  // Refetch after offline sync completes to pick up other devices' changes
+  useEffect(() => {
+    const handler = () => loadPantryList();
+    window.addEventListener('pending-changes-synced', handler);
+    return () => window.removeEventListener('pending-changes-synced', handler);
+  }, [loadPantryList]);
+
   // Add item to a section
   const addItem = useCallback(async (sectionId: string, name: string, quantity: number = 1) => {
     const section = sections.find(s => s.id === sectionId);

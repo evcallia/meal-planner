@@ -87,7 +87,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   }, [sections]);
 
   const filteredSections = useMemo(() => {
-    const all = sections.map(s => ({ name: s.name, id: s.id, isEmpty: s.items.length === 0 }));
+    const all = sections
+      .map(s => ({ name: s.name, id: s.id, isEmpty: s.items.length === 0 }))
+      .sort((a, b) => a.name.localeCompare(b.name));
     if (!quickAddSection.trim()) return all;
     const lower = quickAddSection.toLowerCase();
     return all.filter(s => s.name.toLowerCase().includes(lower));
@@ -336,13 +338,25 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
 
   useEffect(() => {
     if (!showSectionDropdown) return;
+    // Elevate the .glass ancestor so the dropdown renders above store chips on iOS
+    const glassAncestor = sectionDropdownRef.current?.closest('.glass');
+    if (glassAncestor instanceof HTMLElement) {
+      glassAncestor.style.zIndex = '20';
+      glassAncestor.style.position = 'relative';
+    }
     const handleClick = (e: MouseEvent) => {
       if (sectionDropdownRef.current && !sectionDropdownRef.current.contains(e.target as Node)) {
         setShowSectionDropdown(false);
       }
     };
     document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      if (glassAncestor instanceof HTMLElement) {
+        glassAncestor.style.zIndex = '';
+        glassAncestor.style.position = '';
+      }
+    };
   }, [showSectionDropdown]);
 
   const handleSubmitText = useCallback(async () => {
@@ -360,14 +374,16 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   const handleAddItem = useCallback(async (sectionId: string) => {
     if (!newItemName.trim()) return;
     const qtyMatch = newItemName.trim().match(/^\((\d+)\)\s+(.+)$/);
-    if (qtyMatch) {
-      await addItem(sectionId, qtyMatch[2], qtyMatch[1]);
-    } else {
-      await addItem(sectionId, newItemName.trim());
-    }
+    const name = qtyMatch ? qtyMatch[2] : newItemName.trim();
+    const qty = qtyMatch ? qtyMatch[1] : undefined;
+    // Auto-populate store from existing items with same name
+    const match = sections.flatMap(s => s.items).find(
+      i => i.name.toLowerCase() === name.toLowerCase() && i.store_id
+    );
+    await addItem(sectionId, name, qty, match?.store_id ?? null);
     setNewItemName('');
     setAddingToSection(null);
-  }, [newItemName, addItem]);
+  }, [newItemName, sections, addItem]);
 
   const handleQuickAdd = useCallback(async () => {
     const trimmedName = quickAddItemName.trim();
@@ -580,8 +596,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 </div>
 
                 {/* Section + Store row */}
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex gap-2 mb-2 relative z-20">
                   <div className="relative flex-1 min-w-0" ref={sectionDropdownRef}>
+                    <label className="block text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-0.5 ml-1">Section</label>
                     <input
                       data-testid="quick-add-section"
                       type="text"
@@ -595,7 +612,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                           setShowSectionDropdown(false);
                         }
                       }}
-                      placeholder="Section..."
+                      placeholder="Default"
                       className="w-full px-3 py-1.5 pr-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     {quickAddSection && (
@@ -610,7 +627,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                       </button>
                     )}
                     {showSectionDropdown && filteredSections.length > 0 && (
-                      <div className="absolute z-20 left-0 right-0 mt-1 glass-menu rounded-lg max-h-40 overflow-y-auto">
+                      <div className="absolute z-30 left-0 right-0 mt-1 glass-menu rounded-lg max-h-40 overflow-y-auto shadow-lg">
                         {filteredSections.map(s => (
                           <div
                             key={s.id}
@@ -647,6 +664,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
+                    <label className="block text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-0.5 ml-1">Store</label>
                     <StoreAutocomplete
                       stores={stores}
                       selectedStoreId={quickAddStoreId}

@@ -197,6 +197,13 @@ export function useGroceryList() {
     return () => window.removeEventListener('meal-planner-realtime', handler);
   }, [loadGroceryList]);
 
+  // Refetch after offline sync completes to pick up other devices' changes
+  useEffect(() => {
+    const handler = () => loadGroceryList();
+    window.addEventListener('pending-changes-synced', handler);
+    return () => window.removeEventListener('pending-changes-synced', handler);
+  }, [loadGroceryList]);
+
   // Merge parsed grocery items into existing list
   const mergeList = useCallback(async (parsed: ParsedGrocerySection[]) => {
     const prevSections = sections;

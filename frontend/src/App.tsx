@@ -722,6 +722,16 @@ function AppContent() {
     if (user && isOnline && wasOffline) broadcastFullRefresh();
   }, [user, isOnline, broadcastFullRefresh]);
 
+  // After offline sync drains the queue, re-warm caches for inactive tabs.
+  // The initial broadcastFullRefresh on reconnect skips entities that had
+  // pending changes; this fills that gap once those changes are synced.
+  useEffect(() => {
+    if (!user) return;
+    const handler = () => fetchAllData();
+    window.addEventListener('pending-changes-synced', handler);
+    return () => window.removeEventListener('pending-changes-synced', handler);
+  }, [user, fetchAllData]);
+
   useEffect(() => {
     const scale = settings.compactView ? settings.textScaleCompact : settings.textScaleStandard;
     const root = document.documentElement;

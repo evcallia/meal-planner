@@ -548,6 +548,13 @@ export function useSync() {
     const remaining = await getPendingChanges();
     if (remaining.length === 0) {
       setStatus('online');
+      // After draining the queue, notify hooks to refetch from server.
+      // This picks up changes made by other devices while we were offline —
+      // fetchAllData skipped cache-warming for entities with pending changes,
+      // and SSE events from our own sync are filtered by SOURCE_ID.
+      if (changes.length > 0) {
+        window.dispatchEvent(new Event('pending-changes-synced'));
+      }
     }
   } catch { /* sync error — will retry */ }
   });

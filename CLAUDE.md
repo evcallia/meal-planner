@@ -92,6 +92,7 @@ Key details:
 - Temp IDs must be mapped via `saveTempIdMapping`/`remapId` and resolved in `useSync.ts` for ALL ID fields (item, section, store)
 - Queue payloads must include fallback fields (e.g., `sectionName`) for name-based resolution when temp IDs can't be mapped
 - Delete endpoints must be idempotent (return 200 not 404 when already deleted)
+- **Post-sync refetch**: `useSync` dispatches `'pending-changes-synced'` DOM event after draining the queue. All data hooks listen for this event and refetch from API, and App.tsx calls `fetchAllData()` for inactive tab cache warming. This picks up changes made by other devices while offline — needed because `fetchAllData` skips entities with pending changes, and SSE events from our own sync are filtered by `SOURCE_ID`
 
 ## Optimistic Update Patterns (useGroceryList)
 - **Optimistic version tracking**: `optimisticVersionRef` (useRef counter) incremented on every local/optimistic update. `loadGroceryList` captures the version before fetching; if the version changed while the fetch was in-flight, discard the stale server response. This prevents realtime/refetch responses from overwriting newer local state
@@ -105,7 +106,9 @@ Key details:
 ## Grocery Quick-Add Form
 - **Add mode state**: `addMode: 'closed' | 'quick' | 'paste'` replaces old `showInputArea` boolean in GroceryListView
 - **Quick-add form** (default): Section combobox + quantity stepper + item name input + full-width Add button
-- **Section combobox**: Filters existing sections as user types; unmatched input creates a new section. Clear button (X) inside input. Empty sections show red X delete button in dropdown
+- **Section combobox**: Filters existing sections as user types; unmatched input creates a new section. Clear button (X) inside input. Empty sections show red X delete button in dropdown. Dropdown opens below input; `.glass` ancestor elevated on open for iOS z-index stacking
+- **Section/store dropdowns**: Both sorted alphabetically via `localeCompare`
+- **Store auto-populate**: Both quick-add and inline per-section add auto-populate store from existing items with the same name
 - **Paste mode**: Toggle via "Paste a list instead" link; existing textarea with `[Section]` / `(N) Item` format
 - **Rapid entry**: After add, item name clears, quantity resets to 0 (–), section stays selected, focus returns to item input
 - **Section name title-casing**: Applied via `toTitleCase` at all entry points: `parseGroceryText`, `mergeList`, `renameSection`, `handleQuickAdd`

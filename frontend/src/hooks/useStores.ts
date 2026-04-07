@@ -122,6 +122,13 @@ export function useStores(options: UseStoresOptions = {}) {
     return () => window.removeEventListener('meal-planner-realtime', handler);
   }, []);
 
+  // Refetch after offline sync completes to pick up other devices' changes
+  useEffect(() => {
+    const handler = () => loadStoresRef.current();
+    window.addEventListener('pending-changes-synced', handler);
+    return () => window.removeEventListener('pending-changes-synced', handler);
+  }, []);
+
   const createStore = useCallback(async (name: string): Promise<Store | null> => {
     optimisticVersionRef.current++;
     const tempId = generateTempId();

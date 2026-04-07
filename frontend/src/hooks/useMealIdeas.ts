@@ -194,6 +194,13 @@ export function useMealIdeas() {
     };
   }, [refreshIdeas]);
 
+  // Refetch after offline sync completes to pick up other devices' changes
+  useEffect(() => {
+    const handler = () => refreshIdeas();
+    window.addEventListener('pending-changes-synced', handler);
+    return () => window.removeEventListener('pending-changes-synced', handler);
+  }, [refreshIdeas]);
+
   const addIdea = useCallback((input: MealIdeaInput): string => {
     const tempId = generateTempId();
     const run = async () => {
