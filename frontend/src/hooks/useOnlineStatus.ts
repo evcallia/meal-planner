@@ -39,22 +39,40 @@ function setOnline(value: boolean) {
   }
 }
 
-async function checkConnectivity() {
-  if (_checking) return;
-  _checking = true;
+async function healthFetch(): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = _isOnline ? 2000 : TIMEOUT_OFFLINE;
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
   try {
-    const controller = new AbortController();
-    const timeout = _isOnline ? 2000 : TIMEOUT_OFFLINE;
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
     const response = await fetch('/api/health', {
       method: 'GET',
       signal: controller.signal,
       cache: 'no-store',
     });
     clearTimeout(timeoutId);
-    setOnline(response.ok);
+    return response.ok;
   } catch {
-    setOnline(false);
+    clearTimeout(timeoutId);
+    return false;
+  }
+}
+
+async function checkConnectivity() {
+  if (_checking) return;
+  _checking = true;
+  try {
+    const ok = await healthFetch();
+    if (ok) {
+      setOnline(true);
+    } else if (!_isOnline) {
+      // Already offline — stay offline
+      setOnline(false);
+    } else {
+      // Currently online but health check failed — retry once before going offline
+      await new Promise(r => setTimeout(r, 3000));
+      const retryOk = await healthFetch();
+      setOnline(retryOk);
+    }
   } finally {
     _checking = false;
   }
