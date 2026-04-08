@@ -27,6 +27,9 @@ vi.mock('../../db', () => ({
   saveLocalGroceryItem: vi.fn(),
   deleteLocalGroceryItem: vi.fn(),
   getPendingChanges: vi.fn(() => Promise.resolve([])),
+  saveTempIdMapping: vi.fn(),
+  getTempIdMapping: vi.fn(() => Promise.resolve(undefined)),
+  isTempId: vi.fn((id: string) => id.startsWith('temp-')),
 }));
 
 vi.mock('../useOnlineStatus', () => ({
@@ -170,7 +173,7 @@ describe('useGroceryList', () => {
       const section = result.current.sections.find(s => s.id === 's1')!;
       expect(section.items.some(i => i.name === 'Grapes')).toBe(true);
     });
-    expect(mockAddAPI).toHaveBeenCalledWith('s1', 'Grapes', null);
+    expect(mockAddAPI).toHaveBeenCalledWith('s1', 'Grapes', null, null);
   });
 
   it('addItem merges duplicate unchecked items by summing quantities', async () => {

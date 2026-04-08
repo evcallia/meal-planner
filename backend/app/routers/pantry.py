@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user
+from app.routers.stores import to_title_case
 from app.database import get_db
 from app.models import PantrySection, PantryItem
 from app.schemas import (
@@ -50,7 +51,7 @@ async def replace_pantry(
     db.flush()
 
     for i, sec in enumerate(payload.sections):
-        section = PantrySection(name=sec.name, position=i)
+        section = PantrySection(name=to_title_case(sec.name), position=i)
         db.add(section)
         db.flush()
         for j, item in enumerate(sec.items):
@@ -87,7 +88,7 @@ async def update_section(
     section = db.query(PantrySection).options(joinedload(PantrySection.items)).filter(PantrySection.id == section_id).first()
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
-    section.name = payload.name.strip()
+    section.name = to_title_case(payload.name)
     db.commit()
     db.refresh(section)
     section.items.sort(key=lambda item: item.position)
@@ -236,9 +237,13 @@ async def create_pantry_section(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
+    name = to_title_case(payload.name)
+    existing = db.query(PantrySection).filter(PantrySection.name == name).first()
+    if existing:
+        return existing
     max_pos = db.query(PantrySection.position).order_by(PantrySection.position.desc()).first()
     next_pos = (max_pos[0] + 1) if max_pos else 0
-    section = PantrySection(name=payload.name.strip(), position=next_pos)
+    section = PantrySection(name=name, position=next_pos)
     db.add(section)
     db.commit()
     db.refresh(section)

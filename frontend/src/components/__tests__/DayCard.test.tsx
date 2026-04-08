@@ -400,11 +400,11 @@ describe('DayCard', () => {
     const { rerender } = render(<DayCard {...defaultProps} isToday={false} />)
 
     let card = document.querySelector('.glass.rounded-lg')
-    expect(card).not.toHaveClass('border-blue-400')
+    expect(card).not.toHaveStyle({ borderColor: 'rgb(96, 165, 250)' })
 
     rerender(<DayCard {...defaultProps} isToday={true} />)
 
     card = document.querySelector('.glass.rounded-lg')
-    expect(card).toHaveClass('border-blue-400')
+    expect(card).toHaveStyle({ borderColor: 'rgb(96, 165, 250)' })
   })
 })

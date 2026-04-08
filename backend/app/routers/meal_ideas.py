@@ -70,7 +70,7 @@ async def delete_meal_idea(
 ):
     idea = db.query(MealIdea).filter(MealIdea.id == idea_id).first()
     if not idea:
-        raise HTTPException(status_code=404, detail="Idea not found")
+        return {"status": "ok"}  # Idempotent — already deleted
     db.delete(idea)
     db.commit()
     await broadcast_event("meal-ideas.updated", {"id": str(idea.id), "deleted": True}, source_id=request.headers.get("x-source-id"))

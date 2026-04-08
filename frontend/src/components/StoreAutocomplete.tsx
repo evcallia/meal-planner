@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Store } from '../types';
 
 interface StoreAutocompleteProps {
@@ -11,13 +11,15 @@ interface StoreAutocompleteProps {
 export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate }: StoreAutocompleteProps) {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
+  const [openUpward, setOpenUpward] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const selectedStore = stores.find(s => s.id === selectedStoreId);
-  const filtered = query
+  const filtered = (query
     ? stores.filter(s => s.name.toLowerCase().includes(query.toLowerCase()))
-    : stores;
+    : stores
+  ).slice().sort((a, b) => a.name.localeCompare(b.name));
   const exactMatch = stores.some(s => s.name.toLowerCase() === query.toLowerCase());
 
   useEffect(() => {
@@ -30,10 +32,51 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Track the elevated ancestor so cleanup works even after unmount (when containerRef is null)
+  const elevatedAncestorRef = useRef<HTMLElement | null>(null);
+
+  const elevateAncestor = useCallback(() => {
+    const el = containerRef.current?.closest('.glass');
+    if (el instanceof HTMLElement) {
+      el.style.zIndex = '20';
+      el.style.position = 'relative';
+      elevatedAncestorRef.current = el;
+    }
+  }, []);
+
+  const restoreAncestor = useCallback(() => {
+    const el = elevatedAncestorRef.current;
+    if (el) {
+      el.style.zIndex = '';
+      el.style.position = '';
+      elevatedAncestorRef.current = null;
+    }
+  }, []);
+
+  const open = useCallback(() => {
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setOpenUpward(spaceBelow < 200);
+    }
+    setIsOpen(true);
+    elevateAncestor();
+  }, [elevateAncestor]);
+
+  const close = useCallback(() => {
+    setIsOpen(false);
+    restoreAncestor();
+  }, [restoreAncestor]);
+
+  // Clean up z-index on unmount
+  useEffect(() => {
+    return () => restoreAncestor();
+  }, [restoreAncestor]);
+
   const handleSelect = (store: Store) => {
     onSelect(store.id);
     setQuery('');
-    setIsOpen(false);
+    close();
   };
 
   const handleCreate = async () => {
@@ -42,7 +85,7 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
     if (store) {
       onSelect(store.id);
       setQuery('');
-      setIsOpen(false);
+      close();
     }
   };
 
@@ -65,7 +108,7 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
               X
             </button>
             <button
-              onClick={() => { setIsOpen(true); setTimeout(() => inputRef.current?.focus(), 0); }}
+              onClick={() => { open(); setTimeout(() => inputRef.current?.focus(), 0); }}
               className="text-blue-500 text-xs ml-1"
             >
               change
@@ -76,15 +119,15 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
             ref={inputRef}
             type="text"
             value={query}
-            onChange={(e) => { setQuery(e.target.value); setIsOpen(true); }}
-            onFocus={() => setIsOpen(true)}
+            onChange={(e) => { setQuery(e.target.value); open(); }}
+            onFocus={() => open()}
             placeholder="Assign store..."
-            className="w-full text-sm px-2 py-1 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         )}
       </div>
       {isOpen && (
-        <div className="absolute z-50 mt-1 w-full glass-menu rounded max-h-40 overflow-y-auto">
+        <div className={`absolute z-50 w-full glass-menu rounded max-h-40 overflow-y-auto ${openUpward ? 'bottom-full mb-1' : 'mt-1'}`}>
           {filtered.map(store => (
             <button
               key={store.id}

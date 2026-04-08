@@ -15,6 +15,8 @@ export type ChangeType =
   | 'pantry-update'
   | 'pantry-delete'
   | 'pantry-replace'
+  | 'pantry-create-section'
+  | 'pantry-delete-section'
   | 'pantry-reorder-sections'
   | 'pantry-reorder-items'
   | 'pantry-rename-section'
@@ -24,6 +26,7 @@ export type ChangeType =
   | 'calendar-hide'
   | 'calendar-unhide'
   | 'grocery-replace'
+  | 'grocery-create-section'
   | 'grocery-check'
   | 'grocery-add'
   | 'grocery-delete'
@@ -34,7 +37,11 @@ export type ChangeType =
   | 'grocery-rename-section'
   | 'grocery-move-item'
   | 'grocery-delete-section'
-  | 'pantry-move-item';
+  | 'pantry-move-item'
+  | 'store-create'
+  | 'store-rename'
+  | 'store-delete'
+  | 'store-reorder';
 
 export interface PendingChange {
   id?: number;

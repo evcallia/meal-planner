@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useRef, useState } from 'react';
+import { FormEvent, useMemo, useState } from 'react';
 import { useMealIdeas } from '../hooks/useMealIdeas';
 import { useUndo } from '../contexts/UndoContext';
 
@@ -9,10 +9,8 @@ interface MealIdeasPanelProps {
 }
 
 export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }: MealIdeasPanelProps) {
-  const { ideas, addIdea, updateIdea, removeIdea, setEditing } = useMealIdeas();
+  const { ideas, addIdea, updateIdea, removeIdea, resolveId, remapId, setEditing } = useMealIdeas();
   const { pushAction } = useUndo();
-  const ideasRef = useRef(ideas);
-  ideasRef.current = ideas;
   const [title, setTitle] = useState('');
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem('meal-planner-ideas-collapsed') === 'true'; }
@@ -45,14 +43,20 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
     const idea = ideas.find(i => i.id === ideaId);
     if (!idea) return;
     const ideaTitle = idea.title;
+    const idRef = { id: ideaId };
     removeIdea(ideaId);
     pushAction({
       type: 'remove-idea',
-      undo: async () => { addIdea({ title: ideaTitle }); },
+      undo: async () => {
+        const prevId = idRef.id;
+        const newTempId = addIdea({ title: ideaTitle });
+        idRef.id = newTempId;
+        // Remap the old ID (that was deleted) so earlier undo entries resolve correctly
+        remapId(prevId, newTempId);
+      },
       redo: async () => {
-        // After undo re-adds the idea, it gets a new ID, so find by title
-        const match = ideasRef.current.find(i => i.title === ideaTitle);
-        if (match) removeIdea(match.id);
+        const currentId = resolveId(idRef.id);
+        removeIdea(currentId);
       },
     });
   };
@@ -60,15 +64,20 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
     const ideaTitle = title;
-    addIdea({ title: ideaTitle });
+    const idRef = { id: addIdea({ title: ideaTitle }) };
     setTitle('');
     pushAction({
       type: 'add-idea',
       undo: async () => {
-        const match = ideasRef.current.find(i => i.title === ideaTitle);
-        if (match) removeIdea(match.id);
+        const currentId = resolveId(idRef.id);
+        removeIdea(currentId);
       },
-      redo: async () => { addIdea({ title: ideaTitle }); },
+      redo: async () => {
+        const prevId = idRef.id;
+        const newTempId = addIdea({ title: ideaTitle });
+        idRef.id = newTempId;
+        remapId(prevId, newTempId);
+      },
     });
   };
 
@@ -78,22 +87,21 @@ export function MealIdeasPanel({ onSchedule, onUnschedule, compactView = false }
     try {
       setSchedulingId(ideaId);
       const prevNotes = await onSchedule(ideaTitle, date);
+      const idRef = { id: ideaId };
       removeIdea(ideaId);
       pushAction({
         type: 'schedule-idea',
         undo: async () => {
-          // Re-add the idea to future meals
-          addIdea({ title: ideaTitle });
-          // Remove the meal from the day's notes by restoring previous notes
+          const prevId = idRef.id;
+          const newTempId = addIdea({ title: ideaTitle });
+          idRef.id = newTempId;
+          remapId(prevId, newTempId);
           if (onUnschedule) await onUnschedule(date, prevNotes);
         },
         redo: async () => {
-          // Re-schedule: add meal to day and remove from future meals
-          const match = ideasRef.current.find(i => i.title === ideaTitle);
-          if (match) {
-            if (onSchedule) await onSchedule(ideaTitle, date);
-            removeIdea(match.id);
-          }
+          const currentId = resolveId(idRef.id);
+          if (onSchedule) await onSchedule(ideaTitle, date);
+          removeIdea(currentId);
         },
       });
       setScheduleDates(prev => {

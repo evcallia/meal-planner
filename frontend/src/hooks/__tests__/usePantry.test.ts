@@ -26,6 +26,7 @@ vi.mock('../../db', () => ({
   deleteLocalPantryItem: vi.fn(),
   clearLocalPantryItems: vi.fn(),
   getPendingChanges: vi.fn(() => Promise.resolve([])),
+  getTempIdMapping: vi.fn(() => Promise.resolve(undefined)),
 }));
 
 vi.mock('../useOnlineStatus', () => ({

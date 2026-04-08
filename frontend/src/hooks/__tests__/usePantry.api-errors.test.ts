@@ -28,6 +28,8 @@ vi.mock('../../db', () => ({
   deleteLocalPantryItem: vi.fn(),
   clearLocalPantryItems: vi.fn(),
   getPendingChanges: vi.fn(() => Promise.resolve([])),
+  getTempIdMapping: vi.fn(() => Promise.resolve(undefined)),
+  isTempId: vi.fn((id: string) => id.startsWith('temp-')),
 }));
 
 vi.mock('../useOnlineStatus', () => ({
@@ -175,7 +177,7 @@ describe('usePantry - API error handling', () => {
 
     await act(async () => { await result.current.addSection('Freezer'); });
 
-    expect(mockQueueChange).toHaveBeenCalledWith('pantry-replace', '', expect.objectContaining({ sections: expect.any(Array) }));
+    expect(mockQueueChange).toHaveBeenCalledWith('pantry-create-section', '', expect.objectContaining({ name: 'Freezer', tempId: expect.any(String) }));
   });
 
   it('deleteSection queues on API error', async () => {
@@ -186,6 +188,6 @@ describe('usePantry - API error handling', () => {
 
     await act(async () => { await result.current.deleteSection('s1'); });
 
-    expect(mockQueueChange).toHaveBeenCalledWith('pantry-replace', '', expect.objectContaining({ sections: expect.any(Array) }));
+    expect(mockQueueChange).toHaveBeenCalledWith('pantry-delete-section', '', expect.objectContaining({ sectionId: 's1', name: 'Fridge' }));
   });
 });

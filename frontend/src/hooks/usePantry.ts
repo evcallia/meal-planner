@@ -22,12 +22,13 @@ import {
   saveLocalPantryItem,
   deleteLocalPantryItem,
   queueChange,
-  getPendingChanges,
   generateTempId,
+  saveTempIdMapping,
 } from '../db';
 import { useOnlineStatus } from './useOnlineStatus';
 import { useUndo } from '../contexts/UndoContext';
 import { toTitleCase } from '../utils/titleCase';
+import { useIdRemap } from './useIdRemap';
 
 const PANTRY_STORAGE_KEY = 'meal-planner-pantry-sections';
 
@@ -49,9 +50,8 @@ function loadPantryFromLocalStorage(): PantrySection[] {
   }
 }
 
-let sessionLoaded = false;
-export function resetPantrySessionLoaded() { sessionLoaded = false; }
-export function markPantrySessionLoaded() { sessionLoaded = true; }
+export function resetPantrySessionLoaded() { /* no-op */ }
+export function markPantrySessionLoaded() { /* no-op */ }
 
 export function usePantry() {
   const [sections, setSections] = useState<PantrySection[]>([]);
@@ -71,15 +71,8 @@ export function usePantry() {
   }, [sections]);
 
   // When delete+undo re-creates an item, it gets a new server ID.
-  // This map lets older undo entries resolve the original ID → current ID.
-  const idRemapRef = useRef(new Map<string, string>());
-  const resolveId = (originalId: string): string => {
-    let id = originalId;
-    while (idRemapRef.current.has(id)) {
-      id = idRemapRef.current.get(id)!;
-    }
-    return id;
-  };
+  // resolveId follows the remap chain; remapId flattens all intermediate IDs.
+  const { resolveId, resolveIdAsync, remapId } = useIdRemap();
 
   // Debounce state for updateItem
   const updateTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -123,25 +116,20 @@ export function usePantry() {
       }
     } catch { /* cache failed — continue to API */ }
 
-    // 2. If online, fetch from API in background (skip if pending offline changes exist)
+    // 2. If online, fetch from API in background
     if (!skipApi && isOnlineRef.current) {
-      const pending = await getPendingChanges();
-      const hasPantryChanges = pending.some(c => c.type.startsWith('pantry-'));
-      if (!hasPantryChanges) {
-        try {
-          const data = await getPantryList();
-          if (optimisticVersionRef.current !== fetchVersion) return;
-          setSections(data);
-          savePantryToLocalStorage(data);
-          await saveLocalPantrySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
-          const allItems = data.flatMap(s => s.items);
-          await saveLocalPantryItems(allItems.map(i => ({
-            id: i.id, section_id: i.section_id, name: i.name,
-            quantity: i.quantity, position: i.position, updated_at: i.updated_at,
-          })));
-          sessionLoaded = true;
-        } catch { /* API failed — keep cached data */ }
-      }
+      try {
+        const data = await getPantryList();
+        if (optimisticVersionRef.current !== fetchVersion) return;
+        setSections(data);
+        savePantryToLocalStorage(data);
+        await saveLocalPantrySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+        const allItems = data.flatMap(s => s.items);
+        await saveLocalPantryItems(allItems.map(i => ({
+          id: i.id, section_id: i.section_id, name: i.name,
+          quantity: i.quantity, position: i.position, updated_at: i.updated_at,
+        })));
+      } catch { /* API failed — keep cached data */ }
     }
 
     setLoading(false);
@@ -171,7 +159,7 @@ export function usePantry() {
   };
 
   useEffect(() => {
-    loadPantryList(sessionLoaded);
+    loadPantryList();
   }, [loadPantryList]);
 
   // Listen for realtime updates
@@ -190,6 +178,13 @@ export function usePantry() {
     };
     window.addEventListener('meal-planner-realtime', handler);
     return () => window.removeEventListener('meal-planner-realtime', handler);
+  }, [loadPantryList]);
+
+  // Refetch after offline sync completes to pick up other devices' changes
+  useEffect(() => {
+    const handler = () => loadPantryList();
+    window.addEventListener('pending-changes-synced', handler);
+    return () => window.removeEventListener('pending-changes-synced', handler);
   }, [loadPantryList]);
 
   // Add item to a section
@@ -222,7 +217,8 @@ export function usePantry() {
     if (isOnline) {
       pendingMutationsRef.current++;
       try {
-        const created = await addPantryItemAPI(sectionId, toTitleCase(name.trim()), quantity);
+        const realSectionId = await resolveIdAsync(sectionId);
+        const created = await addPantryItemAPI(realSectionId, toTitleCase(name.trim()), quantity);
         // Update temp item with server response (real ID)
         if (created.id !== tempId) {
           optimisticVersionRef.current++;
@@ -238,7 +234,7 @@ export function usePantry() {
           await deleteLocalPantryItem(tempId);
         }
       } catch {
-        await queueChange('pantry-add', '', { id: tempId, sectionId, name: toTitleCase(name.trim()), quantity });
+        await queueChange('pantry-add', '', { id: tempId, sectionId, sectionName: section.name, name: toTitleCase(name.trim()), quantity });
       } finally { settleMutation(); }
     } else {
       await queueChange('pantry-add', '', { id: tempId, sectionId, name: toTitleCase(name.trim()), quantity });
@@ -247,7 +243,9 @@ export function usePantry() {
     pushAction({
       type: 'add-pantry-item',
       undo: async () => {
-        const currentId = newItem.id;
+        // Resolve through ID remap chain — the item may have been recreated
+        // with a new server ID (e.g., add → delete → undo delete → undo add)
+        const currentId = resolveId(newItem.id);
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prev => prev.map(s => s.id === sectionId
@@ -255,22 +253,52 @@ export function usePantry() {
           : s
         ));
         await deleteLocalPantryItem(currentId);
-        if (isOnline) {
-          try { await deletePantryItemAPI(currentId); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await deletePantryItemAPI(currentId); } catch {
+            await queueChange('pantry-delete', '', { id: currentId });
+          }
+        } else {
+          await queueChange('pantry-delete', '', { id: currentId });
         }
         settleMutation();
       },
       redo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
+        const redoTempId = generateTempId();
+        const redoItem: PantryItem = { ...newItem, id: redoTempId };
         setSections(prev => prev.map(s => s.id === sectionId
-          ? { ...s, items: [...s.items, newItem] }
+          ? { ...s, items: [...s.items, redoItem] }
           : s
         ));
         await saveLocalPantryItem({
-          id: newItem.id, section_id: newItem.section_id, name: newItem.name,
-          quantity: newItem.quantity, position: newItem.position, updated_at: newItem.updated_at,
+          id: redoItem.id, section_id: redoItem.section_id, name: redoItem.name,
+          quantity: redoItem.quantity, position: redoItem.position, updated_at: redoItem.updated_at,
         });
+        if (isOnlineRef.current) {
+          try {
+            const created = await addPantryItemAPI(sectionId, newItem.name, newItem.quantity);
+            if (created.id !== redoTempId) {
+              optimisticVersionRef.current++;
+              setSections(prev => prev.map(s => s.id === sectionId
+                ? { ...s, items: s.items.map(i => i.id === redoTempId ? { ...i, id: created.id } : i) }
+                : s
+              ));
+              remapId(newItem.id, created.id);
+              newItem.id = created.id;
+              await saveLocalPantryItem({
+                id: created.id, section_id: sectionId, name: newItem.name,
+                quantity: newItem.quantity, position: newItem.position, updated_at: created.updated_at,
+              });
+              await deleteLocalPantryItem(redoTempId);
+            }
+          } catch {
+            await queueChange('pantry-add', '', { id: redoTempId, sectionId, name: newItem.name, quantity: newItem.quantity });
+          }
+        } else {
+          newItem.id = redoTempId;
+          await queueChange('pantry-add', '', { id: redoTempId, sectionId, name: newItem.name, quantity: newItem.quantity });
+        }
         settleMutation();
       },
     });
@@ -319,18 +347,21 @@ export function usePantry() {
         });
       }
 
-      if (isOnline) {
+      // Resolve temp→real ID (item may have been synced while debounce was pending)
+      const realId = await resolveIdAsync(id);
+
+      if (isOnlineRef.current) {
         pendingMutationsRef.current++;
         try {
-          await updatePantryItemAPI(id, {
+          await updatePantryItemAPI(realId, {
             name: payload.name,
             quantity: payload.quantity !== undefined ? Math.max(0, Math.round(payload.quantity)) : undefined,
           });
         } catch {
-          await queueChange('pantry-update', '', { id, ...payload });
+          await queueChange('pantry-update', '', { id: realId, ...payload });
         } finally { settleMutation(); }
       } else {
-        await queueChange('pantry-update', '', { id, ...payload });
+        await queueChange('pantry-update', '', { id: realId, ...payload });
       }
     }, 500);
   }, [isOnline, sections, settleMutation]);
@@ -366,6 +397,8 @@ export function usePantry() {
 
     const deletedItem = { ...item };
     const deletedItemRef = { id: item.id };
+    const section = sections.find(s => s.id === item.section_id);
+    const originalIndex = section ? section.items.findIndex(i => i.id === itemId) : -1;
 
     pushAction({
       type: 'delete-pantry-item',
@@ -376,28 +409,51 @@ export function usePantry() {
         pendingMutationsRef.current++;
         const tempId = generateTempId();
         const restoredItem: PantryItem = { ...deletedItem, id: tempId };
-        setSections(prev => prev.map(s => s.id === deletedItem.section_id
-          ? { ...s, items: [...s.items, restoredItem] }
-          : s
-        ));
-        if (isOnline) {
+        setSections(prev => prev.map(s => {
+          if (s.id !== deletedItem.section_id) return s;
+          const items = [...s.items];
+          const insertAt = Math.min(originalIndex, items.length);
+          items.splice(insertAt, 0, restoredItem);
+          return { ...s, items };
+        }));
+        await saveLocalPantryItem({
+          id: tempId, section_id: deletedItem.section_id, name: deletedItem.name,
+          quantity: deletedItem.quantity, position: deletedItem.position, updated_at: new Date().toISOString(),
+        });
+        if (isOnlineRef.current) {
           try {
             const created = await addPantryItemAPI(deletedItem.section_id, deletedItem.name, deletedItem.quantity);
+            // Apply real ID and capture item order for server reorder
             optimisticVersionRef.current++;
-            setSections(prev => prev.map(s => s.id === deletedItem.section_id
-              ? { ...s, items: s.items.map(i => i.id === tempId ? { ...i, id: created.id } : i) }
-              : s
-            ));
+            let sectionItemIds: string[] = [];
+            setSections(prev => prev.map(s => {
+              if (s.id !== deletedItem.section_id) return s;
+              const updated = { ...s, items: s.items.map(i => i.id === tempId ? { ...i, id: created.id } : i) };
+              sectionItemIds = updated.items.map(i => i.id);
+              return updated;
+            }));
             deletedItemRef.id = created.id;
-            // Record old→new so older undo entries can find the item
-            idRemapRef.current.set(prevId, created.id);
+            remapId(prevId, created.id);
             await deleteLocalPantryItem(tempId);
-          } catch { /* queue */ }
+            await saveLocalPantryItem({
+              id: created.id, section_id: deletedItem.section_id, name: deletedItem.name,
+              quantity: deletedItem.quantity, position: deletedItem.position, updated_at: created.updated_at,
+            });
+            // Reorder on server to preserve original position (server adds at end)
+            if (sectionItemIds.length > 1) {
+              try { await reorderPantryItemsAPI(deletedItem.section_id, sectionItemIds); } catch { /* best effort */ }
+            }
+          } catch {
+            await queueChange('pantry-add', '', { id: tempId, sectionId: deletedItem.section_id, name: deletedItem.name, quantity: deletedItem.quantity });
+          }
+        } else {
+          await queueChange('pantry-add', '', { id: tempId, sectionId: deletedItem.section_id, name: deletedItem.name, quantity: deletedItem.quantity });
         }
         settleMutation();
       },
       redo: async () => {
-        const currentId = deletedItemRef.id;
+        // Resolve through ID remap chain — the item may have been recreated with a new ID
+        const currentId = resolveId(deletedItemRef.id);
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prev => prev.map(s => ({
@@ -405,8 +461,12 @@ export function usePantry() {
           items: s.items.filter(i => i.id !== currentId),
         })));
         await deleteLocalPantryItem(currentId);
-        if (isOnline) {
-          try { await deletePantryItemAPI(currentId); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await deletePantryItemAPI(currentId); } catch {
+            await queueChange('pantry-delete', '', { id: currentId });
+          }
+        } else {
+          await queueChange('pantry-delete', '', { id: currentId });
         }
         settleMutation();
       },
@@ -422,13 +482,16 @@ export function usePantry() {
 
     if (isOnline) {
       pendingMutationsRef.current++;
-      try { await deletePantryItemAPI(itemId); } catch {
+      try {
+        const realId = await resolveIdAsync(itemId);
+        await deletePantryItemAPI(realId);
+      } catch {
         await queueChange('pantry-delete', '', { id: itemId });
       } finally { settleMutation(); }
     } else {
       await queueChange('pantry-delete', '', { id: itemId });
     }
-  }, [sections, isOnline, pushAction, settleMutation]);
+  }, [sections, isOnline, pushAction, settleMutation, resolveIdAsync]);
 
   // Clear all items
   const clearAll = useCallback(async () => {
@@ -459,8 +522,16 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prevSections);
-        if (isOnline) {
-          try { await replaceAndApply(clearAllPayload); } catch { /* queue */ }
+        await saveLocalPantrySections(prevSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+        await saveLocalPantryItems(prevSections.flatMap(s => s.items.map(i => ({
+          id: i.id, section_id: i.section_id, name: i.name, quantity: i.quantity, position: i.position, updated_at: i.updated_at,
+        }))));
+        if (isOnlineRef.current) {
+          try { await replaceAndApply(clearAllPayload); } catch {
+            await queueChange('pantry-replace', '', { sections: clearAllPayload });
+          }
+        } else {
+          await queueChange('pantry-replace', '', { sections: clearAllPayload });
         }
         settleMutation();
       },
@@ -468,8 +539,12 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections([]);
-        if (isOnline) {
-          try { await clearPantryItemsAPI('all'); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await clearPantryItemsAPI('all'); } catch {
+            await queueChange('pantry-replace', '', { sections: [] });
+          }
+        } else {
+          await queueChange('pantry-replace', '', { sections: [] });
         }
         settleMutation();
       },
@@ -495,7 +570,8 @@ export function usePantry() {
     if (isOnline) {
       pendingMutationsRef.current++;
       try {
-        await reorderPantrySectionsAPI(sectionIds);
+        const realIds = await Promise.all(sectionIds.map(id => resolveIdAsync(id)));
+        await reorderPantrySectionsAPI(realIds);
       } catch {
         await queueChange('pantry-reorder-sections', '', { sectionIds });
       } finally { settleMutation(); }
@@ -516,8 +592,12 @@ export function usePantry() {
           const extra = prev.filter(s => !prevSet.has(s.id)).map((s, i) => ({ ...s, position: reordered.length + i }));
           return [...reordered, ...extra];
         });
-        if (isOnline) {
-          try { await reorderPantrySectionsAPI(prevOrder); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await reorderPantrySectionsAPI(prevOrder); } catch {
+            await queueChange('pantry-reorder-sections', '', { sectionIds: prevOrder });
+          }
+        } else {
+          await queueChange('pantry-reorder-sections', '', { sectionIds: prevOrder });
         }
         settleMutation();
       },
@@ -531,8 +611,12 @@ export function usePantry() {
           const extra = prev.filter(s => !newSet.has(s.id)).map((s, i) => ({ ...s, position: reordered.length + i }));
           return [...reordered, ...extra];
         });
-        if (isOnline) {
-          try { await reorderPantrySectionsAPI(sectionIds); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await reorderPantrySectionsAPI(sectionIds); } catch {
+            await queueChange('pantry-reorder-sections', '', { sectionIds });
+          }
+        } else {
+          await queueChange('pantry-reorder-sections', '', { sectionIds });
         }
         settleMutation();
       },
@@ -563,7 +647,9 @@ export function usePantry() {
     if (isOnline) {
       pendingMutationsRef.current++;
       try {
-        await reorderPantryItemsAPI(sectionId, itemIds);
+        const realSectionId = await resolveIdAsync(sectionId);
+        const realItemIds = await Promise.all(itemIds.map(id => resolveIdAsync(id)));
+        await reorderPantryItemsAPI(realSectionId, realItemIds);
       } catch {
         await queueChange('pantry-reorder-items', '', { sectionId, itemIds });
       } finally { settleMutation(); }
@@ -585,8 +671,12 @@ export function usePantry() {
           const extra = s.items.filter(i => !prevSet.has(i.id)).map((i, idx) => ({ ...i, position: reordered.length + idx }));
           return { ...s, items: [...reordered, ...extra] };
         }));
-        if (isOnline) {
-          try { await reorderPantryItemsAPI(sectionId, prevItemOrder); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await reorderPantryItemsAPI(sectionId, prevItemOrder); } catch {
+            await queueChange('pantry-reorder-items', '', { sectionId, itemIds: prevItemOrder });
+          }
+        } else {
+          await queueChange('pantry-reorder-items', '', { sectionId, itemIds: prevItemOrder });
         }
         settleMutation();
       },
@@ -601,8 +691,12 @@ export function usePantry() {
           const extra = s.items.filter(i => !newSet.has(i.id)).map((i, idx) => ({ ...i, position: reordered.length + idx }));
           return { ...s, items: [...reordered, ...extra] };
         }));
-        if (isOnline) {
-          try { await reorderPantryItemsAPI(sectionId, itemIds); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await reorderPantryItemsAPI(sectionId, itemIds); } catch {
+            await queueChange('pantry-reorder-items', '', { sectionId, itemIds });
+          }
+        } else {
+          await queueChange('pantry-reorder-items', '', { sectionId, itemIds });
         }
         settleMutation();
       },
@@ -611,8 +705,11 @@ export function usePantry() {
 
   // Add a new empty section
   const addSection = useCallback(async (name: string) => {
-    const trimmed = name.trim();
+    const trimmed = toTitleCase(name.trim());
     if (!trimmed) return;
+
+    const existing = sections.find(s => s.name.toLowerCase() === trimmed.toLowerCase());
+    if (existing) return existing.id;
 
     const sectionRef = { id: '', name: trimmed };
 
@@ -635,15 +732,19 @@ export function usePantry() {
         const created = await createPantrySectionAPI(trimmed);
         sectionRef.id = created.id;
         optimisticVersionRef.current++;
-        setSections(prev => prev.map(s => s.id === tempId ? { ...created, items: [] } : s));
-        await saveLocalPantrySections((await getLocalPantrySections()).map(s => s.id === tempId ? { id: created.id, name: created.name, position: created.position } : s));
+        setSections(prev => prev.map(s => s.id === tempId ? { ...created, items: s.items } : s));
+        // Best-effort local DB updates — don't queue a replace if these fail
+        try {
+          await saveTempIdMapping(tempId, created.id);
+          await saveLocalPantrySections((await getLocalPantrySections()).map(s => s.id === tempId ? { id: created.id, name: created.name, position: created.position } : s));
+        } catch { /* IndexedDB failure is non-fatal here — server already has the section */ }
       } catch {
         sectionRef.id = tempId;
-        await queueChange('pantry-replace', '', { sections: [...sections, newSection].map(s => ({ name: s.name, items: s.items.map(i => ({ name: i.name, quantity: i.quantity })) })) });
+        await queueChange('pantry-create-section', '', { tempId, name: trimmed });
       } finally { settleMutation(); }
     } else {
       sectionRef.id = tempId;
-      await queueChange('pantry-replace', '', { sections: [...sections, newSection].map(s => ({ name: s.name, items: s.items.map(i => ({ name: i.name, quantity: i.quantity })) })) });
+      await queueChange('pantry-create-section', '', { tempId, name: trimmed });
     }
 
     pushAction({
@@ -652,24 +753,34 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prev => prev.filter(s => s.id !== sectionRef.id));
-        if (isOnline) {
-          try { await deletePantrySectionAPI(sectionRef.id); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await deletePantrySectionAPI(sectionRef.id); } catch {
+            await queueChange('pantry-delete-section', '', { sectionId: sectionRef.id, name: trimmed });
+          }
+        } else {
+          await queueChange('pantry-delete-section', '', { sectionId: sectionRef.id, name: trimmed });
         }
         settleMutation();
       },
       redo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        if (isOnline) {
+        if (isOnlineRef.current) {
           try {
             const created = await createPantrySectionAPI(trimmed);
             sectionRef.id = created.id;
             setSections(prev => [...prev, { ...created, items: [] }]);
-          } catch { /* queue */ }
+          } catch {
+            const redoId = generateTempId();
+            sectionRef.id = redoId;
+            setSections(prev => [...prev, { id: redoId, name: trimmed, position: prev.length, items: [] as PantryItem[] }]);
+            await queueChange('pantry-create-section', '', { tempId: redoId, name: trimmed });
+          }
         } else {
           const redoId = generateTempId();
           sectionRef.id = redoId;
-          setSections(prev => [...prev, { id: redoId, name: trimmed, position: prev.length, items: [] }]);
+          setSections(prev => [...prev, { id: redoId, name: trimmed, position: prev.length, items: [] as PantryItem[] }]);
+          await queueChange('pantry-create-section', '', { tempId: redoId, name: trimmed });
         }
         settleMutation();
       },
@@ -690,10 +801,12 @@ export function usePantry() {
       undo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        if (isOnline) {
+        if (isOnlineRef.current) {
           try {
             const created = await createPantrySectionAPI(deletedSection.name);
+            const prevId = sectionRef.id;
             sectionRef.id = created.id;
+            await saveTempIdMapping(prevId, created.id);
             const restoredItems: PantryItem[] = [];
             for (const item of deletedSection.items) {
               const createdItem = await addPantryItemAPI(created.id, item.name, item.quantity);
@@ -701,23 +814,55 @@ export function usePantry() {
             }
             optimisticVersionRef.current++;
             let reorderIds: string[] = [];
+            let reindexedSections: PantrySection[] = [];
             setSections(prev => {
               const next = [...prev];
               const insertAt = Math.min(originalIndex, next.length);
               next.splice(insertAt, 0, { ...created, items: restoredItems });
-              const reindexed = next.map((s, i) => ({ ...s, position: i }));
-              reorderIds = reindexed.map(s => s.id);
+              reindexedSections = next.map((s, i) => ({ ...s, position: i }));
+              reorderIds = reindexedSections.map(s => s.id);
+              return reindexedSections;
+            });
+            await saveLocalPantrySections(reindexedSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+            for (const item of restoredItems) {
+              await saveLocalPantryItem({ id: item.id, section_id: item.section_id, name: item.name, quantity: item.quantity, position: item.position, updated_at: item.updated_at });
+            }
+            await reorderPantrySectionsAPI(reorderIds);
+          } catch {
+            const tempSectionId = generateTempId();
+            let reindexed: PantrySection[] = [];
+            setSections(prev => {
+              const next = [...prev];
+              const insertAt = Math.min(originalIndex, next.length);
+              next.splice(insertAt, 0, { ...deletedSection, id: tempSectionId });
+              reindexed = next.map((s, i) => ({ ...s, position: i }));
               return reindexed;
             });
-            await reorderPantrySectionsAPI(reorderIds);
-          } catch { /* queue */ }
+            await saveLocalPantrySections(reindexed.map(s => ({ id: s.id, name: s.name, position: s.position })));
+            await saveLocalPantryItems(reindexed.flatMap(s => s.items.map(i => ({ id: i.id, section_id: i.section_id, name: i.name, quantity: i.quantity, position: i.position, updated_at: i.updated_at }))));
+            sectionRef.id = tempSectionId;
+            await queueChange('pantry-create-section', '', { tempId: tempSectionId, name: deletedSection.name });
+            for (const item of deletedSection.items) {
+              await queueChange('pantry-add', '', { id: generateTempId(), sectionId: tempSectionId, sectionName: deletedSection.name, name: item.name, quantity: item.quantity });
+            }
+          }
         } else {
+          const tempSectionId = generateTempId();
+          let reindexed: PantrySection[] = [];
           setSections(prev => {
             const next = [...prev];
             const insertAt = Math.min(originalIndex, next.length);
-            next.splice(insertAt, 0, deletedSection);
-            return next.map((s, i) => ({ ...s, position: i }));
+            next.splice(insertAt, 0, { ...deletedSection, id: tempSectionId });
+            reindexed = next.map((s, i) => ({ ...s, position: i }));
+            return reindexed;
           });
+          await saveLocalPantrySections(reindexed.map(s => ({ id: s.id, name: s.name, position: s.position })));
+          await saveLocalPantryItems(reindexed.flatMap(s => s.items.map(i => ({ id: i.id, section_id: i.section_id, name: i.name, quantity: i.quantity, position: i.position, updated_at: i.updated_at }))));
+          sectionRef.id = tempSectionId;
+          await queueChange('pantry-create-section', '', { tempId: tempSectionId, name: deletedSection.name });
+          for (const item of deletedSection.items) {
+            await queueChange('pantry-add', '', { id: generateTempId(), sectionId: tempSectionId, sectionName: deletedSection.name, name: item.name, quantity: item.quantity });
+          }
         }
         settleMutation();
       },
@@ -725,8 +870,12 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prev => prev.filter(s => s.id !== sectionRef.id));
-        if (isOnline) {
-          try { await deletePantrySectionAPI(sectionRef.id); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await deletePantrySectionAPI(sectionRef.id); } catch {
+            await queueChange('pantry-delete-section', '', { sectionId: sectionRef.id, name: deletedSection.name });
+          }
+        } else {
+          await queueChange('pantry-delete-section', '', { sectionId: sectionRef.id, name: deletedSection.name });
         }
         settleMutation();
       },
@@ -743,20 +892,25 @@ export function usePantry() {
 
     if (isOnline) {
       pendingMutationsRef.current++;
-      try { await deletePantrySectionAPI(sectionId); } catch {
-        await queueChange('pantry-replace', '', { sections: sections.filter(s => s.id !== sectionId).map(s => ({ name: s.name, items: s.items.map(i => ({ name: i.name, quantity: i.quantity })) })) });
+      try {
+        const realSectionId = await resolveIdAsync(sectionId);
+        await deletePantrySectionAPI(realSectionId);
+      } catch {
+        await queueChange('pantry-delete-section', '', { sectionId, name: section.name });
       } finally { settleMutation(); }
     } else {
-      await queueChange('pantry-replace', '', { sections: sections.filter(s => s.id !== sectionId).map(s => ({ name: s.name, items: s.items.map(i => ({ name: i.name, quantity: i.quantity })) })) });
+      await queueChange('pantry-delete-section', '', { sectionId, name: section.name });
     }
-  }, [sections, isOnline, pushAction, settleMutation]);
+  }, [sections, isOnline, pushAction, settleMutation, resolveIdAsync]);
 
   // Rename a section
   const renameSection = useCallback(async (sectionId: string, newName: string) => {
-    const trimmed = newName.trim();
+    const trimmed = toTitleCase(newName.trim());
     if (!trimmed) return;
     const section = sections.find(s => s.id === sectionId);
     if (!section || section.name === trimmed) return;
+    const duplicate = sections.find(s => s.id !== sectionId && s.name.toLowerCase() === trimmed.toLowerCase());
+    if (duplicate) return;
 
     const updatedSections = sections.map(s => s.id === sectionId ? { ...s, name: trimmed } : s);
     optimisticVersionRef.current++;
@@ -767,7 +921,8 @@ export function usePantry() {
     if (isOnline) {
       pendingMutationsRef.current++;
       try {
-        await renamePantrySectionAPI(sectionId, trimmed);
+        const realSectionId = await resolveIdAsync(sectionId);
+        await renamePantrySectionAPI(realSectionId, trimmed);
       } catch {
         await queueChange('pantry-rename-section', '', { sectionId, name: trimmed });
       } finally { settleMutation(); }
@@ -782,8 +937,12 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prev => prev.map(s => s.id === sectionId ? { ...s, name: prevName } : s));
-        if (isOnline) {
-          try { await renamePantrySectionAPI(sectionId, prevName); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await renamePantrySectionAPI(sectionId, prevName); } catch {
+            await queueChange('pantry-rename-section', '', { sectionId, name: prevName });
+          }
+        } else {
+          await queueChange('pantry-rename-section', '', { sectionId, name: prevName });
         }
         settleMutation();
       },
@@ -791,8 +950,12 @@ export function usePantry() {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prev => prev.map(s => s.id === sectionId ? { ...s, name: trimmed } : s));
-        if (isOnline) {
-          try { await renamePantrySectionAPI(sectionId, trimmed); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await renamePantrySectionAPI(sectionId, trimmed); } catch {
+            await queueChange('pantry-rename-section', '', { sectionId, name: trimmed });
+          }
+        } else {
+          await queueChange('pantry-rename-section', '', { sectionId, name: trimmed });
         }
         settleMutation();
       },
@@ -828,16 +991,16 @@ export function usePantry() {
     pushAction({
       type: 'move-pantry-item',
       undo: async () => {
+        const currentItemId = resolveId(item.id);
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
-        // Move back: reverse the operation locally
         setSections(prev => {
           const currentToSection = prev.find(s => s.id === toSectionId);
-          const movedItem = currentToSection?.items.find(i => i.id === item.id);
+          const movedItem = currentToSection?.items.find(i => i.id === currentItemId);
           if (!movedItem) return prev;
           return prev.map(s => {
             if (s.id === toSectionId) {
-              return { ...s, items: s.items.filter(i => i.id !== item.id).map((i, idx) => ({ ...i, position: idx })) };
+              return { ...s, items: s.items.filter(i => i.id !== currentItemId).map((i, idx) => ({ ...i, position: idx })) };
             }
             if (s.id === fromSectionId) {
               const items = [...s.items];
@@ -847,21 +1010,26 @@ export function usePantry() {
             return s;
           });
         });
-        if (isOnline) {
-          try { await movePantryItemAPI(item.id, fromSectionId, fromIndex); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await movePantryItemAPI(currentItemId, fromSectionId, fromIndex); } catch {
+            await queueChange('pantry-move-item', '', { id: currentItemId, toSectionId: fromSectionId, toPosition: fromIndex });
+          }
+        } else {
+          await queueChange('pantry-move-item', '', { id: currentItemId, toSectionId: fromSectionId, toPosition: fromIndex });
         }
         settleMutation();
       },
       redo: async () => {
+        const currentItemId = resolveId(item.id);
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
         setSections(prev => {
           const currentFromSection = prev.find(s => s.id === fromSectionId);
-          const movedItem = currentFromSection?.items.find(i => i.id === item.id);
+          const movedItem = currentFromSection?.items.find(i => i.id === currentItemId);
           if (!movedItem) return prev;
           return prev.map(s => {
             if (s.id === fromSectionId) {
-              return { ...s, items: s.items.filter(i => i.id !== item.id).map((i, idx) => ({ ...i, position: idx })) };
+              return { ...s, items: s.items.filter(i => i.id !== currentItemId).map((i, idx) => ({ ...i, position: idx })) };
             }
             if (s.id === toSectionId) {
               const items = [...s.items];
@@ -871,8 +1039,12 @@ export function usePantry() {
             return s;
           });
         });
-        if (isOnline) {
-          try { await movePantryItemAPI(item.id, toSectionId, toIndex); } catch { /* queue */ }
+        if (isOnlineRef.current) {
+          try { await movePantryItemAPI(currentItemId, toSectionId, toIndex); } catch {
+            await queueChange('pantry-move-item', '', { id: currentItemId, toSectionId, toPosition: toIndex });
+          }
+        } else {
+          await queueChange('pantry-move-item', '', { id: currentItemId, toSectionId, toPosition: toIndex });
         }
         settleMutation();
       },
@@ -889,7 +1061,11 @@ export function usePantry() {
 
     if (isOnline) {
       pendingMutationsRef.current++;
-      try { await movePantryItemAPI(item.id, toSectionId, toIndex); } catch {
+      try {
+        const realItemId = await resolveIdAsync(item.id);
+        const realSectionId = await resolveIdAsync(toSectionId);
+        await movePantryItemAPI(realItemId, realSectionId, toIndex);
+      } catch {
         await queueChange('pantry-move-item', '', { id: item.id, toSectionId, toPosition: toIndex });
       } finally { settleMutation(); }
     } else {
