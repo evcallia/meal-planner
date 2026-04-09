@@ -931,3 +931,213 @@ class TestSettingsAPI:
         data = response.json()
         assert data["settings"]["compactView"] is False
         assert data["settings"]["holidayColor"] == "green"
+
+
+class TestStoresSSEPayloads:
+    """Test that store mutations broadcast correct SSE payloads."""
+
+    @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
+    def test_create_store_broadcasts_added(self, mock_broadcast, authenticated_client, db_session):
+        response = authenticated_client.post("/api/stores", json={"name": "Costco"})
+        assert response.status_code == 200
+        mock_broadcast.assert_called_once()
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "added"
+        assert payload["store"]["name"] == "Costco"
+        assert "id" in payload["store"]
+
+    @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
+    def test_update_store_broadcasts_updated(self, mock_broadcast, authenticated_client, db_session):
+        store = Store(name="Old Name", position=0)
+        db_session.add(store)
+        db_session.commit()
+        db_session.refresh(store)
+        response = authenticated_client.patch(f"/api/stores/{store.id}", json={"name": "New Name"})
+        assert response.status_code == 200
+        mock_broadcast.assert_called_once()
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "updated"
+        assert payload["store"]["name"] == "New Name"
+
+    @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
+    def test_delete_store_broadcasts_deleted(self, mock_broadcast, authenticated_client, db_session):
+        store = Store(name="Target", position=0)
+        db_session.add(store)
+        db_session.commit()
+        db_session.refresh(store)
+        response = authenticated_client.delete(f"/api/stores/{store.id}")
+        assert response.status_code == 200
+        mock_broadcast.assert_called_once()
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "deleted"
+        assert payload["storeId"] == str(store.id)
+
+    @patch("app.routers.stores.broadcast_event", new_callable=AsyncMock)
+    def test_reorder_stores_broadcasts_reordered(self, mock_broadcast, authenticated_client, db_session):
+        s1 = Store(name="A", position=0)
+        s2 = Store(name="B", position=1)
+        db_session.add_all([s1, s2])
+        db_session.commit()
+        db_session.refresh(s1)
+        db_session.refresh(s2)
+        response = authenticated_client.patch("/api/stores/reorder", json={"store_ids": [str(s2.id), str(s1.id)]})
+        assert response.status_code == 200
+        mock_broadcast.assert_called_once()
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "reordered"
+        assert len(payload["stores"]) == 2
+
+
+class TestGrocerySSEPayloads:
+    """Test that grocery mutations broadcast correct SSE payloads."""
+
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_add_item_broadcasts_item_added(self, mock_broadcast, authenticated_client, db_session):
+        section = GrocerySection(name="Produce", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+        response = authenticated_client.post("/api/grocery/items", json={
+            "section_id": str(section.id), "name": "Apples", "quantity": "3"
+        })
+        assert response.status_code == 200
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "item-added"
+        assert payload["sectionId"] == str(section.id)
+        assert payload["item"]["name"] == "Apples"
+
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_delete_item_broadcasts_item_deleted(self, mock_broadcast, authenticated_client, db_session):
+        section = GrocerySection(name="Produce", position=0)
+        db_session.add(section)
+        db_session.flush()
+        item = GroceryItem(section_id=section.id, name="Milk", quantity="1", position=0)
+        db_session.add(item)
+        db_session.commit()
+        db_session.refresh(item)
+        response = authenticated_client.delete(f"/api/grocery/items/{item.id}")
+        assert response.status_code == 200
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "item-deleted"
+        assert payload["itemId"] == str(item.id)
+        assert payload["sectionId"] == str(section.id)
+
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_clear_checked_broadcasts_cleared_checked(self, mock_broadcast, authenticated_client, db_session):
+        section = GrocerySection(name="Produce", position=0)
+        db_session.add(section)
+        db_session.flush()
+        item = GroceryItem(section_id=section.id, name="Milk", quantity="1", position=0, checked=True)
+        db_session.add(item)
+        db_session.commit()
+        response = authenticated_client.delete("/api/grocery/items?mode=checked")
+        assert response.status_code == 200
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "cleared-checked"
+
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_clear_all_broadcasts_cleared_all(self, mock_broadcast, authenticated_client, db_session):
+        section = GrocerySection(name="Produce", position=0)
+        db_session.add(section)
+        db_session.commit()
+        response = authenticated_client.delete("/api/grocery/items?mode=all")
+        assert response.status_code == 200
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "cleared-all"
+
+    @patch("app.routers.grocery.broadcast_event", new_callable=AsyncMock)
+    def test_move_item_broadcasts_item_moved(self, mock_broadcast, authenticated_client, db_session):
+        s1 = GrocerySection(name="Produce", position=0)
+        s2 = GrocerySection(name="Dairy", position=1)
+        db_session.add_all([s1, s2])
+        db_session.flush()
+        item = GroceryItem(section_id=s1.id, name="Milk", quantity="1", position=0)
+        db_session.add(item)
+        db_session.commit()
+        db_session.refresh(item)
+        response = authenticated_client.patch(f"/api/grocery/items/{item.id}/move", json={
+            "to_section_id": str(s2.id), "to_position": 0
+        })
+        assert response.status_code == 200
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "item-moved"
+        assert payload["fromSectionId"] == str(s1.id)
+        assert payload["toSectionId"] == str(s2.id)
+        assert payload["item"]["name"] == "Milk"
+
+
+class TestPantrySSEPayloads:
+    """Test that pantry mutations broadcast correct SSE payloads."""
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_add_item_broadcasts_item_added(self, mock_broadcast, authenticated_client, db_session):
+        section = PantrySection(name="Spices", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+        response = authenticated_client.post("/api/pantry/items", json={
+            "section_id": str(section.id), "name": "Salt", "quantity": 1
+        })
+        assert response.status_code == 200
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "item-added"
+        assert payload["sectionId"] == str(section.id)
+        assert payload["item"]["name"] == "Salt"
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_delete_section_broadcasts_section_deleted(self, mock_broadcast, authenticated_client, db_session):
+        section = PantrySection(name="Empty", position=0)
+        db_session.add(section)
+        db_session.commit()
+        db_session.refresh(section)
+        response = authenticated_client.delete(f"/api/pantry/sections/{section.id}")
+        assert response.status_code == 200
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "section-deleted"
+        assert payload["sectionId"] == str(section.id)
+
+    @patch("app.routers.pantry.broadcast_event", new_callable=AsyncMock)
+    def test_clear_all_broadcasts_cleared_all(self, mock_broadcast, authenticated_client, db_session):
+        section = PantrySection(name="Spices", position=0)
+        db_session.add(section)
+        db_session.commit()
+        response = authenticated_client.delete("/api/pantry/items?mode=all")
+        assert response.status_code == 200
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "cleared-all"
+
+
+class TestMealIdeasSSEPayloads:
+    """Test that meal idea mutations broadcast correct SSE payloads."""
+
+    @patch("app.routers.meal_ideas.broadcast_event", new_callable=AsyncMock)
+    def test_create_broadcasts_added(self, mock_broadcast, authenticated_client):
+        response = authenticated_client.post("/api/meal-ideas", json={"title": "Tacos"})
+        assert response.status_code == 200
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "added"
+        assert payload["idea"]["title"] == "Tacos"
+
+    @patch("app.routers.meal_ideas.broadcast_event", new_callable=AsyncMock)
+    def test_update_broadcasts_updated(self, mock_broadcast, authenticated_client, db_session):
+        idea = MealIdea(title="Old")
+        db_session.add(idea)
+        db_session.commit()
+        db_session.refresh(idea)
+        response = authenticated_client.put(f"/api/meal-ideas/{idea.id}", json={"title": "New"})
+        assert response.status_code == 200
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "updated"
+        assert payload["idea"]["title"] == "New"
+
+    @patch("app.routers.meal_ideas.broadcast_event", new_callable=AsyncMock)
+    def test_delete_broadcasts_deleted(self, mock_broadcast, authenticated_client, db_session):
+        idea = MealIdea(title="Remove Me")
+        db_session.add(idea)
+        db_session.commit()
+        db_session.refresh(idea)
+        response = authenticated_client.delete(f"/api/meal-ideas/{idea.id}")
+        assert response.status_code == 200
+        payload = mock_broadcast.call_args[0][1]
+        assert payload["action"] == "deleted"
+        assert payload["ideaId"] == str(idea.id)
