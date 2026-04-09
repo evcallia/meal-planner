@@ -12,6 +12,13 @@ import { saveLocalStores, getLocalStores, queueChange, generateTempId } from '..
 import { useOnlineStatus } from './useOnlineStatus';
 import { useUndo } from '../contexts/UndoContext';
 
+interface StoresSSEPayload {
+  action: string;
+  store?: Store;
+  storeId?: string;
+  stores?: { id: string; position: number }[];
+}
+
 const STORES_STORAGE_KEY = 'meal-planner-stores';
 
 function saveStoresToLocalStorage(stores: Store[]) {
@@ -98,6 +105,39 @@ export function useStores(options: UseStoresOptions = {}) {
     }
   }, []);
 
+  const applyRealtimeEvent = useCallback((payload: StoresSSEPayload) => {
+    const { action } = payload;
+    switch (action) {
+      case 'added':
+        if (payload.store) {
+          setStores(prev => {
+            if (prev.some(s => s.id === payload.store!.id)) return prev;
+            return [...prev, payload.store!].sort((a, b) => a.position - b.position);
+          });
+        }
+        break;
+      case 'updated':
+        if (payload.store) {
+          setStores(prev => prev.map(s => s.id === payload.store!.id ? payload.store! : s));
+        }
+        break;
+      case 'deleted':
+        if (payload.storeId) {
+          setStores(prev => prev.filter(s => s.id !== payload.storeId));
+        }
+        break;
+      case 'reordered':
+        if (payload.stores) {
+          const posMap = new Map(payload.stores.map(s => [s.id, s.position]));
+          setStores(prev => prev.map(s => {
+            const pos = posMap.get(s.id);
+            return pos !== undefined ? { ...s, position: pos } : s;
+          }).sort((a, b) => a.position - b.position));
+        }
+        break;
+    }
+  }, []);
+
   useEffect(() => { loadStores(); }, [loadStores]);
 
   // Keep localStorage in sync with stores state for reliable offline access
@@ -114,13 +154,13 @@ export function useStores(options: UseStoresOptions = {}) {
         if (pendingRef.current > 0) {
           deferredRef.current = true;
         } else {
-          loadStoresRef.current();
+          applyRealtimeEvent(detail.payload as StoresSSEPayload);
         }
       }
     };
     window.addEventListener('meal-planner-realtime', handler);
     return () => window.removeEventListener('meal-planner-realtime', handler);
-  }, []);
+  }, [applyRealtimeEvent]);
 
   // Refetch after offline sync completes to pick up other devices' changes
   useEffect(() => {
