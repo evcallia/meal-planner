@@ -87,12 +87,14 @@ describe('StoreAutocomplete', () => {
     });
   });
 
-  it('clearing selected store calls onSelect(null)', () => {
+  it('clear button clears input and opens dropdown without calling onSelect', () => {
     render(
       <StoreAutocomplete stores={stores} selectedStoreId="st1" onSelect={mockOnSelect} onCreate={mockOnCreate} />
     );
     fireEvent.click(screen.getByRole('button', { name: /remove store/i }));
-    expect(mockOnSelect).toHaveBeenCalledWith(null);
+    expect(mockOnSelect).not.toHaveBeenCalled();
+    // Dropdown should be open with all stores visible
+    expect(screen.getByText("Trader Joe's")).toBeInTheDocument();
   });
 
   it('clear button appears when store is selected', () => {

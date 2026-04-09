@@ -90,8 +90,9 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
   };
 
   const handleClear = () => {
-    onSelect(null);
     setQuery('');
+    open();
+    setTimeout(() => inputRef.current?.focus(), 0);
   };
 
   return (
