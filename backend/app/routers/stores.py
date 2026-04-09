@@ -46,7 +46,10 @@ async def create_store(
     db.add(store)
     db.commit()
     db.refresh(store)
-    await broadcast_event("stores.updated", {"id": str(store.id)}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("stores.updated", {
+        "action": "added",
+        "store": StoreSchema.model_validate(store).model_dump(mode="json"),
+    }, source_id=request.headers.get("x-source-id"))
     return store
 
 
@@ -60,7 +63,11 @@ async def reorder_stores(
     for i, store_id in enumerate(payload.store_ids):
         db.query(Store).filter(Store.id == store_id).update({"position": i})
     db.commit()
-    await broadcast_event("stores.updated", {}, source_id=request.headers.get("x-source-id"))
+    stores = db.query(Store).order_by(Store.position.asc()).all()
+    await broadcast_event("stores.updated", {
+        "action": "reordered",
+        "stores": [{"id": str(s.id), "position": s.position} for s in stores],
+    }, source_id=request.headers.get("x-source-id"))
     return {"status": "ok"}
 
 
@@ -87,7 +94,10 @@ async def update_store(
 
     db.commit()
     db.refresh(store)
-    await broadcast_event("stores.updated", {"id": str(store.id)}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("stores.updated", {
+        "action": "updated",
+        "store": StoreSchema.model_validate(store).model_dump(mode="json"),
+    }, source_id=request.headers.get("x-source-id"))
     return store
 
 
@@ -103,5 +113,8 @@ async def delete_store(
         return {"status": "ok"}  # Idempotent — already deleted
     db.delete(store)
     db.commit()
-    await broadcast_event("stores.updated", {"id": str(store_id), "deleted": True}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("stores.updated", {
+        "action": "deleted",
+        "storeId": str(store_id),
+    }, source_id=request.headers.get("x-source-id"))
     return {"status": "deleted"}
