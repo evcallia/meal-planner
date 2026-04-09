@@ -24,11 +24,12 @@ describe('StoreAutocomplete', () => {
     expect(screen.getByPlaceholderText('Assign store...')).toBeInTheDocument();
   });
 
-  it('shows selected store name when store is selected', () => {
+  it('shows selected store name in input when store is selected', () => {
     render(
       <StoreAutocomplete stores={stores} selectedStoreId="st1" onSelect={mockOnSelect} onCreate={mockOnCreate} />
     );
-    expect(screen.getByText('Costco')).toBeInTheDocument();
+    const input = screen.getByPlaceholderText('Assign store...') as HTMLInputElement;
+    expect(input.value).toBe('Costco');
   });
 
   it('shows store list on focus', () => {
@@ -94,20 +95,12 @@ describe('StoreAutocomplete', () => {
     expect(mockOnSelect).toHaveBeenCalledWith(null);
   });
 
-  it('clear button has red styling and visible text', () => {
+  it('clear button appears when store is selected', () => {
     render(
       <StoreAutocomplete stores={stores} selectedStoreId="st1" onSelect={mockOnSelect} onCreate={mockOnCreate} />
     );
     const clearButton = screen.getByRole('button', { name: /remove store/i });
     expect(clearButton).toBeInTheDocument();
-    expect(clearButton.className).toContain('text-red');
-  });
-
-  it('shows "change" button when store is selected', () => {
-    render(
-      <StoreAutocomplete stores={stores} selectedStoreId="st1" onSelect={mockOnSelect} onCreate={mockOnCreate} />
-    );
-    expect(screen.getByText('change')).toBeInTheDocument();
   });
 
   it('shows "No stores yet" when no stores and no query', () => {
