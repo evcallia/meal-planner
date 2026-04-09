@@ -87,7 +87,10 @@ async def replace_grocery(
     )
     for section in result:
         section.items.sort(key=lambda item: (item.checked, item.position if not item.checked else -item.updated_at.timestamp()))
-    await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("grocery.updated", {
+        "action": "replaced",
+        "sections": [GrocerySectionSchema.model_validate(s).model_dump(mode="json") for s in result],
+    }, source_id=request.headers.get("x-source-id"))
     return result
 
 
@@ -106,7 +109,11 @@ async def update_section(
     db.commit()
     db.refresh(section)
     section.items.sort(key=lambda item: (item.checked, item.position if not item.checked else -item.updated_at.timestamp()))
-    await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("grocery.updated", {
+        "action": "section-renamed",
+        "sectionId": str(section.id),
+        "name": section.name,
+    }, source_id=request.headers.get("x-source-id"))
     return section
 
 
@@ -122,9 +129,13 @@ async def delete_section(
         return  # Already deleted — idempotent
     if len(section.items) > 0:
         raise HTTPException(status_code=400, detail="Cannot delete section with items")
+    section_id = section.id
     db.delete(section)
     db.commit()
-    await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("grocery.updated", {
+        "action": "section-deleted",
+        "sectionId": str(section_id),
+    }, source_id=request.headers.get("x-source-id"))
 
 
 @router.post("/sections", response_model=GrocerySectionSchema, status_code=201)
@@ -143,7 +154,10 @@ async def create_section(
     db.add(section)
     db.commit()
     db.refresh(section)
-    await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("grocery.updated", {
+        "action": "section-added",
+        "section": {"id": str(section.id), "name": section.name, "position": section.position, "items": []},
+    }, source_id=request.headers.get("x-source-id"))
     return section
 
 
@@ -159,7 +173,11 @@ async def reorder_sections(
         if section:
             section.position = i
     db.commit()
-    await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
+    sections = db.query(GrocerySection).order_by(GrocerySection.position.asc()).all()
+    await broadcast_event("grocery.updated", {
+        "action": "section-reordered",
+        "sections": [{"id": str(s.id), "position": s.position} for s in sections],
+    }, source_id=request.headers.get("x-source-id"))
     return {"status": "ok"}
 
 
@@ -182,7 +200,14 @@ async def reorder_items(
         if item:
             item.position = i
     db.commit()
-    await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
+    items = db.query(GroceryItem).filter(
+        GroceryItem.section_id == section_id
+    ).order_by(GroceryItem.position.asc()).all()
+    await broadcast_event("grocery.updated", {
+        "action": "items-reordered",
+        "sectionId": str(section_id),
+        "items": [{"id": str(i.id), "position": i.position} for i in items],
+    }, source_id=request.headers.get("x-source-id"))
     return {"status": "ok"}
 
 
@@ -231,7 +256,11 @@ async def update_grocery_item(
                 default.store_id = None
     db.commit()
     db.refresh(item)
-    await broadcast_event("grocery.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("grocery.updated", {
+        "action": "item-updated",
+        "sectionId": str(item.section_id),
+        "item": GroceryItemSchema.model_validate(item).model_dump(mode="json"),
+    }, source_id=request.headers.get("x-source-id"))
     return item
 
 
@@ -270,7 +299,11 @@ async def add_grocery_item(
     db.add(item)
     db.commit()
     db.refresh(item)
-    await broadcast_event("grocery.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("grocery.updated", {
+        "action": "item-added",
+        "sectionId": str(item.section_id),
+        "item": GroceryItemSchema.model_validate(item).model_dump(mode="json"),
+    }, source_id=request.headers.get("x-source-id"))
     return item
 
 
@@ -309,7 +342,12 @@ async def move_grocery_item(
 
     db.commit()
     db.refresh(item)
-    await broadcast_event("grocery.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("grocery.updated", {
+        "action": "item-moved",
+        "fromSectionId": str(old_section_id),
+        "toSectionId": str(item.section_id),
+        "item": GroceryItemSchema.model_validate(item).model_dump(mode="json"),
+    }, source_id=request.headers.get("x-source-id"))
     return item
 
 
@@ -323,9 +361,14 @@ async def delete_grocery_item(
     item = db.query(GroceryItem).filter(GroceryItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
+    section_id = item.section_id
     db.delete(item)
     db.commit()
-    await broadcast_event("grocery.updated", {"id": str(item_id), "deleted": True}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("grocery.updated", {
+        "action": "item-deleted",
+        "sectionId": str(section_id),
+        "itemId": str(item_id),
+    }, source_id=request.headers.get("x-source-id"))
     return {"status": "deleted"}
 
 
@@ -357,5 +400,12 @@ async def clear_grocery_items(
     )
     for section in result:
         section.items.sort(key=lambda item: (item.checked, item.position if not item.checked else -item.updated_at.timestamp()))
-    await broadcast_event("grocery.updated", {}, source_id=request.headers.get("x-source-id"))
+    if mode == "all":
+        await broadcast_event("grocery.updated", {
+            "action": "cleared-all",
+        }, source_id=request.headers.get("x-source-id"))
+    else:
+        await broadcast_event("grocery.updated", {
+            "action": "cleared-checked",
+        }, source_id=request.headers.get("x-source-id"))
     return result
