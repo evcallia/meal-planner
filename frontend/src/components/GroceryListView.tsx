@@ -21,13 +21,19 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     onItemsStoreChanged: batchUpdateStoreId,
   });
   // Item defaults cache for offline store auto-populate
-  const itemDefaultsRef = useRef<Map<string, string | null>>(new Map());
+  const [itemDefaultsMap, setItemDefaultsMap] = useState<Map<string, string | null>>(new Map());
   useEffect(() => {
-    getLocalItemDefaults().then(defaults => {
-      const map = new Map<string, string | null>();
-      for (const d of defaults) map.set(d.item_name, d.store_id);
-      itemDefaultsRef.current = map;
-    }).catch(() => {});
+    const load = () => {
+      getLocalItemDefaults().then(defaults => {
+        const map = new Map<string, string | null>();
+        for (const d of defaults) map.set(d.item_name, d.store_id);
+        setItemDefaultsMap(map);
+      }).catch(() => {});
+    };
+    load();
+    // Reload when fetchAllData finishes (it dispatches pending-changes-synced or visibility change)
+    window.addEventListener('pending-changes-synced', load);
+    return () => window.removeEventListener('pending-changes-synced', load);
   }, []);
 
   const [addMode, setAddMode] = useState<'closed' | 'quick' | 'paste'>('closed');
@@ -392,7 +398,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     const match = sections.flatMap(s => s.items).find(
       i => i.name.toLowerCase() === nameLower && i.store_id
     );
-    await addItem(sectionId, name, qty, match?.store_id ?? itemDefaultsRef.current.get(nameLower) ?? null);
+    await addItem(sectionId, name, qty, match?.store_id ?? itemDefaultsMap.get(nameLower) ?? null);
     setNewItemName('');
     setAddingToSection(null);
   }, [newItemName, sections, addItem]);
@@ -583,7 +589,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                         const match = sections.flatMap(s => s.items).find(
                           i => i.name.toLowerCase() === trimmed && i.store_id
                         );
-                        setQuickAddStoreId(match?.store_id ?? itemDefaultsRef.current.get(trimmed) ?? null);
+                        setQuickAddStoreId(match?.store_id ?? itemDefaultsMap.get(trimmed) ?? null);
                       } else {
                         setQuickAddStoreId(null);
                       }

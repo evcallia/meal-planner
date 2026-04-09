@@ -89,7 +89,10 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
     }
   };
 
+  const justClearedRef = useRef(false);
+
   const handleClear = () => {
+    justClearedRef.current = true;
     setQuery('');
     open();
     setTimeout(() => inputRef.current?.focus(), 0);
@@ -104,7 +107,11 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
             type="text"
             value={isOpen ? query : (selectedStore?.name ?? '')}
             onChange={(e) => { setQuery(e.target.value); open(); }}
-            onFocus={() => { setQuery(selectedStore?.name ?? ''); open(); }}
+            onFocus={() => {
+              if (justClearedRef.current) { justClearedRef.current = false; return; }
+              setQuery(selectedStore?.name ?? '');
+              open();
+            }}
             placeholder="Assign store..."
             className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
