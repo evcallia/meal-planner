@@ -401,6 +401,97 @@ describe('useGroceryList', () => {
     expect(mockQueueChange).toHaveBeenCalledWith('grocery-check', '', { id: 'i1', checked: true });
   });
 
+  describe('SSE apply logic', () => {
+    it('applies item-added from SSE', async () => {
+      const { result } = renderHook(() => useGroceryList());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const callsBefore = mockGetGroceryList.mock.calls.length;
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'grocery.updated',
+            payload: {
+              action: 'item-added',
+              sectionId: 's1',
+              item: { id: 'i-new', section_id: 's1', name: 'Grapes', quantity: null, checked: false, position: 2, store_id: null, updated_at: '2026-01-02T00:00:00Z' },
+            },
+          },
+        }));
+      });
+
+      const section = result.current.sections.find(s => s.id === 's1')!;
+      expect(section.items.some(i => i.id === 'i-new')).toBe(true);
+      expect(mockGetGroceryList.mock.calls.length).toBe(callsBefore);
+    });
+
+    it('applies item-deleted from SSE', async () => {
+      const { result } = renderHook(() => useGroceryList());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(result.current.sections[0].items.some(i => i.id === 'i1')).toBe(true);
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'grocery.updated',
+            payload: { action: 'item-deleted', sectionId: 's1', itemId: 'i1' },
+          },
+        }));
+      });
+
+      const section = result.current.sections.find(s => s.id === 's1')!;
+      expect(section.items.some(i => i.id === 'i1')).toBe(false);
+      expect(section.items).toHaveLength(1);
+    });
+
+    it('applies cleared-all from SSE', async () => {
+      const { result } = renderHook(() => useGroceryList());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(result.current.sections).toHaveLength(2);
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'grocery.updated',
+            payload: { action: 'cleared-all' },
+          },
+        }));
+      });
+
+      expect(result.current.sections).toEqual([]);
+    });
+
+    it('applies cleared-checked from SSE', async () => {
+      mockGetGroceryList.mockResolvedValue([
+        {
+          id: 's1', name: 'Produce', position: 0,
+          items: [
+            { id: 'i1', section_id: 's1', name: 'Bananas', quantity: '2', checked: true, position: 0, store_id: null, updated_at: '2026-01-01T00:00:00Z' },
+            { id: 'i2', section_id: 's1', name: 'Apples', quantity: null, checked: false, position: 1, store_id: null, updated_at: '2026-01-01T00:00:00Z' },
+          ],
+        },
+      ]);
+
+      const { result } = renderHook(() => useGroceryList());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'grocery.updated',
+            payload: { action: 'cleared-checked' },
+          },
+        }));
+      });
+
+      const section = result.current.sections.find(s => s.id === 's1')!;
+      expect(section.items.some(i => i.checked)).toBe(false);
+      expect(section.items).toHaveLength(1);
+      expect(section.items[0].name).toBe('Apples');
+    });
+  });
+
   it('ignores non-grocery realtime events', async () => {
     mockGetGroceryList.mockResolvedValue(sampleSections);
 

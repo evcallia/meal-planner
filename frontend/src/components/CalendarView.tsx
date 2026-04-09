@@ -136,7 +136,11 @@ let sessionLoaded = false;
 let prefetchedStart: string | null = null;
 let prefetchedEnd: string | null = null;
 export function resetCalendarSessionLoaded() { sessionLoaded = false; prefetchedStart = null; prefetchedEnd = null; }
-export function markCalendarSessionLoaded() { sessionLoaded = true; }
+export function markCalendarSessionLoaded(start?: string, end?: string) {
+  sessionLoaded = true;
+  if (start) prefetchedStart = start;
+  if (end) prefetchedEnd = end;
+}
 
 interface CalendarViewProps {
   onTodayRefReady: (ref: HTMLDivElement | null) => void;

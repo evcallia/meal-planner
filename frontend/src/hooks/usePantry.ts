@@ -30,6 +30,19 @@ import { useUndo } from '../contexts/UndoContext';
 import { toTitleCase } from '../utils/titleCase';
 import { useIdRemap } from './useIdRemap';
 
+interface PantrySSEPayload {
+  action: string;
+  sectionId?: string;
+  item?: PantryItem;
+  itemId?: string;
+  fromSectionId?: string;
+  toSectionId?: string;
+  section?: PantrySection;
+  sections?: PantrySection[] | { id: string; position: number }[];
+  items?: { id: string; position: number }[];
+  name?: string;
+}
+
 const PANTRY_STORAGE_KEY = 'meal-planner-pantry-sections';
 
 function savePantryToLocalStorage(sections: PantrySection[]) {
@@ -50,8 +63,9 @@ function loadPantryFromLocalStorage(): PantrySection[] {
   }
 }
 
-export function resetPantrySessionLoaded() { /* no-op */ }
-export function markPantrySessionLoaded() { /* no-op */ }
+let pantrySessionLoaded = false;
+export function resetPantrySessionLoaded() { pantrySessionLoaded = false; }
+export function markPantrySessionLoaded() { pantrySessionLoaded = true; }
 
 export function usePantry() {
   const [sections, setSections] = useState<PantrySection[]>([]);
@@ -63,10 +77,15 @@ export function usePantry() {
   const pendingMutationsRef = useRef(0);
   const deferredLoadRef = useRef(false);
 
-  // Keep localStorage in sync for reliable offline access
+  // Keep localStorage and IndexedDB in sync for reliable offline access
   useEffect(() => {
     if (sections.length > 0) {
       savePantryToLocalStorage(sections);
+      void Promise.resolve(saveLocalPantrySections(sections.map(s => ({ id: s.id, name: s.name, position: s.position })))).catch(() => {});
+      void Promise.resolve(saveLocalPantryItems(sections.flatMap(s => s.items.map(i => ({
+        id: i.id, section_id: i.section_id, name: i.name,
+        quantity: i.quantity, position: i.position, updated_at: i.updated_at,
+      }))))).catch(() => {});
     }
   }, [sections]);
 
@@ -116,7 +135,7 @@ export function usePantry() {
       }
     } catch { /* cache failed — continue to API */ }
 
-    // 2. If online, fetch from API in background
+    // 2. If online, fetch from API
     if (!skipApi && isOnlineRef.current) {
       try {
         const data = await getPantryList();
@@ -129,6 +148,7 @@ export function usePantry() {
           id: i.id, section_id: i.section_id, name: i.name,
           quantity: i.quantity, position: i.position, updated_at: i.updated_at,
         })));
+        pantrySessionLoaded = true;
       } catch { /* API failed — keep cached data */ }
     }
 
@@ -158,8 +178,107 @@ export function usePantry() {
     }))));
   };
 
+  const applyRealtimeEvent = useCallback((payload: PantrySSEPayload) => {
+    if (!payload?.action) {
+      loadPantryListRef.current();
+      return;
+    }
+    const { action } = payload;
+    switch (action) {
+      case 'item-added':
+        if (payload.sectionId && payload.item) {
+          setSections(prev => prev.map(s => {
+            if (s.id !== payload.sectionId) return s;
+            if (s.items.some(i => i.id === payload.item!.id)) return s;
+            return { ...s, items: [...s.items, payload.item!] };
+          }));
+        }
+        break;
+      case 'item-updated':
+        if (payload.sectionId && payload.item) {
+          setSections(prev => prev.map(s => {
+            if (s.id !== payload.sectionId) return s;
+            return { ...s, items: s.items.map(i => i.id === payload.item!.id ? payload.item! : i) };
+          }));
+        }
+        break;
+      case 'item-deleted':
+        if (payload.sectionId && payload.itemId) {
+          setSections(prev => prev.map(s => {
+            if (s.id !== payload.sectionId) return s;
+            return { ...s, items: s.items.filter(i => i.id !== payload.itemId) };
+          }));
+        }
+        break;
+      case 'item-moved':
+        if (payload.fromSectionId && payload.toSectionId && payload.item) {
+          setSections(prev => prev.map(s => {
+            if (s.id === payload.fromSectionId) {
+              return { ...s, items: s.items.filter(i => i.id !== payload.item!.id) };
+            }
+            if (s.id === payload.toSectionId) {
+              if (s.items.some(i => i.id === payload.item!.id)) return s;
+              const items = [...s.items, payload.item!].sort((a, b) => a.position - b.position);
+              return { ...s, items };
+            }
+            return s;
+          }));
+        }
+        break;
+      case 'section-added':
+        if (payload.section) {
+          setSections(prev => {
+            if (prev.some(s => s.id === payload.section!.id)) return prev;
+            return [...prev, payload.section!].sort((a, b) => a.position - b.position);
+          });
+        }
+        break;
+      case 'section-renamed':
+        if (payload.sectionId && payload.name) {
+          setSections(prev => prev.map(s =>
+            s.id === payload.sectionId ? { ...s, name: payload.name! } : s
+          ));
+        }
+        break;
+      case 'section-deleted':
+        if (payload.sectionId) {
+          setSections(prev => prev.filter(s => s.id !== payload.sectionId));
+        }
+        break;
+      case 'section-reordered':
+        if (payload.sections) {
+          const posMap = new Map((payload.sections as { id: string; position: number }[]).map(s => [s.id, s.position]));
+          setSections(prev => prev.map(s => {
+            const pos = posMap.get(s.id);
+            return pos !== undefined ? { ...s, position: pos } : s;
+          }).sort((a, b) => a.position - b.position));
+        }
+        break;
+      case 'items-reordered':
+        if (payload.sectionId && payload.items) {
+          const posMap = new Map(payload.items.map(i => [i.id, i.position]));
+          setSections(prev => prev.map(s => {
+            if (s.id !== payload.sectionId) return s;
+            return { ...s, items: s.items.map(i => {
+              const pos = posMap.get(i.id);
+              return pos !== undefined ? { ...i, position: pos } : i;
+            }).sort((a, b) => a.position - b.position) };
+          }));
+        }
+        break;
+      case 'cleared-all':
+        setSections([]);
+        break;
+      case 'replaced':
+        if (payload.sections) {
+          setSections(payload.sections as PantrySection[]);
+        }
+        break;
+    }
+  }, []);
+
   useEffect(() => {
-    loadPantryList();
+    loadPantryList(pantrySessionLoaded);
   }, [loadPantryList]);
 
   // Listen for realtime updates
@@ -173,12 +292,12 @@ export function usePantry() {
           deferredLoadRef.current = true;
           return;
         }
-        loadPantryList();
+        applyRealtimeEvent(detail.payload as PantrySSEPayload);
       }
     };
     window.addEventListener('meal-planner-realtime', handler);
     return () => window.removeEventListener('meal-planner-realtime', handler);
-  }, [loadPantryList]);
+  }, [applyRealtimeEvent]);
 
   // Refetch after offline sync completes to pick up other devices' changes
   useEffect(() => {

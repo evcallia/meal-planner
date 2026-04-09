@@ -73,7 +73,10 @@ async def replace_pantry(
     )
     for section in result:
         section.items.sort(key=lambda item: item.position)
-    await broadcast_event("pantry.updated", {}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("pantry.updated", {
+        "action": "replaced",
+        "sections": [PantrySectionSchema.model_validate(s).model_dump(mode="json") for s in result],
+    }, source_id=request.headers.get("x-source-id"))
     return result
 
 
@@ -92,7 +95,11 @@ async def update_section(
     db.commit()
     db.refresh(section)
     section.items.sort(key=lambda item: item.position)
-    await broadcast_event("pantry.updated", {}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("pantry.updated", {
+        "action": "section-renamed",
+        "sectionId": str(section.id),
+        "name": section.name,
+    }, source_id=request.headers.get("x-source-id"))
     return section
 
 
@@ -108,7 +115,11 @@ async def reorder_sections(
         if section:
             section.position = i
     db.commit()
-    await broadcast_event("pantry.updated", {}, source_id=request.headers.get("x-source-id"))
+    sections = db.query(PantrySection).order_by(PantrySection.position.asc()).all()
+    await broadcast_event("pantry.updated", {
+        "action": "section-reordered",
+        "sections": [{"id": str(s.id), "position": s.position} for s in sections],
+    }, source_id=request.headers.get("x-source-id"))
     return {"status": "ok"}
 
 
@@ -131,7 +142,14 @@ async def reorder_items(
         if item:
             item.position = i
     db.commit()
-    await broadcast_event("pantry.updated", {}, source_id=request.headers.get("x-source-id"))
+    items = db.query(PantryItem).filter(
+        PantryItem.section_id == section_id
+    ).order_by(PantryItem.position.asc()).all()
+    await broadcast_event("pantry.updated", {
+        "action": "items-reordered",
+        "sectionId": str(section_id),
+        "items": [{"id": str(i.id), "position": i.position} for i in items],
+    }, source_id=request.headers.get("x-source-id"))
     return {"status": "ok"}
 
 
@@ -163,7 +181,11 @@ async def add_pantry_item(
     db.add(item)
     db.commit()
     db.refresh(item)
-    await broadcast_event("pantry.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("pantry.updated", {
+        "action": "item-added",
+        "sectionId": str(item.section_id),
+        "item": PantryItemSchema.model_validate(item).model_dump(mode="json"),
+    }, source_id=request.headers.get("x-source-id"))
     return item
 
 
@@ -187,7 +209,11 @@ async def update_pantry_item(
         item.quantity = payload.quantity
     db.commit()
     db.refresh(item)
-    await broadcast_event("pantry.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("pantry.updated", {
+        "action": "item-updated",
+        "sectionId": str(item.section_id),
+        "item": PantryItemSchema.model_validate(item).model_dump(mode="json"),
+    }, source_id=request.headers.get("x-source-id"))
     return item
 
 
@@ -226,7 +252,12 @@ async def move_pantry_item(
 
     db.commit()
     db.refresh(item)
-    await broadcast_event("pantry.updated", {"id": str(item.id)}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("pantry.updated", {
+        "action": "item-moved",
+        "fromSectionId": str(old_section_id),
+        "toSectionId": str(item.section_id),
+        "item": PantryItemSchema.model_validate(item).model_dump(mode="json"),
+    }, source_id=request.headers.get("x-source-id"))
     return item
 
 
@@ -247,7 +278,10 @@ async def create_pantry_section(
     db.add(section)
     db.commit()
     db.refresh(section)
-    await broadcast_event("pantry.updated", {}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("pantry.updated", {
+        "action": "section-added",
+        "section": {"id": str(section.id), "name": section.name, "position": section.position, "items": []},
+    }, source_id=request.headers.get("x-source-id"))
     return section
 
 
@@ -263,7 +297,10 @@ async def delete_pantry_section(
         raise HTTPException(status_code=404, detail="Section not found")
     db.delete(section)
     db.commit()
-    await broadcast_event("pantry.updated", {"id": str(section_id), "deleted": True}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("pantry.updated", {
+        "action": "section-deleted",
+        "sectionId": str(section_id),
+    }, source_id=request.headers.get("x-source-id"))
     return {"status": "deleted"}
 
 
@@ -277,9 +314,14 @@ async def delete_pantry_item(
     item = db.query(PantryItem).filter(PantryItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
+    section_id_val = item.section_id
     db.delete(item)
     db.commit()
-    await broadcast_event("pantry.updated", {"id": str(item_id), "deleted": True}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("pantry.updated", {
+        "action": "item-deleted",
+        "sectionId": str(section_id_val),
+        "itemId": str(item_id),
+    }, source_id=request.headers.get("x-source-id"))
     return {"status": "deleted"}
 
 
@@ -304,5 +346,7 @@ async def clear_pantry_items(
     )
     for section in result:
         section.items.sort(key=lambda item: item.position)
-    await broadcast_event("pantry.updated", {}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("pantry.updated", {
+        "action": "cleared-all",
+    }, source_id=request.headers.get("x-source-id"))
     return result

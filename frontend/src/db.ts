@@ -123,6 +123,11 @@ export interface LocalCalendarDay {
   updatedAt: number;
 }
 
+export interface LocalItemDefault {
+  item_name: string;
+  store_id: string | null;
+}
+
 class MealPlannerDB extends Dexie {
   mealNotes!: Table<LocalMealNote, string>;
   pendingChanges!: Table<PendingChange, number>;
@@ -135,6 +140,7 @@ class MealPlannerDB extends Dexie {
   grocerySections!: Table<LocalGrocerySection, string>;
   groceryItems!: Table<LocalGroceryItem, string>;
   stores!: Table<LocalStore, string>;
+  itemDefaults!: Table<LocalItemDefault, string>;
 
   constructor() {
     super('MealPlannerDB');
@@ -202,6 +208,20 @@ class MealPlannerDB extends Dexie {
       groceryItems: 'id, section_id',
       stores: 'id',
     });
+    this.version(8).stores({
+      mealNotes: 'date',
+      pendingChanges: '++id, date, type',
+      pantryItems: 'id, section_id',
+      pantrySections: 'id',
+      mealIdeas: 'id',
+      tempIdMap: 'tempId',
+      calendarDays: 'date',
+      hiddenCalendarEvents: 'id',
+      grocerySections: 'id',
+      groceryItems: 'id, section_id',
+      stores: 'id',
+      itemDefaults: 'item_name',
+    });
     // Ensure table properties are initialized for both runtime and tests.
     this.mealNotes = this.table('mealNotes');
     this.pendingChanges = this.table('pendingChanges');
@@ -214,6 +234,7 @@ class MealPlannerDB extends Dexie {
     this.grocerySections = this.table('grocerySections');
     this.groceryItems = this.table('groceryItems');
     this.stores = this.table('stores');
+    this.itemDefaults = this.table('itemDefaults');
   }
 }
 
@@ -513,5 +534,22 @@ export async function clearAllLocalData(): Promise<void> {
     db.grocerySections.clear(),
     db.groceryItems.clear(),
     db.stores.clear(),
+    db.itemDefaults.clear(),
   ]);
+}
+
+// Item defaults (item_name → store_id mapping for auto-populate)
+export async function saveLocalItemDefaults(defaults: LocalItemDefault[]) {
+  await db.itemDefaults.clear();
+  if (defaults.length > 0) {
+    await db.itemDefaults.bulkPut(defaults);
+  }
+}
+
+export async function getLocalItemDefaults(): Promise<LocalItemDefault[]> {
+  return db.itemDefaults.toArray();
+}
+
+export async function putLocalItemDefault(itemName: string, storeId: string | null) {
+  await db.itemDefaults.put({ item_name: itemName, store_id: storeId });
 }

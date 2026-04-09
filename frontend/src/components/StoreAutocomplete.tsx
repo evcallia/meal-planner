@@ -89,42 +89,44 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
     }
   };
 
+  const justClearedRef = useRef(false);
+
   const handleClear = () => {
-    onSelect(null);
+    justClearedRef.current = true;
     setQuery('');
+    open();
+    setTimeout(() => inputRef.current?.focus(), 0);
   };
 
   return (
     <div ref={containerRef} className="relative">
-      <div className="flex items-center gap-2">
-        {selectedStore && !isOpen ? (
-          <div className="flex items-center gap-1 text-sm">
-            <span className="text-gray-600 dark:text-gray-400">{selectedStore.name}</span>
-            <button
-              onClick={handleClear}
-              aria-label="Remove store"
-              className="text-red-400 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 text-sm font-bold ml-1 px-1"
-            >
-              X
-            </button>
-            <button
-              onClick={() => { open(); setTimeout(() => inputRef.current?.focus(), 0); }}
-              className="text-blue-500 text-xs ml-1"
-            >
-              change
-            </button>
-          </div>
-        ) : (
+      <div className="flex items-center gap-1">
+        <div className="relative flex-1">
           <input
             ref={inputRef}
             type="text"
-            value={query}
+            value={isOpen ? query : (selectedStore?.name ?? '')}
             onChange={(e) => { setQuery(e.target.value); open(); }}
-            onFocus={() => open()}
+            onFocus={() => {
+              if (justClearedRef.current) { justClearedRef.current = false; return; }
+              setQuery(selectedStore?.name ?? '');
+              open();
+            }}
             placeholder="Assign store..."
             className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-        )}
+          {selectedStore && !isOpen && (
+            <button
+              onClick={handleClear}
+              aria-label="Remove store"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
       {isOpen && (
         <div className={`absolute z-50 w-full glass-menu rounded max-h-40 overflow-y-auto ${openUpward ? 'bottom-full mb-1' : 'mt-1'}`}>

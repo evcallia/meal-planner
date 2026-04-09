@@ -144,6 +144,74 @@ describe('useMealIdeas', () => {
     });
   });
 
+  describe('SSE apply logic', () => {
+    it('applies added idea from SSE', async () => {
+      mockGetMealIdeas.mockResolvedValue([
+        { id: '1', title: 'Pasta', updated_at: '2026-02-03T10:00:00Z' },
+      ]);
+
+      const { result } = renderHook(() => useMealIdeas());
+      await waitFor(() => expect(result.current.ideas).toHaveLength(1));
+
+      const callsBefore = mockGetMealIdeas.mock.calls.length;
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'meal-ideas.updated',
+            payload: { action: 'added', idea: { id: '2', title: 'Tacos', updated_at: '2026-02-03T11:00:00Z' } },
+          },
+        }));
+      });
+
+      expect(result.current.ideas.some(i => i.id === '2')).toBe(true);
+      expect(mockGetMealIdeas.mock.calls.length).toBe(callsBefore);
+    });
+
+    it('applies deleted idea from SSE', async () => {
+      mockGetMealIdeas.mockResolvedValue([
+        { id: '1', title: 'Pasta', updated_at: '2026-02-03T10:00:00Z' },
+        { id: '2', title: 'Tacos', updated_at: '2026-02-03T11:00:00Z' },
+      ]);
+
+      const { result } = renderHook(() => useMealIdeas());
+      await waitFor(() => expect(result.current.ideas).toHaveLength(2));
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'meal-ideas.updated',
+            payload: { action: 'deleted', ideaId: '1' },
+          },
+        }));
+      });
+
+      expect(result.current.ideas.some(i => i.id === '1')).toBe(false);
+      expect(result.current.ideas).toHaveLength(1);
+    });
+
+    it('applies updated idea from SSE', async () => {
+      mockGetMealIdeas.mockResolvedValue([
+        { id: '1', title: 'Pasta', updated_at: '2026-02-03T10:00:00Z' },
+      ]);
+
+      const { result } = renderHook(() => useMealIdeas());
+      await waitFor(() => expect(result.current.ideas).toHaveLength(1));
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'meal-ideas.updated',
+            payload: { action: 'updated', idea: { id: '1', title: 'Pasta Primavera', updated_at: '2026-02-03T12:00:00Z' } },
+          },
+        }));
+      });
+
+      const updated = result.current.ideas.find(i => i.id === '1');
+      expect(updated?.title).toBe('Pasta Primavera');
+    });
+  });
+
   it('refreshes when a realtime meal-ideas update arrives', async () => {
     mockGetMealIdeas.mockReset();
     let shouldReturnUpdated = false;

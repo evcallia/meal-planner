@@ -25,12 +25,26 @@ import {
   queueChange,
   generateTempId,
   saveTempIdMapping,
+  putLocalItemDefault,
 } from '../db';
 import { useOnlineStatus } from './useOnlineStatus';
 import { useUndo } from '../contexts/UndoContext';
 import { ParsedGrocerySection } from '../utils/groceryParser';
 import { toTitleCase } from '../utils/titleCase';
 import { useIdRemap } from './useIdRemap';
+
+interface GrocerySSEPayload {
+  action: string;
+  sectionId?: string;
+  item?: GroceryItem;
+  itemId?: string;
+  fromSectionId?: string;
+  toSectionId?: string;
+  section?: GrocerySection;
+  sections?: GrocerySection[] | { id: string; position: number }[];
+  items?: { id: string; position: number }[];
+  name?: string;
+}
 
 const GROCERY_STORAGE_KEY = 'meal-planner-grocery';
 
@@ -55,10 +69,11 @@ function loadGroceryFromLocalStorage(): GrocerySection[] {
 // Track whether the initial API fetch has happened this session.
 // Survives component remounts (tab switches) — subsequent mounts
 // just load from the local cache that SSE keeps warm.
-// Legacy: sessionLoaded is no longer used (hooks always fetch from API),
-// but reset/mark are kept as no-ops for test compatibility.
-export function resetGrocerySessionLoaded() { /* no-op */ }
-export function markGrocerySessionLoaded() { /* no-op */ }
+// Set true after first API fetch or by App.tsx fetchAllData.
+// When true, hook mounts skip API and load from cache only.
+let grocerySessionLoaded = false;
+export function resetGrocerySessionLoaded() { grocerySessionLoaded = false; }
+export function markGrocerySessionLoaded() { grocerySessionLoaded = true; }
 
 export function useGroceryList() {
   const [sections, setSections] = useState<GrocerySection[]>([]);
@@ -67,12 +82,17 @@ export function useGroceryList() {
   const { pushAction } = useUndo();
 
   // Broadcast unchecked item count for the bottom nav badge
-  // and keep localStorage in sync for reliable offline access
+  // and keep localStorage and IndexedDB in sync for reliable offline access
   useEffect(() => {
     const count = sections.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0);
     window.dispatchEvent(new CustomEvent('grocery-count-changed', { detail: count }));
     if (sections.length > 0) {
       saveGroceryToLocalStorage(sections);
+      void Promise.resolve(saveLocalGrocerySections(sections.map(s => ({ id: s.id, name: s.name, position: s.position })))).catch(() => {});
+      void Promise.resolve(saveLocalGroceryItems(sections.flatMap(s => s.items.map(i => ({
+        id: i.id, section_id: i.section_id, name: i.name,
+        quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
+      }))))).catch(() => {});
     }
   }, [sections]);
 
@@ -113,8 +133,8 @@ export function useGroceryList() {
   const isOnlineRef = useRef(isOnline);
   isOnlineRef.current = isOnline;
 
-  // Load grocery list (cache-first: show cached data immediately, then refresh from API)
-  // skipApi: true to only load from local cache (used on remount when SSE keeps cache warm)
+  // Load grocery list (cache-first: show cached data immediately, fetch API only if cache empty)
+  // skipApi: true to force cache-only (used by deferred load, pending-changes-synced calls it without skipApi to get fresh data)
   const loadGroceryList = useCallback(async (skipApi = false) => {
     const fetchVersion = optimisticVersionRef.current;
 
@@ -128,7 +148,8 @@ export function useGroceryList() {
       }
     } catch { /* cache failed — continue to API */ }
 
-    // 2. If online, fetch from API in background
+    // 2. If online, fetch from API
+    // skipApi=true on mount when sessionLoaded (SSE keeps cache warm, no refetch on tab switch)
     if (!skipApi && isOnlineRef.current) {
       try {
         const data = await getGroceryList();
@@ -147,6 +168,7 @@ export function useGroceryList() {
           store_id: i.store_id,
           updated_at: i.updated_at,
         })));
+        grocerySessionLoaded = true;
       } catch { /* API failed — keep cached data */ }
     }
 
@@ -165,6 +187,111 @@ export function useGroceryList() {
     }
   }, []);
 
+  const applyRealtimeEvent = useCallback((payload: GrocerySSEPayload) => {
+    if (!payload?.action) {
+      loadGroceryListRef.current();
+      return;
+    }
+    const { action } = payload;
+    switch (action) {
+      case 'item-added':
+        if (payload.sectionId && payload.item) {
+          setSections(prev => prev.map(s => {
+            if (s.id !== payload.sectionId) return s;
+            if (s.items.some(i => i.id === payload.item!.id)) return s;
+            return { ...s, items: [...s.items, payload.item!] };
+          }));
+        }
+        break;
+      case 'item-updated':
+        if (payload.sectionId && payload.item) {
+          setSections(prev => prev.map(s => {
+            if (s.id !== payload.sectionId) return s;
+            return { ...s, items: s.items.map(i => i.id === payload.item!.id ? payload.item! : i) };
+          }));
+        }
+        break;
+      case 'item-deleted':
+        if (payload.sectionId && payload.itemId) {
+          setSections(prev => prev.map(s => {
+            if (s.id !== payload.sectionId) return s;
+            return { ...s, items: s.items.filter(i => i.id !== payload.itemId) };
+          }));
+        }
+        break;
+      case 'item-moved':
+        if (payload.fromSectionId && payload.toSectionId && payload.item) {
+          setSections(prev => prev.map(s => {
+            if (s.id === payload.fromSectionId) {
+              return { ...s, items: s.items.filter(i => i.id !== payload.item!.id) };
+            }
+            if (s.id === payload.toSectionId) {
+              if (s.items.some(i => i.id === payload.item!.id)) return s;
+              const items = [...s.items, payload.item!].sort((a, b) => a.position - b.position);
+              return { ...s, items };
+            }
+            return s;
+          }));
+        }
+        break;
+      case 'section-added':
+        if (payload.section) {
+          setSections(prev => {
+            if (prev.some(s => s.id === payload.section!.id)) return prev;
+            return [...prev, payload.section!].sort((a, b) => a.position - b.position);
+          });
+        }
+        break;
+      case 'section-renamed':
+        if (payload.sectionId && payload.name) {
+          setSections(prev => prev.map(s =>
+            s.id === payload.sectionId ? { ...s, name: payload.name! } : s
+          ));
+        }
+        break;
+      case 'section-deleted':
+        if (payload.sectionId) {
+          setSections(prev => prev.filter(s => s.id !== payload.sectionId));
+        }
+        break;
+      case 'section-reordered':
+        if (payload.sections) {
+          const posMap = new Map((payload.sections as { id: string; position: number }[]).map(s => [s.id, s.position]));
+          setSections(prev => prev.map(s => {
+            const pos = posMap.get(s.id);
+            return pos !== undefined ? { ...s, position: pos } : s;
+          }).sort((a, b) => a.position - b.position));
+        }
+        break;
+      case 'items-reordered':
+        if (payload.sectionId && payload.items) {
+          const posMap = new Map(payload.items.map(i => [i.id, i.position]));
+          setSections(prev => prev.map(s => {
+            if (s.id !== payload.sectionId) return s;
+            return { ...s, items: s.items.map(i => {
+              const pos = posMap.get(i.id);
+              return pos !== undefined ? { ...i, position: pos } : i;
+            }).sort((a, b) => a.position - b.position) };
+          }));
+        }
+        break;
+      case 'cleared-checked':
+        setSections(prev => {
+          const updated = prev.map(s => ({ ...s, items: s.items.filter(i => !i.checked) }));
+          return updated.filter(s => s.items.length > 0);
+        });
+        break;
+      case 'cleared-all':
+        setSections([]);
+        break;
+      case 'replaced':
+        if (payload.sections) {
+          setSections(payload.sections as GrocerySection[]);
+        }
+        break;
+    }
+  }, []);
+
   // Helper: replace list on server and apply the response (which has new server IDs)
   const replaceAndApply = async (payload: { name: string; items: { name: string; quantity: string | null; checked: boolean; store_id: string | null }[] }[]) => {
     const result = await replaceGroceryListAPI(payload);
@@ -178,7 +305,7 @@ export function useGroceryList() {
   };
 
   useEffect(() => {
-    loadGroceryList();
+    loadGroceryList(grocerySessionLoaded);
   }, [loadGroceryList]);
 
   // Listen for realtime updates
@@ -190,12 +317,12 @@ export function useGroceryList() {
           deferredLoadRef.current = true;
           return;
         }
-        loadGroceryList();
+        applyRealtimeEvent(detail.payload as GrocerySSEPayload);
       }
     };
     window.addEventListener('meal-planner-realtime', handler);
     return () => window.removeEventListener('meal-planner-realtime', handler);
-  }, [loadGroceryList]);
+  }, [applyRealtimeEvent]);
 
   // Refetch after offline sync completes to pick up other devices' changes
   useEffect(() => {
@@ -603,6 +730,10 @@ export function useGroceryList() {
           });
           await deleteLocalGroceryItem(tempId);
         }
+        // Update local item default cache with server's auto-populated store
+        if (created.store_id) {
+          putLocalItemDefault(trimmedName.toLowerCase(), created.store_id).catch(() => {});
+        }
       } catch {
         await queueChange('grocery-add', '', { id: tempId, sectionId, name: trimmedName, quantity, store_id: resolvedStoreId });
       } finally { settleMutation(); }
@@ -973,10 +1104,20 @@ export function useGroceryList() {
             store_id: serverItem.store_id, updated_at: serverItem.updated_at,
           });
         }
+        // Update local item default when store changes
+        if (updates.store_id !== undefined) {
+          const itemName = (updates.name ?? item.name).trim().toLowerCase();
+          putLocalItemDefault(itemName, updates.store_id).catch(() => {});
+        }
       } catch {
         await queueChange('grocery-edit', '', { id: itemId, ...updates });
       } finally { settleMutation(); }
     } else {
+      // Offline: still update local item default for offline auto-populate
+      if (updates.store_id !== undefined) {
+        const itemName = (updates.name ?? item.name).trim().toLowerCase();
+        putLocalItemDefault(itemName, updates.store_id).catch(() => {});
+      }
       await queueChange('grocery-edit', '', { id: itemId, ...updates });
     }
 

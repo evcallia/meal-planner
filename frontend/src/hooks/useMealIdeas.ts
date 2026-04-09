@@ -21,6 +21,12 @@ interface MealIdeaInput {
   title: string;
 }
 
+interface MealIdeasSSEPayload {
+  action: string;
+  idea?: MealIdea;
+  ideaId?: string;
+}
+
 const STORAGE_KEY = 'meal-planner-meal-ideas';
 function parseStoredIdeas(raw: string | null): MealIdea[] {
   if (!raw) return [];
@@ -42,8 +48,9 @@ function parseStoredIdeas(raw: string | null): MealIdea[] {
   }
 }
 
-export function resetMealIdeasSessionLoaded() { /* no-op */ }
-export function markMealIdeasSessionLoaded() { /* no-op */ }
+let mealIdeasSessionLoaded = false;
+export function resetMealIdeasSessionLoaded() { mealIdeasSessionLoaded = false; }
+export function markMealIdeasSessionLoaded() { mealIdeasSessionLoaded = true; }
 
 export function useMealIdeas() {
   const [ideas, setIdeas] = useState<MealIdea[]>([]);
@@ -85,6 +92,10 @@ export function useMealIdeas() {
     } catch {
       // Ignore storage errors.
     }
+    // Keep IndexedDB in sync so SSE delta applies are persisted for offline access
+    for (const idea of ideas) {
+      void Promise.resolve(saveLocalMealIdea(idea)).catch(() => {});
+    }
   }, [ideas]);
 
   // Use a ref so refreshIdeas doesn't depend on isOnline directly.
@@ -117,7 +128,7 @@ export function useMealIdeas() {
       }
     } catch { /* cache failed — continue to API */ }
 
-    // 2. If online, fetch from API in background (skip if pending offline changes exist)
+    // 2. If online, fetch from API
     if (!skipApi && isOnlineRef.current) {
       const pending = await getPendingChanges();
       const hasMealIdeaChanges = pending.some(c => c.type.startsWith('meal-idea-'));
@@ -156,6 +167,7 @@ export function useMealIdeas() {
               }
             }
           }
+          mealIdeasSessionLoaded = true;
         } catch { /* API failed — keep cached data */ }
       }
     }
@@ -174,17 +186,45 @@ export function useMealIdeas() {
   }, []);
 
   useEffect(() => {
-    refreshIdeas();
+    refreshIdeas(mealIdeasSessionLoaded);
   }, [refreshIdeas]);
+
+  const applyRealtimeEvent = useCallback((payload: MealIdeasSSEPayload) => {
+    if (!payload?.action) {
+      refreshIdeasRef.current();
+      return;
+    }
+    const { action } = payload;
+    switch (action) {
+      case 'added':
+        if (payload.idea) {
+          setIdeas(prev => {
+            if (prev.some(i => i.id === payload.idea!.id)) return prev;
+            return [payload.idea!, ...prev];
+          });
+        }
+        break;
+      case 'updated':
+        if (payload.idea) {
+          setIdeas(prev => prev.map(i => i.id === payload.idea!.id ? payload.idea! : i));
+        }
+        break;
+      case 'deleted':
+        if (payload.ideaId) {
+          setIdeas(prev => prev.filter(i => i.id !== payload.ideaId));
+        }
+        break;
+    }
+  }, []);
 
   useEffect(() => {
     const handleRealtime = (event: Event) => {
-      const detail = (event as CustomEvent).detail as { type?: string } | undefined;
+      const detail = (event as CustomEvent).detail as { type?: string; payload?: unknown } | undefined;
       if (detail?.type === 'meal-ideas.updated') {
         if (pendingMutationsRef.current > 0) {
           deferredLoadRef.current = true;
         } else {
-          refreshIdeas();
+          applyRealtimeEvent(detail.payload as MealIdeasSSEPayload);
         }
       }
     };
@@ -192,7 +232,7 @@ export function useMealIdeas() {
     return () => {
       window.removeEventListener('meal-planner-realtime', handleRealtime as EventListener);
     };
-  }, [refreshIdeas]);
+  }, [applyRealtimeEvent]);
 
   // Refetch after offline sync completes to pick up other devices' changes
   useEffect(() => {

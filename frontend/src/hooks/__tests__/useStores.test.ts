@@ -185,6 +185,63 @@ describe('useStores', () => {
     expect(result.current.stores[1].name).toBe('Costco');
   });
 
+  describe('SSE apply logic', () => {
+    it('applies added store from SSE without refetching', async () => {
+      const { result } = renderHook(() => useStores());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const callsBefore = mockGetStoresAPI.mock.calls.length;
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'stores.updated',
+            payload: { action: 'added', store: { id: 'new-id', name: 'Costco', position: 2 } },
+          },
+        }));
+      });
+
+      expect(result.current.stores.some(s => s.id === 'new-id')).toBe(true);
+      expect(mockGetStoresAPI.mock.calls.length).toBe(callsBefore);
+    });
+
+    it('applies deleted store from SSE', async () => {
+      const { result } = renderHook(() => useStores());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(result.current.stores.some(s => s.id === 'st1')).toBe(true);
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'stores.updated',
+            payload: { action: 'deleted', storeId: 'st1' },
+          },
+        }));
+      });
+
+      expect(result.current.stores.some(s => s.id === 'st1')).toBe(false);
+      expect(result.current.stores).toHaveLength(1);
+    });
+
+    it('applies updated store from SSE', async () => {
+      const { result } = renderHook(() => useStores());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(result.current.stores[0].name).toBe('Costco');
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'stores.updated',
+            payload: { action: 'updated', store: { id: 'st1', name: 'Costco Warehouse', position: 0 } },
+          },
+        }));
+      });
+
+      const updated = result.current.stores.find(s => s.id === 'st1');
+      expect(updated?.name).toBe('Costco Warehouse');
+    });
+  });
+
   it('reloads on realtime stores.updated event', async () => {
     let fetchCount = 0;
     mockGetStoresAPI.mockImplementation(() => {

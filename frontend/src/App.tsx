@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
-import { CalendarView, resetCalendarSessionLoaded } from './components/CalendarView';
+import { CalendarView, resetCalendarSessionLoaded, markCalendarSessionLoaded } from './components/CalendarView';
 import { PantryPanel } from './components/PantryPanel';
 import { MealIdeasPanel } from './components/MealIdeasPanel';
 import { GroceryListView } from './components/GroceryListView';
@@ -12,11 +12,15 @@ import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
 import { useRealtime } from './hooks/useRealtime';
 import { useKeyboardOpen } from './hooks/useKeyboardOpen';
-import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryList, getStores as getStoresAPI, getPantryList, getMealIdeas } from './api/client';
-import { UserInfo } from './types';
+import { getCurrentUser, getLoginUrl, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents } from './api/client';
+import { UserInfo, GrocerySection, GroceryItem, PantrySection, PantryItem, Store, MealIdea } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
-import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea } from './db';
+import { resetGrocerySessionLoaded, markGrocerySessionLoaded } from './hooks/useGroceryList';
+import { resetPantrySessionLoaded, markPantrySessionLoaded } from './hooks/usePantry';
+import { resetStoresSessionLoaded, markStoresSessionLoaded } from './hooks/useStores';
+import { resetMealIdeasSessionLoaded, markMealIdeasSessionLoaded } from './hooks/useMealIdeas';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea, saveLocalHiddenEvents, clearLocalHiddenEvents, saveLocalItemDefaults } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'pantry' | 'grocery';
@@ -515,11 +519,17 @@ function AppContent() {
             id: i.id, section_id: i.section_id, name: i.name,
             quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
           }))));
+          markGrocerySessionLoaded();
         }).catch(() => { /* best-effort */ });
       }
 
       getStoresAPI().then(async (stores) => {
         await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
+        markStoresSessionLoaded();
+      }).catch(() => { /* best-effort */ });
+
+      getItemDefaults().then(async (defaults) => {
+        await saveLocalItemDefaults(defaults.map(d => ({ item_name: d.item_name, store_id: d.store_id })));
       }).catch(() => { /* best-effort */ });
 
       if (!hasPantryChanges) {
@@ -530,6 +540,7 @@ function AppContent() {
             id: i.id, section_id: i.section_id, name: i.name,
             quantity: i.quantity, position: i.position, updated_at: i.updated_at,
           }))));
+          markPantrySessionLoaded();
         }).catch(() => { /* best-effort */ });
       }
 
@@ -538,8 +549,38 @@ function AppContent() {
           await clearLocalMealIdeas();
           for (const idea of ideas) await saveLocalMealIdea(idea);
           try { localStorage.setItem('meal-planner-meal-ideas', JSON.stringify(ideas)); } catch { /* full */ }
+          markMealIdeasSessionLoaded();
         }).catch(() => { /* best-effort */ });
       }
+
+      // Calendar: prefetch days + events for the full range (past 2 weeks, future 8 weeks)
+      // Same range as CalendarView.init() so the cache is warm before the user visits Meals
+      const calStart = new Date(); calStart.setDate(calStart.getDate() - 14);
+      const calEnd = new Date(); calEnd.setDate(calEnd.getDate() + 56);
+      const fmt = (d: Date) => d.toISOString().split('T')[0];
+      const calStartStr = fmt(calStart);
+      const calEndStr = fmt(calEnd);
+
+      getDays(calStartStr, calEndStr).then(async (days) => {
+        for (const d of days) {
+          if (d.meal_note) {
+            saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
+          }
+        }
+      }).catch(() => { /* best-effort */ });
+
+      getEvents(calStartStr, calEndStr, true, true).then(async (eventsMap) => {
+        for (const [date, events] of Object.entries(eventsMap)) {
+          try { saveLocalCalendarEvents(date, events); } catch { /* best-effort */ }
+        }
+      }).catch(() => { /* best-effort */ });
+
+      getHiddenCalendarEvents().then(async (hidden) => {
+        await clearLocalHiddenEvents();
+        await saveLocalHiddenEvents(hidden);
+        markCalendarSessionLoaded(calStartStr, calEndStr);
+      }).catch(() => { /* best-effort */ });
+
     }).catch(() => { /* best-effort */ });
   }, []);
 
@@ -578,8 +619,86 @@ function AppContent() {
 
         if (detail.type === 'grocery.updated' && currentPageRef.current !== 'grocery') {
           if (pending.some(c => c.type.startsWith('grocery-'))) return;
+          const gPayload = detail.payload as { action?: string; sections?: GrocerySection[]; section?: GrocerySection; sectionId?: string; item?: GroceryItem; itemId?: string; fromSectionId?: string; toSectionId?: string; items?: { id: string; position: number }[]; name?: string };
           try {
-            const data = await getGroceryList();
+            const raw = localStorage.getItem('meal-planner-grocery');
+            let data: GrocerySection[] = raw ? JSON.parse(raw) : [];
+            switch (gPayload?.action) {
+              case 'item-added':
+                if (gPayload.sectionId && gPayload.item) {
+                  data = data.map(s => {
+                    if (s.id !== gPayload.sectionId) return s;
+                    if (s.items.some(i => i.id === gPayload.item!.id)) return s;
+                    return { ...s, items: [...s.items, gPayload.item!] };
+                  });
+                }
+                break;
+              case 'item-updated':
+                if (gPayload.sectionId && gPayload.item) {
+                  data = data.map(s => {
+                    if (s.id !== gPayload.sectionId) return s;
+                    return { ...s, items: s.items.map(i => i.id === gPayload.item!.id ? gPayload.item! : i) };
+                  });
+                }
+                break;
+              case 'item-deleted':
+                if (gPayload.sectionId && gPayload.itemId) {
+                  data = data.map(s => {
+                    if (s.id !== gPayload.sectionId) return s;
+                    return { ...s, items: s.items.filter(i => i.id !== gPayload.itemId) };
+                  });
+                }
+                break;
+              case 'item-moved':
+                if (gPayload.fromSectionId && gPayload.toSectionId && gPayload.item) {
+                  data = data.map(s => {
+                    if (s.id === gPayload.fromSectionId) return { ...s, items: s.items.filter(i => i.id !== gPayload.item!.id) };
+                    if (s.id === gPayload.toSectionId) {
+                      if (s.items.some(i => i.id === gPayload.item!.id)) return s;
+                      return { ...s, items: [...s.items, gPayload.item!].sort((a, b) => a.position - b.position) };
+                    }
+                    return s;
+                  });
+                }
+                break;
+              case 'section-added':
+                if (gPayload.section && !data.some(s => s.id === gPayload.section!.id)) {
+                  data = [...data, gPayload.section].sort((a, b) => a.position - b.position);
+                }
+                break;
+              case 'section-renamed':
+                if (gPayload.sectionId && gPayload.name) {
+                  data = data.map(s => s.id === gPayload.sectionId ? { ...s, name: gPayload.name! } : s);
+                }
+                break;
+              case 'section-deleted':
+                if (gPayload.sectionId) data = data.filter(s => s.id !== gPayload.sectionId);
+                break;
+              case 'section-reordered':
+                if (gPayload.sections) {
+                  const posMap = new Map((gPayload.sections as { id: string; position: number }[]).map(s => [s.id, s.position]));
+                  data = data.map(s => { const p = posMap.get(s.id); return p !== undefined ? { ...s, position: p } : s; }).sort((a, b) => a.position - b.position);
+                }
+                break;
+              case 'items-reordered':
+                if (gPayload.sectionId && gPayload.items) {
+                  const posMap = new Map(gPayload.items.map(i => [i.id, i.position]));
+                  data = data.map(s => {
+                    if (s.id !== gPayload.sectionId) return s;
+                    return { ...s, items: s.items.map(i => { const p = posMap.get(i.id); return p !== undefined ? { ...i, position: p } : i; }).sort((a, b) => a.position - b.position) };
+                  });
+                }
+                break;
+              case 'cleared-checked':
+                data = data.map(s => ({ ...s, items: s.items.filter(i => !i.checked) })).filter(s => s.items.length > 0);
+                break;
+              case 'cleared-all':
+                data = [];
+                break;
+              case 'replaced':
+                if (gPayload.sections) data = gPayload.sections as GrocerySection[];
+                break;
+            }
             try { localStorage.setItem('meal-planner-grocery', JSON.stringify(data)); } catch {}
             setGroceryCount(data.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0));
             await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
@@ -592,8 +711,83 @@ function AppContent() {
 
         if (detail.type === 'pantry.updated' && currentPageRef.current !== 'pantry') {
           if (pending.some(c => c.type.startsWith('pantry-'))) return;
+          const pPayload = detail.payload as { action?: string; sections?: PantrySection[]; section?: PantrySection; sectionId?: string; item?: PantryItem; itemId?: string; fromSectionId?: string; toSectionId?: string; items?: { id: string; position: number }[]; name?: string };
           try {
-            const data = await getPantryList();
+            const raw = localStorage.getItem('meal-planner-pantry-sections');
+            let data: PantrySection[] = raw ? JSON.parse(raw) : [];
+            switch (pPayload?.action) {
+              case 'item-added':
+                if (pPayload.sectionId && pPayload.item) {
+                  data = data.map(s => {
+                    if (s.id !== pPayload.sectionId) return s;
+                    if (s.items.some(i => i.id === pPayload.item!.id)) return s;
+                    return { ...s, items: [...s.items, pPayload.item!] };
+                  });
+                }
+                break;
+              case 'item-updated':
+                if (pPayload.sectionId && pPayload.item) {
+                  data = data.map(s => {
+                    if (s.id !== pPayload.sectionId) return s;
+                    return { ...s, items: s.items.map(i => i.id === pPayload.item!.id ? pPayload.item! : i) };
+                  });
+                }
+                break;
+              case 'item-deleted':
+                if (pPayload.sectionId && pPayload.itemId) {
+                  data = data.map(s => {
+                    if (s.id !== pPayload.sectionId) return s;
+                    return { ...s, items: s.items.filter(i => i.id !== pPayload.itemId) };
+                  });
+                }
+                break;
+              case 'item-moved':
+                if (pPayload.fromSectionId && pPayload.toSectionId && pPayload.item) {
+                  data = data.map(s => {
+                    if (s.id === pPayload.fromSectionId) return { ...s, items: s.items.filter(i => i.id !== pPayload.item!.id) };
+                    if (s.id === pPayload.toSectionId) {
+                      if (s.items.some(i => i.id === pPayload.item!.id)) return s;
+                      return { ...s, items: [...s.items, pPayload.item!].sort((a, b) => a.position - b.position) };
+                    }
+                    return s;
+                  });
+                }
+                break;
+              case 'section-added':
+                if (pPayload.section && !data.some(s => s.id === pPayload.section!.id)) {
+                  data = [...data, pPayload.section].sort((a, b) => a.position - b.position);
+                }
+                break;
+              case 'section-renamed':
+                if (pPayload.sectionId && pPayload.name) {
+                  data = data.map(s => s.id === pPayload.sectionId ? { ...s, name: pPayload.name! } : s);
+                }
+                break;
+              case 'section-deleted':
+                if (pPayload.sectionId) data = data.filter(s => s.id !== pPayload.sectionId);
+                break;
+              case 'section-reordered':
+                if (pPayload.sections) {
+                  const posMap = new Map((pPayload.sections as { id: string; position: number }[]).map(s => [s.id, s.position]));
+                  data = data.map(s => { const p = posMap.get(s.id); return p !== undefined ? { ...s, position: p } : s; }).sort((a, b) => a.position - b.position);
+                }
+                break;
+              case 'items-reordered':
+                if (pPayload.sectionId && pPayload.items) {
+                  const posMap = new Map(pPayload.items.map(i => [i.id, i.position]));
+                  data = data.map(s => {
+                    if (s.id !== pPayload.sectionId) return s;
+                    return { ...s, items: s.items.map(i => { const p = posMap.get(i.id); return p !== undefined ? { ...i, position: p } : i; }).sort((a, b) => a.position - b.position) };
+                  });
+                }
+                break;
+              case 'cleared-all':
+                data = [];
+                break;
+              case 'replaced':
+                if (pPayload.sections) data = pPayload.sections as PantrySection[];
+                break;
+            }
             try { localStorage.setItem('meal-planner-pantry-sections', JSON.stringify(data)); } catch {}
             await saveLocalPantrySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
             await saveLocalPantryItems(data.flatMap(s => s.items.map(i => ({
@@ -604,8 +798,36 @@ function AppContent() {
         }
 
         if (detail.type === 'stores.updated') {
+          const payload = detail.payload as { action?: string; store?: Store; storeId?: string; stores?: { id: string; position: number }[] };
           try {
-            const stores = await getStoresAPI();
+            const raw = localStorage.getItem('meal-planner-stores');
+            let stores: Store[] = raw ? JSON.parse(raw) : [];
+            switch (payload?.action) {
+              case 'added':
+                if (payload.store && !stores.some(s => s.id === payload.store!.id)) {
+                  stores = [...stores, payload.store].sort((a, b) => a.position - b.position);
+                }
+                break;
+              case 'updated':
+                if (payload.store) {
+                  stores = stores.map(s => s.id === payload.store!.id ? payload.store! : s);
+                }
+                break;
+              case 'deleted':
+                if (payload.storeId) {
+                  stores = stores.filter(s => s.id !== payload.storeId);
+                }
+                break;
+              case 'reordered':
+                if (payload.stores) {
+                  const posMap = new Map(payload.stores.map(s => [s.id, s.position]));
+                  stores = stores.map(s => {
+                    const pos = posMap.get(s.id);
+                    return pos !== undefined ? { ...s, position: pos } : s;
+                  }).sort((a, b) => a.position - b.position);
+                }
+                break;
+            }
             await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
             try { localStorage.setItem('meal-planner-stores', JSON.stringify(stores)); } catch {}
           } catch {}
@@ -613,11 +835,29 @@ function AppContent() {
 
         if (detail.type === 'meal-ideas.updated' && currentPageRef.current !== 'meals') {
           if (pending.some(c => c.type.startsWith('meal-idea-'))) return;
+          const mealPayload = detail.payload as { action?: string; idea?: MealIdea; ideaId?: string };
           try {
-            const ideas = await getMealIdeas();
-            await clearLocalMealIdeas();
-            for (const idea of ideas) {
-              await saveLocalMealIdea(idea);
+            const raw = localStorage.getItem('meal-planner-meal-ideas');
+            let ideas: MealIdea[] = raw ? JSON.parse(raw) : [];
+            switch (mealPayload?.action) {
+              case 'added':
+                if (mealPayload.idea && !ideas.some(i => i.id === mealPayload.idea!.id)) {
+                  ideas = [mealPayload.idea, ...ideas];
+                  await saveLocalMealIdea(mealPayload.idea);
+                }
+                break;
+              case 'updated':
+                if (mealPayload.idea) {
+                  ideas = ideas.map(i => i.id === mealPayload.idea!.id ? mealPayload.idea! : i);
+                  await saveLocalMealIdea(mealPayload.idea);
+                }
+                break;
+              case 'deleted':
+                if (mealPayload.ideaId) {
+                  ideas = ideas.filter(i => i.id !== mealPayload.ideaId);
+                  try { await deleteLocalMealIdea(mealPayload.ideaId); } catch {}
+                }
+                break;
             }
             try { localStorage.setItem('meal-planner-meal-ideas', JSON.stringify(ideas)); } catch {}
           } catch {}
@@ -694,6 +934,10 @@ function AppContent() {
   // for the active CalendarView.
   const broadcastFullRefresh = useCallback(() => {
     resetCalendarSessionLoaded();
+    resetGrocerySessionLoaded();
+    resetPantrySessionLoaded();
+    resetStoresSessionLoaded();
+    resetMealIdeasSessionLoaded();
     fetchAllData();
     // Calendar needs a synthetic event since CalendarView manages its own fetch
     window.dispatchEvent(new CustomEvent('meal-planner-realtime', {

@@ -35,7 +35,10 @@ async def create_meal_idea(
     db.add(idea)
     db.commit()
     db.refresh(idea)
-    await broadcast_event("meal-ideas.updated", {"id": str(idea.id)}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("meal-ideas.updated", {
+        "action": "added",
+        "idea": MealIdeaSchema.model_validate(idea).model_dump(mode="json"),
+    }, source_id=request.headers.get("x-source-id"))
     return idea
 
 
@@ -57,7 +60,10 @@ async def update_meal_idea(
         idea.title = title
     db.commit()
     db.refresh(idea)
-    await broadcast_event("meal-ideas.updated", {"id": str(idea.id)}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("meal-ideas.updated", {
+        "action": "updated",
+        "idea": MealIdeaSchema.model_validate(idea).model_dump(mode="json"),
+    }, source_id=request.headers.get("x-source-id"))
     return idea
 
 
@@ -73,5 +79,8 @@ async def delete_meal_idea(
         return {"status": "ok"}  # Idempotent — already deleted
     db.delete(idea)
     db.commit()
-    await broadcast_event("meal-ideas.updated", {"id": str(idea.id), "deleted": True}, source_id=request.headers.get("x-source-id"))
+    await broadcast_event("meal-ideas.updated", {
+        "action": "deleted",
+        "ideaId": str(idea.id),
+    }, source_id=request.headers.get("x-source-id"))
     return {"status": "deleted"}
