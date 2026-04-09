@@ -16,7 +16,7 @@ import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryLi
 import { UserInfo, GrocerySection, PantrySection, Store, MealIdea } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
-import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea } from './db';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'pantry' | 'grocery';
@@ -647,26 +647,27 @@ function AppContent() {
 
         if (detail.type === 'meal-ideas.updated' && currentPageRef.current !== 'meals') {
           if (pending.some(c => c.type.startsWith('meal-idea-'))) return;
-          const payload = detail.payload as { action?: string; idea?: MealIdea; ideaId?: string };
+          const mealPayload = detail.payload as { action?: string; idea?: MealIdea; ideaId?: string };
           try {
             const raw = localStorage.getItem('meal-planner-meal-ideas');
             let ideas: MealIdea[] = raw ? JSON.parse(raw) : [];
-            switch (payload?.action) {
+            switch (mealPayload?.action) {
               case 'added':
-                if (payload.idea && !ideas.some(i => i.id === payload.idea!.id)) {
-                  ideas = [payload.idea, ...ideas];
-                  await saveLocalMealIdea(payload.idea);
+                if (mealPayload.idea && !ideas.some(i => i.id === mealPayload.idea!.id)) {
+                  ideas = [mealPayload.idea, ...ideas];
+                  await saveLocalMealIdea(mealPayload.idea);
                 }
                 break;
               case 'updated':
-                if (payload.idea) {
-                  ideas = ideas.map(i => i.id === payload.idea!.id ? payload.idea! : i);
-                  await saveLocalMealIdea(payload.idea);
+                if (mealPayload.idea) {
+                  ideas = ideas.map(i => i.id === mealPayload.idea!.id ? mealPayload.idea! : i);
+                  await saveLocalMealIdea(mealPayload.idea);
                 }
                 break;
               case 'deleted':
-                if (payload.ideaId) {
-                  ideas = ideas.filter(i => i.id !== payload.ideaId);
+                if (mealPayload.ideaId) {
+                  ideas = ideas.filter(i => i.id !== mealPayload.ideaId);
+                  try { await deleteLocalMealIdea(mealPayload.ideaId); } catch {}
                 }
                 break;
             }
