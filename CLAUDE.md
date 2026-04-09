@@ -47,6 +47,26 @@ Key details:
 - `broadcast_to_user()` helper function in `realtime.py` wraps `publish_to_user`
 - SSE endpoint passes `user.get("sub")` to `subscribe()` so queues are tagged
 
+## Data-Carrying SSE Events
+- SSE events carry mutation data so clients apply deltas directly without API refetches
+- Event format: `{ type: "grocery.updated", payload: { action: "item-added", sectionId: "...", item: {...} }, source_id: "..." }`
+- **Actions per entity**: grocery/pantry have `item-added`, `item-updated`, `item-deleted`, `item-moved`, `section-added`, `section-renamed`, `section-deleted`, `section-reordered`, `items-reordered`, `cleared-checked` (grocery only), `cleared-all`, `replaced`. Stores have `added`, `updated`, `deleted`, `reordered`. Meal-ideas have `added`, `updated`, `deleted`
+- **Frontend hooks**: Each hook has an `applyRealtimeEvent(payload)` function that switches on `action` to apply deltas to React state directly
+- **Fallback on missing action**: If `payload?.action` is undefined (legacy event), hooks fall back to full API refetch via `loadXxxRef.current()`
+- **App.tsx cache warmer**: Applies ALL SSE actions to localStorage + IndexedDB for inactive tabs (grocery, pantry, stores, meal-ideas). Already-data-carrying events (notes, calendar, settings) unchanged
+- **IndexedDB persistence**: State sync `useEffect` in each hook persists to IDB whenever state changes, keeping offline cache current after SSE deltas
+- All entities referenced by server-assigned ID in SSE payloads — never match on mutable fields like names
+
+## Item Defaults (Store Auto-Populate)
+- `item_defaults` table: `item_name` (PK, lowercase), `store_id` (FK → stores, nullable)
+- `GET /api/grocery/item-defaults` returns all defaults with non-null store_id
+- `ItemDefaultSchema` in schemas.py: `item_name`, `store_id`
+- Frontend caches in IDB `itemDefaults` store (version 8), synced on app load via `fetchAllData`
+- `GroceryListView` merges IDB defaults + current list items into `itemDefaultsMap` (useMemo on `[idbDefaults, sections]`)
+- Quick-add and per-section-add forms check `itemDefaultsMap` for store auto-populate when item isn't in current list
+- `useGroceryList` calls `putLocalItemDefault()` after add/edit API responses to keep IDB cache warm
+- `StoreAutocomplete` always shows as editable input with pre-populated store name; X clears input only (no immediate update)
+
 ## Calendar Holidays
 - US holidays fetched from Google's public iCal feed, cached in-memory (24h TTL) and in DB (`cached_calendar_events` with `calendar_name = "US Holidays"`)
 - `include_holidays` query param on `/api/days/events` and `/api/days` (default `true`)
@@ -108,7 +128,7 @@ Key details:
 - **Quick-add form** (default): Section combobox + quantity stepper + item name input + full-width Add button
 - **Section combobox**: Filters existing sections as user types; unmatched input creates a new section. Clear button (X) inside input. Empty sections show red X delete button in dropdown. Dropdown opens below input; `.glass` ancestor elevated on open for iOS z-index stacking
 - **Section/store dropdowns**: Both sorted alphabetically via `localeCompare`
-- **Store auto-populate**: Both quick-add and inline per-section add auto-populate store from existing items with the same name
+- **Store auto-populate**: Both quick-add and inline per-section add auto-populate store from `itemDefaultsMap` (merged IDB item defaults + current list items). Works offline and for items previously cleared from the list
 - **Paste mode**: Toggle via "Paste a list instead" link; existing textarea with `[Section]` / `(N) Item` format
 - **Rapid entry**: After add, item name clears, quantity resets to 0 (–), section stays selected, focus returns to item input
 - **Section name title-casing**: Applied via `toTitleCase` at all entry points: `parseGroceryText`, `mergeList`, `renameSection`, `handleQuickAdd`
@@ -171,11 +191,12 @@ Key details:
 
 ## Data Fetching Architecture
 - **Singleton online status**: `useOnlineStatus` uses `useSyncExternalStore` with module-level state — single `/api/health` check shared across all consumers, no redundant checks on tab switch
-- **Upfront data fetch**: App.tsx `fetchAllData()` fetches grocery, pantry, stores, meal-ideas in parallel on app load. Module-level `sessionLoaded` flags are marked synchronously during render (before child effects) so hooks skip their own API calls
-- **Session-loaded guard**: Each hook (`useGroceryList`, `usePantry`, `useMealIdeas`, `useStores`) has a module-level `sessionLoaded` flag. On mount, hooks load from local cache only if `sessionLoaded` is true (set by App.tsx `fetchAllData`). Export `reset*SessionLoaded()` and `mark*SessionLoaded()` for App.tsx and tests
+- **Upfront data fetch**: App.tsx `fetchAllData()` fetches grocery, pantry, stores, meal-ideas, item-defaults, calendar days, calendar events, and hidden events in parallel on app load. Marks `sessionLoaded` flags after each entity fetch succeeds
+- **Session-loaded guard**: Each hook (`useGroceryList`, `usePantry`, `useMealIdeas`, `useStores`) has a module-level `sessionLoaded` flag. On mount, hooks pass `sessionLoaded` as `skipApi` — first mount fetches from API, subsequent mounts (tab switches) load from cache only. `broadcastFullRefresh` resets all flags so tab-focus/reconnect triggers fresh fetches. Export `reset*SessionLoaded()` and `mark*SessionLoaded()` for App.tsx and tests
+- **Calendar prefetch in fetchAllData**: Calendar days, events, and hidden events are prefetched on app load with the same range as CalendarView (-14 to +56 days). `markCalendarSessionLoaded(startStr, endStr)` sets both `sessionLoaded` and `prefetchedStart`/`prefetchedEnd` so CalendarView skips its own API fetch and `loadNextWeek` knows the range is cached
 - **Pre-cache double-run prevention**: `preCacheDoneRef` in App.tsx prevents the effect from running twice when auth calls `setUser` twice (cached + API)
 - **Focus/reconnect refresh**: `broadcastFullRefresh()` in App.tsx calls `fetchAllData()` (resets flags + re-fetches all data) and dispatches a synthetic `calendar.refreshed` event. Called on `visibilitychange` (hidden→visible) and online reconnect
-- **Background cache warmer**: App.tsx SSE handler updates IndexedDB for inactive tabs (grocery, pantry, stores, meal-ideas, notes, item, calendar events, hidden events). Active tab's hooks handle their own SSE events
+- **Background cache warmer**: App.tsx SSE handler applies data-carrying deltas to localStorage + IndexedDB for inactive tabs (grocery, pantry, stores, meal-ideas). Already-data-carrying events (notes, item, calendar events, hidden events) save directly to IDB. Active tab's hooks handle their own SSE events. No API refetches — all data comes from the SSE payload
 - **Calendar single-fetch**: CalendarView init fetches one `getDays` call for the full range (past 2 weeks through future 8 weeks) and one `getEvents` call, instead of separate calls per range
 - **Calendar prefetch range**: Module-level `prefetchedStart`/`prefetchedEnd` strings track the pre-fetched date range. `loadNextWeek`/`loadPreviousWeek` skip API calls when the requested range falls within these boundaries — only hit API when scrolling past the prefetched window
 - **Calendar remount guard**: `showAllEvents`/`showHolidays` effect uses prev-value refs to only fire on actual changes, not on component remount (prevents redundant API calls on tab switch)
