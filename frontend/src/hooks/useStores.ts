@@ -144,10 +144,11 @@ export function useStores(options: UseStoresOptions = {}) {
 
   useEffect(() => { loadStores(); }, [loadStores]);
 
-  // Keep localStorage in sync with stores state for reliable offline access
+  // Keep localStorage and IndexedDB in sync with stores state for reliable offline access
   useEffect(() => {
     if (stores.length > 0) {
       saveStoresToLocalStorage(stores);
+      void Promise.resolve(saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })))).catch(() => {});
     }
   }, [stores]);
 

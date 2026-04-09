@@ -76,10 +76,15 @@ export function usePantry() {
   const pendingMutationsRef = useRef(0);
   const deferredLoadRef = useRef(false);
 
-  // Keep localStorage in sync for reliable offline access
+  // Keep localStorage and IndexedDB in sync for reliable offline access
   useEffect(() => {
     if (sections.length > 0) {
       savePantryToLocalStorage(sections);
+      void Promise.resolve(saveLocalPantrySections(sections.map(s => ({ id: s.id, name: s.name, position: s.position })))).catch(() => {});
+      void Promise.resolve(saveLocalPantryItems(sections.flatMap(s => s.items.map(i => ({
+        id: i.id, section_id: i.section_id, name: i.name,
+        quantity: i.quantity, position: i.position, updated_at: i.updated_at,
+      }))))).catch(() => {});
     }
   }, [sections]);
 

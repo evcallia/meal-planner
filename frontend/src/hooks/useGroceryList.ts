@@ -80,12 +80,17 @@ export function useGroceryList() {
   const { pushAction } = useUndo();
 
   // Broadcast unchecked item count for the bottom nav badge
-  // and keep localStorage in sync for reliable offline access
+  // and keep localStorage and IndexedDB in sync for reliable offline access
   useEffect(() => {
     const count = sections.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0);
     window.dispatchEvent(new CustomEvent('grocery-count-changed', { detail: count }));
     if (sections.length > 0) {
       saveGroceryToLocalStorage(sections);
+      void Promise.resolve(saveLocalGrocerySections(sections.map(s => ({ id: s.id, name: s.name, position: s.position })))).catch(() => {});
+      void Promise.resolve(saveLocalGroceryItems(sections.flatMap(s => s.items.map(i => ({
+        id: i.id, section_id: i.section_id, name: i.name,
+        quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
+      }))))).catch(() => {});
     }
   }, [sections]);
 

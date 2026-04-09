@@ -91,6 +91,10 @@ export function useMealIdeas() {
     } catch {
       // Ignore storage errors.
     }
+    // Keep IndexedDB in sync so SSE delta applies are persisted for offline access
+    for (const idea of ideas) {
+      void Promise.resolve(saveLocalMealIdea(idea)).catch(() => {});
+    }
   }, [ideas]);
 
   // Use a ref so refreshIdeas doesn't depend on isOnline directly.
