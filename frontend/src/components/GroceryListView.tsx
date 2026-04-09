@@ -1171,12 +1171,13 @@ interface GroceryItemRowProps {
   commitEditingRef: React.MutableRefObject<(() => void) | null>;
 }
 
-function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging, stores, onStoreAssign, onCreateStore, editingItemId, onEditingItemChange, commitEditingRef }: GroceryItemRowProps) {
+function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging, stores, onStoreAssign: _onStoreAssign, onCreateStore, editingItemId, onEditingItemChange, commitEditingRef }: GroceryItemRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
   const isEditing = editingItemId === item.id;
   const [editName, setEditName] = useState(item.name);
   const [editQuantity, setEditQuantity] = useState(item.quantity ?? '');
+  const [editStoreId, setEditStoreId] = useState<string | null>(item.store_id);
   const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const swipeModeRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -1192,8 +1193,9 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
     if (item.checked) return;
     setEditName(item.name);
     setEditQuantity(item.quantity ?? '');
+    setEditStoreId(item.store_id);
     onEditingItemChange(item.id);
-  }, [item.id, item.name, item.quantity, item.checked, onEditingItemChange]);
+  }, [item.id, item.name, item.quantity, item.store_id, item.checked, onEditingItemChange]);
 
   const commitEdit = useCallback(() => {
     const trimmedName = editName.trim();
@@ -1202,23 +1204,25 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
       return;
     }
 
-    const updates: { name?: string; quantity?: string | null } = {};
+    const updates: { name?: string; quantity?: string | null; store_id?: string | null } = {};
     if (trimmedName !== item.name) updates.name = trimmedName;
     const qtyNum = parseInt(editQuantity) || 0;
     const newQty = qtyNum > 0 ? String(qtyNum) : null;
     if (newQty !== item.quantity) updates.quantity = newQty;
+    if (editStoreId !== item.store_id) updates.store_id = editStoreId;
 
     if (Object.keys(updates).length > 0) {
       onEdit(item.id, updates);
     }
     onEditingItemChange(null);
-  }, [editName, editQuantity, item.id, item.name, item.quantity, onEdit, onEditingItemChange]);
+  }, [editName, editQuantity, editStoreId, item.id, item.name, item.quantity, item.store_id, onEdit, onEditingItemChange]);
 
   const cancelEdit = useCallback(() => {
     onEditingItemChange(null);
     setEditName(item.name);
     setEditQuantity(item.quantity ?? '');
-  }, [item.name, item.quantity, onEditingItemChange]);
+    setEditStoreId(item.store_id);
+  }, [item.name, item.quantity, item.store_id, onEditingItemChange]);
 
   // Expose commitEdit so parent can call it before switching to another item
   commitEditRef.current = commitEdit;
@@ -1271,8 +1275,8 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
         </div>
         <StoreAutocomplete
           stores={stores}
-          selectedStoreId={item.store_id}
-          onSelect={(storeId) => onStoreAssign(item.id, storeId)}
+          selectedStoreId={editStoreId}
+          onSelect={setEditStoreId}
           onCreate={onCreateStore}
         />
         <div className="flex items-center justify-end gap-3">
