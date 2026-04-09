@@ -574,7 +574,7 @@ function AppContent() {
       getHiddenCalendarEvents().then(async (hidden) => {
         await clearLocalHiddenEvents();
         await saveLocalHiddenEvents(hidden);
-        markCalendarSessionLoaded();
+        markCalendarSessionLoaded(calStartStr, calEndStr);
       }).catch(() => { /* best-effort */ });
 
     }).catch(() => { /* best-effort */ });
