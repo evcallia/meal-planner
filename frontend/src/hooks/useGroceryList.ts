@@ -32,6 +32,19 @@ import { ParsedGrocerySection } from '../utils/groceryParser';
 import { toTitleCase } from '../utils/titleCase';
 import { useIdRemap } from './useIdRemap';
 
+interface GrocerySSEPayload {
+  action: string;
+  sectionId?: string;
+  item?: GroceryItem;
+  itemId?: string;
+  fromSectionId?: string;
+  toSectionId?: string;
+  section?: GrocerySection;
+  sections?: GrocerySection[] | { id: string; position: number }[];
+  items?: { id: string; position: number }[];
+  name?: string;
+}
+
 const GROCERY_STORAGE_KEY = 'meal-planner-grocery';
 
 function saveGroceryToLocalStorage(sections: GrocerySection[]) {
@@ -165,6 +178,107 @@ export function useGroceryList() {
     }
   }, []);
 
+  const applyRealtimeEvent = useCallback((payload: GrocerySSEPayload) => {
+    const { action } = payload;
+    switch (action) {
+      case 'item-added':
+        if (payload.sectionId && payload.item) {
+          setSections(prev => prev.map(s => {
+            if (s.id !== payload.sectionId) return s;
+            if (s.items.some(i => i.id === payload.item!.id)) return s;
+            return { ...s, items: [...s.items, payload.item!] };
+          }));
+        }
+        break;
+      case 'item-updated':
+        if (payload.sectionId && payload.item) {
+          setSections(prev => prev.map(s => {
+            if (s.id !== payload.sectionId) return s;
+            return { ...s, items: s.items.map(i => i.id === payload.item!.id ? payload.item! : i) };
+          }));
+        }
+        break;
+      case 'item-deleted':
+        if (payload.sectionId && payload.itemId) {
+          setSections(prev => prev.map(s => {
+            if (s.id !== payload.sectionId) return s;
+            return { ...s, items: s.items.filter(i => i.id !== payload.itemId) };
+          }));
+        }
+        break;
+      case 'item-moved':
+        if (payload.fromSectionId && payload.toSectionId && payload.item) {
+          setSections(prev => prev.map(s => {
+            if (s.id === payload.fromSectionId) {
+              return { ...s, items: s.items.filter(i => i.id !== payload.item!.id) };
+            }
+            if (s.id === payload.toSectionId) {
+              if (s.items.some(i => i.id === payload.item!.id)) return s;
+              const items = [...s.items, payload.item!].sort((a, b) => a.position - b.position);
+              return { ...s, items };
+            }
+            return s;
+          }));
+        }
+        break;
+      case 'section-added':
+        if (payload.section) {
+          setSections(prev => {
+            if (prev.some(s => s.id === payload.section!.id)) return prev;
+            return [...prev, payload.section!].sort((a, b) => a.position - b.position);
+          });
+        }
+        break;
+      case 'section-renamed':
+        if (payload.sectionId && payload.name) {
+          setSections(prev => prev.map(s =>
+            s.id === payload.sectionId ? { ...s, name: payload.name! } : s
+          ));
+        }
+        break;
+      case 'section-deleted':
+        if (payload.sectionId) {
+          setSections(prev => prev.filter(s => s.id !== payload.sectionId));
+        }
+        break;
+      case 'section-reordered':
+        if (payload.sections) {
+          const posMap = new Map((payload.sections as { id: string; position: number }[]).map(s => [s.id, s.position]));
+          setSections(prev => prev.map(s => {
+            const pos = posMap.get(s.id);
+            return pos !== undefined ? { ...s, position: pos } : s;
+          }).sort((a, b) => a.position - b.position));
+        }
+        break;
+      case 'items-reordered':
+        if (payload.sectionId && payload.items) {
+          const posMap = new Map(payload.items.map(i => [i.id, i.position]));
+          setSections(prev => prev.map(s => {
+            if (s.id !== payload.sectionId) return s;
+            return { ...s, items: s.items.map(i => {
+              const pos = posMap.get(i.id);
+              return pos !== undefined ? { ...i, position: pos } : i;
+            }).sort((a, b) => a.position - b.position) };
+          }));
+        }
+        break;
+      case 'cleared-checked':
+        setSections(prev => {
+          const updated = prev.map(s => ({ ...s, items: s.items.filter(i => !i.checked) }));
+          return updated.filter(s => s.items.length > 0);
+        });
+        break;
+      case 'cleared-all':
+        setSections([]);
+        break;
+      case 'replaced':
+        if (payload.sections) {
+          setSections(payload.sections as GrocerySection[]);
+        }
+        break;
+    }
+  }, []);
+
   // Helper: replace list on server and apply the response (which has new server IDs)
   const replaceAndApply = async (payload: { name: string; items: { name: string; quantity: string | null; checked: boolean; store_id: string | null }[] }[]) => {
     const result = await replaceGroceryListAPI(payload);
@@ -190,12 +304,12 @@ export function useGroceryList() {
           deferredLoadRef.current = true;
           return;
         }
-        loadGroceryList();
+        applyRealtimeEvent(detail.payload as GrocerySSEPayload);
       }
     };
     window.addEventListener('meal-planner-realtime', handler);
     return () => window.removeEventListener('meal-planner-realtime', handler);
-  }, [loadGroceryList]);
+  }, [applyRealtimeEvent]);
 
   // Refetch after offline sync completes to pick up other devices' changes
   useEffect(() => {
