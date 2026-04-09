@@ -6,6 +6,7 @@ import { GrocerySection, Store } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { StoreAutocomplete } from './StoreAutocomplete';
 import { StoreFilterBar } from './StoreFilterBar';
+import { getLocalItemDefaults } from '../db';
 
 export const NONE_STORE_ID = '__none__';
 
@@ -19,6 +20,16 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     grocerySections: sections,
     onItemsStoreChanged: batchUpdateStoreId,
   });
+  // Item defaults cache for offline store auto-populate
+  const itemDefaultsRef = useRef<Map<string, string | null>>(new Map());
+  useEffect(() => {
+    getLocalItemDefaults().then(defaults => {
+      const map = new Map<string, string | null>();
+      for (const d of defaults) map.set(d.item_name, d.store_id);
+      itemDefaultsRef.current = map;
+    }).catch(() => {});
+  }, []);
+
   const [addMode, setAddMode] = useState<'closed' | 'quick' | 'paste'>('closed');
   const [toolbarExpanded, setToolbarExpanded] = useState(() => {
     try { return localStorage.getItem('meal-planner-toolbar-expanded') !== 'false'; } catch { return true; }
@@ -376,11 +387,12 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     const qtyMatch = newItemName.trim().match(/^\((\d+)\)\s+(.+)$/);
     const name = qtyMatch ? qtyMatch[2] : newItemName.trim();
     const qty = qtyMatch ? qtyMatch[1] : undefined;
-    // Auto-populate store from existing items with same name
+    // Auto-populate store: check current list items first, then item defaults cache
+    const nameLower = name.toLowerCase();
     const match = sections.flatMap(s => s.items).find(
-      i => i.name.toLowerCase() === name.toLowerCase() && i.store_id
+      i => i.name.toLowerCase() === nameLower && i.store_id
     );
-    await addItem(sectionId, name, qty, match?.store_id ?? null);
+    await addItem(sectionId, name, qty, match?.store_id ?? itemDefaultsRef.current.get(nameLower) ?? null);
     setNewItemName('');
     setAddingToSection(null);
   }, [newItemName, sections, addItem]);
@@ -565,13 +577,13 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                     onChange={e => {
                       const val = e.target.value;
                       setQuickAddItemName(val);
-                      // Auto-populate store from existing items with same name
+                      // Auto-populate store: check current list items first, then item defaults cache
                       const trimmed = val.trim().toLowerCase();
                       if (trimmed) {
                         const match = sections.flatMap(s => s.items).find(
                           i => i.name.toLowerCase() === trimmed && i.store_id
                         );
-                        setQuickAddStoreId(match?.store_id ?? null);
+                        setQuickAddStoreId(match?.store_id ?? itemDefaultsRef.current.get(trimmed) ?? null);
                       } else {
                         setQuickAddStoreId(null);
                       }

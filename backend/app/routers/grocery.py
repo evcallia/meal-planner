@@ -17,6 +17,7 @@ from app.schemas import (
     GrocerySectionCreate,
     GrocerySectionUpdate,
     GroceryMoveItem,
+    ItemDefaultSchema,
 )
 from app.realtime import broadcast_event
 
@@ -38,6 +39,14 @@ async def list_grocery(
     for section in sections:
         section.items.sort(key=lambda item: (item.checked, item.position if not item.checked else -item.updated_at.timestamp()))
     return sections
+
+
+@router.get("/item-defaults", response_model=list[ItemDefaultSchema])
+async def list_item_defaults(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    return db.query(ItemDefault).filter(ItemDefault.store_id.isnot(None)).all()
 
 
 @router.put("", response_model=list[GrocerySectionSchema])

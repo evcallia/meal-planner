@@ -272,6 +272,15 @@ export async function getGroceryList(): Promise<GrocerySection[]> {
   return fetchAPI<GrocerySection[]>('/grocery');
 }
 
+export interface ItemDefault {
+  item_name: string;
+  store_id: string | null;
+}
+
+export async function getItemDefaults(): Promise<ItemDefault[]> {
+  return fetchAPI<ItemDefault[]>('/grocery/item-defaults');
+}
+
 export async function replaceGroceryList(sections: { name: string; items: { name: string; quantity: string | null; checked?: boolean; store_id?: string | null }[] }[]): Promise<GrocerySection[]> {
   return fetchAPI<GrocerySection[]>('/grocery', {
     method: 'PUT',

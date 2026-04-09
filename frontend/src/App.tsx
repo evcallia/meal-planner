@@ -12,7 +12,7 @@ import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
 import { useRealtime } from './hooks/useRealtime';
 import { useKeyboardOpen } from './hooks/useKeyboardOpen';
-import { getCurrentUser, getLoginUrl, logout, getDays, getEvents, updateNotes, getGroceryList, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents } from './api/client';
+import { getCurrentUser, getLoginUrl, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents } from './api/client';
 import { UserInfo, GrocerySection, GroceryItem, PantrySection, PantryItem, Store, MealIdea } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
@@ -20,7 +20,7 @@ import { resetGrocerySessionLoaded, markGrocerySessionLoaded } from './hooks/use
 import { resetPantrySessionLoaded, markPantrySessionLoaded } from './hooks/usePantry';
 import { resetStoresSessionLoaded, markStoresSessionLoaded } from './hooks/useStores';
 import { resetMealIdeasSessionLoaded, markMealIdeasSessionLoaded } from './hooks/useMealIdeas';
-import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea, saveLocalHiddenEvents, clearLocalHiddenEvents } from './db';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea, saveLocalHiddenEvents, clearLocalHiddenEvents, saveLocalItemDefaults } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'pantry' | 'grocery';
@@ -526,6 +526,10 @@ function AppContent() {
       getStoresAPI().then(async (stores) => {
         await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
         markStoresSessionLoaded();
+      }).catch(() => { /* best-effort */ });
+
+      getItemDefaults().then(async (defaults) => {
+        await saveLocalItemDefaults(defaults.map(d => ({ item_name: d.item_name, store_id: d.store_id })));
       }).catch(() => { /* best-effort */ });
 
       if (!hasPantryChanges) {

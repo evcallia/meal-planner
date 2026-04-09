@@ -215,6 +215,14 @@ class GroceryMoveItem(BaseModel):
     to_position: int
 
 
+class ItemDefaultSchema(BaseModel):
+    item_name: str
+    store_id: UUID | None = None
+
+    class Config:
+        from_attributes = True
+
+
 class StoreSchema(BaseModel):
     id: UUID
     name: str

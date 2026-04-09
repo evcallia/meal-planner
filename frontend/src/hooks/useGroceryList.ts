@@ -25,6 +25,7 @@ import {
   queueChange,
   generateTempId,
   saveTempIdMapping,
+  putLocalItemDefault,
 } from '../db';
 import { useOnlineStatus } from './useOnlineStatus';
 import { useUndo } from '../contexts/UndoContext';
@@ -729,6 +730,10 @@ export function useGroceryList() {
           });
           await deleteLocalGroceryItem(tempId);
         }
+        // Update local item default cache with server's auto-populated store
+        if (created.store_id) {
+          putLocalItemDefault(trimmedName.toLowerCase(), created.store_id).catch(() => {});
+        }
       } catch {
         await queueChange('grocery-add', '', { id: tempId, sectionId, name: trimmedName, quantity, store_id: resolvedStoreId });
       } finally { settleMutation(); }
@@ -1099,10 +1104,20 @@ export function useGroceryList() {
             store_id: serverItem.store_id, updated_at: serverItem.updated_at,
           });
         }
+        // Update local item default when store changes
+        if (updates.store_id !== undefined) {
+          const itemName = (updates.name ?? item.name).trim().toLowerCase();
+          putLocalItemDefault(itemName, updates.store_id).catch(() => {});
+        }
       } catch {
         await queueChange('grocery-edit', '', { id: itemId, ...updates });
       } finally { settleMutation(); }
     } else {
+      // Offline: still update local item default for offline auto-populate
+      if (updates.store_id !== undefined) {
+        const itemName = (updates.name ?? item.name).trim().toLowerCase();
+        putLocalItemDefault(itemName, updates.store_id).catch(() => {});
+      }
       await queueChange('grocery-edit', '', { id: itemId, ...updates });
     }
 
