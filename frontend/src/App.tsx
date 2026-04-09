@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
-import { CalendarView, resetCalendarSessionLoaded } from './components/CalendarView';
+import { CalendarView, resetCalendarSessionLoaded, markCalendarSessionLoaded } from './components/CalendarView';
 import { PantryPanel } from './components/PantryPanel';
 import { MealIdeasPanel } from './components/MealIdeasPanel';
 import { GroceryListView } from './components/GroceryListView';
@@ -12,7 +12,7 @@ import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
 import { useRealtime } from './hooks/useRealtime';
 import { useKeyboardOpen } from './hooks/useKeyboardOpen';
-import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryList, getStores as getStoresAPI, getPantryList, getMealIdeas } from './api/client';
+import { getCurrentUser, getLoginUrl, logout, getDays, getEvents, updateNotes, getGroceryList, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents } from './api/client';
 import { UserInfo, GrocerySection, GroceryItem, PantrySection, PantryItem, Store, MealIdea } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
@@ -20,7 +20,7 @@ import { resetGrocerySessionLoaded, markGrocerySessionLoaded } from './hooks/use
 import { resetPantrySessionLoaded, markPantrySessionLoaded } from './hooks/usePantry';
 import { resetStoresSessionLoaded, markStoresSessionLoaded } from './hooks/useStores';
 import { resetMealIdeasSessionLoaded, markMealIdeasSessionLoaded } from './hooks/useMealIdeas';
-import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea } from './db';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea, saveLocalHiddenEvents, clearLocalHiddenEvents } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'pantry' | 'grocery';
@@ -548,6 +548,35 @@ function AppContent() {
           markMealIdeasSessionLoaded();
         }).catch(() => { /* best-effort */ });
       }
+
+      // Calendar: prefetch days + events for the full range (past 2 weeks, future 8 weeks)
+      // Same range as CalendarView.init() so the cache is warm before the user visits Meals
+      const calStart = new Date(); calStart.setDate(calStart.getDate() - 14);
+      const calEnd = new Date(); calEnd.setDate(calEnd.getDate() + 56);
+      const fmt = (d: Date) => d.toISOString().split('T')[0];
+      const calStartStr = fmt(calStart);
+      const calEndStr = fmt(calEnd);
+
+      getDays(calStartStr, calEndStr).then(async (days) => {
+        for (const d of days) {
+          if (d.meal_note) {
+            saveLocalNote(d.date, d.meal_note.notes, d.meal_note.items);
+          }
+        }
+      }).catch(() => { /* best-effort */ });
+
+      getEvents(calStartStr, calEndStr, true, true).then(async (eventsMap) => {
+        for (const [date, events] of Object.entries(eventsMap)) {
+          try { saveLocalCalendarEvents(date, events); } catch { /* best-effort */ }
+        }
+      }).catch(() => { /* best-effort */ });
+
+      getHiddenCalendarEvents().then(async (hidden) => {
+        await clearLocalHiddenEvents();
+        await saveLocalHiddenEvents(hidden);
+        markCalendarSessionLoaded();
+      }).catch(() => { /* best-effort */ });
+
     }).catch(() => { /* best-effort */ });
   }, []);
 
