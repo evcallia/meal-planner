@@ -63,8 +63,9 @@ function loadPantryFromLocalStorage(): PantrySection[] {
   }
 }
 
-export function resetPantrySessionLoaded() { /* no-op */ }
-export function markPantrySessionLoaded() { /* no-op */ }
+let pantrySessionLoaded = false;
+export function resetPantrySessionLoaded() { pantrySessionLoaded = false; }
+export function markPantrySessionLoaded() { pantrySessionLoaded = true; }
 
 export function usePantry() {
   const [sections, setSections] = useState<PantrySection[]>([]);
@@ -134,7 +135,7 @@ export function usePantry() {
       }
     } catch { /* cache failed — continue to API */ }
 
-    // 2. If online, fetch from API in background
+    // 2. If online, fetch from API
     if (!skipApi && isOnlineRef.current) {
       try {
         const data = await getPantryList();
@@ -147,6 +148,7 @@ export function usePantry() {
           id: i.id, section_id: i.section_id, name: i.name,
           quantity: i.quantity, position: i.position, updated_at: i.updated_at,
         })));
+        pantrySessionLoaded = true;
       } catch { /* API failed — keep cached data */ }
     }
 
@@ -276,7 +278,7 @@ export function usePantry() {
   }, []);
 
   useEffect(() => {
-    loadPantryList();
+    loadPantryList(pantrySessionLoaded);
   }, [loadPantryList]);
 
   // Listen for realtime updates

@@ -68,10 +68,11 @@ function loadGroceryFromLocalStorage(): GrocerySection[] {
 // Track whether the initial API fetch has happened this session.
 // Survives component remounts (tab switches) — subsequent mounts
 // just load from the local cache that SSE keeps warm.
-// Legacy: sessionLoaded is no longer used (hooks always fetch from API),
-// but reset/mark are kept as no-ops for test compatibility.
-export function resetGrocerySessionLoaded() { /* no-op */ }
-export function markGrocerySessionLoaded() { /* no-op */ }
+// Set true after first API fetch or by App.tsx fetchAllData.
+// When true, hook mounts skip API and load from cache only.
+let grocerySessionLoaded = false;
+export function resetGrocerySessionLoaded() { grocerySessionLoaded = false; }
+export function markGrocerySessionLoaded() { grocerySessionLoaded = true; }
 
 export function useGroceryList() {
   const [sections, setSections] = useState<GrocerySection[]>([]);
@@ -131,8 +132,8 @@ export function useGroceryList() {
   const isOnlineRef = useRef(isOnline);
   isOnlineRef.current = isOnline;
 
-  // Load grocery list (cache-first: show cached data immediately, then refresh from API)
-  // skipApi: true to only load from local cache (used on remount when SSE keeps cache warm)
+  // Load grocery list (cache-first: show cached data immediately, fetch API only if cache empty)
+  // skipApi: true to force cache-only (used by deferred load, pending-changes-synced calls it without skipApi to get fresh data)
   const loadGroceryList = useCallback(async (skipApi = false) => {
     const fetchVersion = optimisticVersionRef.current;
 
@@ -146,7 +147,8 @@ export function useGroceryList() {
       }
     } catch { /* cache failed — continue to API */ }
 
-    // 2. If online, fetch from API in background
+    // 2. If online, fetch from API
+    // skipApi=true on mount when sessionLoaded (SSE keeps cache warm, no refetch on tab switch)
     if (!skipApi && isOnlineRef.current) {
       try {
         const data = await getGroceryList();
@@ -165,6 +167,7 @@ export function useGroceryList() {
           store_id: i.store_id,
           updated_at: i.updated_at,
         })));
+        grocerySessionLoaded = true;
       } catch { /* API failed — keep cached data */ }
     }
 
@@ -301,7 +304,7 @@ export function useGroceryList() {
   };
 
   useEffect(() => {
-    loadGroceryList();
+    loadGroceryList(grocerySessionLoaded);
   }, [loadGroceryList]);
 
   // Listen for realtime updates

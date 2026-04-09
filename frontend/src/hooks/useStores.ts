@@ -44,8 +44,9 @@ interface UseStoresOptions {
   onItemsStoreChanged?: (itemIds: string[], storeId: string | null) => void;
 }
 
-export function resetStoresSessionLoaded() { /* no-op */ }
-export function markStoresSessionLoaded() { /* no-op */ }
+let storesSessionLoaded = false;
+export function resetStoresSessionLoaded() { storesSessionLoaded = false; }
+export function markStoresSessionLoaded() { storesSessionLoaded = true; }
 
 export function useStores(options: UseStoresOptions = {}) {
   const { grocerySections, onItemsStoreChanged } = options;
@@ -66,28 +67,25 @@ export function useStores(options: UseStoresOptions = {}) {
 
   const loadStores = useCallback(async (skipApi = false) => {
     const fetchVersion = optimisticVersionRef.current;
-    // Check if we already have data from localStorage init
-    let hasCachedData = loadStoresFromLocalStorage().length > 0;
 
     // 1. Try IndexedDB (may have fresher data than localStorage init)
     try {
       const local = await getLocalStores();
       if (optimisticVersionRef.current !== fetchVersion) return;
       if (local.length > 0) {
-        hasCachedData = true;
         setStores(local);
         setLoading(false);
       }
     } catch { /* IndexedDB failed */ }
 
-    // 2. If online, fetch from API in background
-    // Always fetch if cache is empty (even when sessionLoaded) to handle fresh devices
-    if ((!skipApi || !hasCachedData) && isOnlineRef.current) {
+    // 2. If online, fetch from API
+    if (!skipApi && isOnlineRef.current) {
       try {
         const data = await getStoresAPI();
         if (optimisticVersionRef.current !== fetchVersion) return;
         setStores(data);
         await saveLocalStores(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+        storesSessionLoaded = true;
       } catch { /* API failed — keep cached data */ }
     }
 
@@ -142,7 +140,7 @@ export function useStores(options: UseStoresOptions = {}) {
     }
   }, []);
 
-  useEffect(() => { loadStores(); }, [loadStores]);
+  useEffect(() => { loadStores(storesSessionLoaded); }, [loadStores]);
 
   // Keep localStorage and IndexedDB in sync with stores state for reliable offline access
   useEffect(() => {

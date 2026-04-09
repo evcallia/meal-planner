@@ -16,6 +16,10 @@ import { getCurrentUser, getLoginUrl, logout, getDays, updateNotes, getGroceryLi
 import { UserInfo, GrocerySection, GroceryItem, PantrySection, PantryItem, Store, MealIdea } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
+import { resetGrocerySessionLoaded, markGrocerySessionLoaded } from './hooks/useGroceryList';
+import { resetPantrySessionLoaded, markPantrySessionLoaded } from './hooks/usePantry';
+import { resetStoresSessionLoaded, markStoresSessionLoaded } from './hooks/useStores';
+import { resetMealIdeasSessionLoaded, markMealIdeasSessionLoaded } from './hooks/useMealIdeas';
 import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
@@ -515,11 +519,13 @@ function AppContent() {
             id: i.id, section_id: i.section_id, name: i.name,
             quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
           }))));
+          markGrocerySessionLoaded();
         }).catch(() => { /* best-effort */ });
       }
 
       getStoresAPI().then(async (stores) => {
         await saveLocalStores(stores.map(s => ({ id: s.id, name: s.name, position: s.position })));
+        markStoresSessionLoaded();
       }).catch(() => { /* best-effort */ });
 
       if (!hasPantryChanges) {
@@ -530,6 +536,7 @@ function AppContent() {
             id: i.id, section_id: i.section_id, name: i.name,
             quantity: i.quantity, position: i.position, updated_at: i.updated_at,
           }))));
+          markPantrySessionLoaded();
         }).catch(() => { /* best-effort */ });
       }
 
@@ -538,6 +545,7 @@ function AppContent() {
           await clearLocalMealIdeas();
           for (const idea of ideas) await saveLocalMealIdea(idea);
           try { localStorage.setItem('meal-planner-meal-ideas', JSON.stringify(ideas)); } catch { /* full */ }
+          markMealIdeasSessionLoaded();
         }).catch(() => { /* best-effort */ });
       }
     }).catch(() => { /* best-effort */ });
@@ -893,6 +901,10 @@ function AppContent() {
   // for the active CalendarView.
   const broadcastFullRefresh = useCallback(() => {
     resetCalendarSessionLoaded();
+    resetGrocerySessionLoaded();
+    resetPantrySessionLoaded();
+    resetStoresSessionLoaded();
+    resetMealIdeasSessionLoaded();
     fetchAllData();
     // Calendar needs a synthetic event since CalendarView manages its own fetch
     window.dispatchEvent(new CustomEvent('meal-planner-realtime', {

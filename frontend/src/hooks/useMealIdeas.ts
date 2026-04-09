@@ -48,8 +48,9 @@ function parseStoredIdeas(raw: string | null): MealIdea[] {
   }
 }
 
-export function resetMealIdeasSessionLoaded() { /* no-op */ }
-export function markMealIdeasSessionLoaded() { /* no-op */ }
+let mealIdeasSessionLoaded = false;
+export function resetMealIdeasSessionLoaded() { mealIdeasSessionLoaded = false; }
+export function markMealIdeasSessionLoaded() { mealIdeasSessionLoaded = true; }
 
 export function useMealIdeas() {
   const [ideas, setIdeas] = useState<MealIdea[]>([]);
@@ -127,7 +128,7 @@ export function useMealIdeas() {
       }
     } catch { /* cache failed — continue to API */ }
 
-    // 2. If online, fetch from API in background (skip if pending offline changes exist)
+    // 2. If online, fetch from API
     if (!skipApi && isOnlineRef.current) {
       const pending = await getPendingChanges();
       const hasMealIdeaChanges = pending.some(c => c.type.startsWith('meal-idea-'));
@@ -166,6 +167,7 @@ export function useMealIdeas() {
               }
             }
           }
+          mealIdeasSessionLoaded = true;
         } catch { /* API failed — keep cached data */ }
       }
     }
@@ -184,7 +186,7 @@ export function useMealIdeas() {
   }, []);
 
   useEffect(() => {
-    refreshIdeas();
+    refreshIdeas(mealIdeasSessionLoaded);
   }, [refreshIdeas]);
 
   const applyRealtimeEvent = useCallback((payload: MealIdeasSSEPayload) => {
