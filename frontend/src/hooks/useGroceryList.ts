@@ -179,6 +179,10 @@ export function useGroceryList() {
   }, []);
 
   const applyRealtimeEvent = useCallback((payload: GrocerySSEPayload) => {
+    if (!payload?.action) {
+      loadGroceryListRef.current();
+      return;
+    }
     const { action } = payload;
     switch (action) {
       case 'item-added':

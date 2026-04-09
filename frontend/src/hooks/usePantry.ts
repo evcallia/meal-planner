@@ -172,6 +172,10 @@ export function usePantry() {
   };
 
   const applyRealtimeEvent = useCallback((payload: PantrySSEPayload) => {
+    if (!payload?.action) {
+      loadPantryListRef.current();
+      return;
+    }
     const { action } = payload;
     switch (action) {
       case 'item-added':

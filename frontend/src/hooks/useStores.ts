@@ -106,6 +106,10 @@ export function useStores(options: UseStoresOptions = {}) {
   }, []);
 
   const applyRealtimeEvent = useCallback((payload: StoresSSEPayload) => {
+    if (!payload?.action) {
+      loadStoresRef.current();
+      return;
+    }
     const { action } = payload;
     switch (action) {
       case 'added':

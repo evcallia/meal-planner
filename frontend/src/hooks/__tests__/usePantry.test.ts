@@ -152,6 +152,88 @@ describe('usePantry', () => {
     });
   });
 
+  describe('SSE apply logic', () => {
+    it('applies item-added from SSE', async () => {
+      mockGetPantryList.mockResolvedValueOnce([
+        { id: 's1', name: 'Fridge', position: 0, items: [] },
+      ]);
+
+      const { result } = renderHook(() => usePantry());
+      await waitFor(() => expect(result.current.sections).toHaveLength(1));
+
+      const callsBefore = mockGetPantryList.mock.calls.length;
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'pantry.updated',
+            payload: {
+              action: 'item-added',
+              sectionId: 's1',
+              item: { id: 'p-new', section_id: 's1', name: 'Yogurt', quantity: 2, position: 0, updated_at: '2026-02-03T10:00:00Z' },
+            },
+          },
+        }));
+      });
+
+      const section = result.current.sections.find(s => s.id === 's1')!;
+      expect(section.items.some(i => i.id === 'p-new')).toBe(true);
+      expect(mockGetPantryList.mock.calls.length).toBe(callsBefore);
+    });
+
+    it('applies item-deleted from SSE', async () => {
+      mockGetPantryList.mockResolvedValueOnce([
+        {
+          id: 's1', name: 'Fridge', position: 0,
+          items: [
+            { id: 'p1', section_id: 's1', name: 'Milk', quantity: 1, position: 0, updated_at: '2026-02-03T10:00:00Z' },
+          ],
+        },
+      ]);
+
+      const { result } = renderHook(() => usePantry());
+      await waitFor(() => expect(result.current.sections[0]?.items).toHaveLength(1));
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'pantry.updated',
+            payload: { action: 'item-deleted', sectionId: 's1', itemId: 'p1' },
+          },
+        }));
+      });
+
+      const section = result.current.sections.find(s => s.id === 's1')!;
+      expect(section.items.some(i => i.id === 'p1')).toBe(false);
+      expect(section.items).toHaveLength(0);
+    });
+
+    it('applies cleared-all from SSE', async () => {
+      mockGetPantryList.mockResolvedValueOnce([
+        {
+          id: 's1', name: 'Fridge', position: 0,
+          items: [
+            { id: 'p1', section_id: 's1', name: 'Milk', quantity: 1, position: 0, updated_at: '2026-02-03T10:00:00Z' },
+          ],
+        },
+      ]);
+
+      const { result } = renderHook(() => usePantry());
+      await waitFor(() => expect(result.current.sections).toHaveLength(1));
+
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+          detail: {
+            type: 'pantry.updated',
+            payload: { action: 'cleared-all' },
+          },
+        }));
+      });
+
+      expect(result.current.sections).toEqual([]);
+    });
+  });
+
   it('refreshes when a realtime pantry update arrives', async () => {
     let callCount = 0;
     mockGetPantryList.mockImplementation(() => {

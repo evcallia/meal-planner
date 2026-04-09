@@ -184,6 +184,10 @@ export function useMealIdeas() {
   }, [refreshIdeas]);
 
   const applyRealtimeEvent = useCallback((payload: MealIdeasSSEPayload) => {
+    if (!payload?.action) {
+      refreshIdeasRef.current();
+      return;
+    }
     const { action } = payload;
     switch (action) {
       case 'added':
