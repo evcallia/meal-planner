@@ -21,20 +21,33 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     onItemsStoreChanged: batchUpdateStoreId,
   });
   // Item defaults cache for offline store auto-populate
-  const [itemDefaultsMap, setItemDefaultsMap] = useState<Map<string, string | null>>(new Map());
+  // Base layer: IDB item_defaults table (covers items no longer in the list)
+  const [idbDefaults, setIdbDefaults] = useState<Map<string, string | null>>(new Map());
   useEffect(() => {
     const load = () => {
       getLocalItemDefaults().then(defaults => {
         const map = new Map<string, string | null>();
         for (const d of defaults) map.set(d.item_name, d.store_id);
-        setItemDefaultsMap(map);
+        setIdbDefaults(map);
       }).catch(() => {});
     };
     load();
-    // Reload when fetchAllData finishes (it dispatches pending-changes-synced or visibility change)
     window.addEventListener('pending-changes-synced', load);
     return () => window.removeEventListener('pending-changes-synced', load);
   }, []);
+
+  // Merged map: IDB defaults + current list items (list items take priority)
+  const itemDefaultsMap = useMemo(() => {
+    const map = new Map(idbDefaults);
+    for (const section of sections) {
+      for (const item of section.items) {
+        if (item.store_id) {
+          map.set(item.name.toLowerCase(), item.store_id);
+        }
+      }
+    }
+    return map;
+  }, [idbDefaults, sections]);
 
   const [addMode, setAddMode] = useState<'closed' | 'quick' | 'paste'>('closed');
   const [toolbarExpanded, setToolbarExpanded] = useState(() => {
