@@ -21,6 +21,12 @@ interface MealIdeaInput {
   title: string;
 }
 
+interface MealIdeasSSEPayload {
+  action: string;
+  idea?: MealIdea;
+  ideaId?: string;
+}
+
 const STORAGE_KEY = 'meal-planner-meal-ideas';
 function parseStoredIdeas(raw: string | null): MealIdea[] {
   if (!raw) return [];
@@ -177,14 +183,38 @@ export function useMealIdeas() {
     refreshIdeas();
   }, [refreshIdeas]);
 
+  const applyRealtimeEvent = useCallback((payload: MealIdeasSSEPayload) => {
+    const { action } = payload;
+    switch (action) {
+      case 'added':
+        if (payload.idea) {
+          setIdeas(prev => {
+            if (prev.some(i => i.id === payload.idea!.id)) return prev;
+            return [payload.idea!, ...prev];
+          });
+        }
+        break;
+      case 'updated':
+        if (payload.idea) {
+          setIdeas(prev => prev.map(i => i.id === payload.idea!.id ? payload.idea! : i));
+        }
+        break;
+      case 'deleted':
+        if (payload.ideaId) {
+          setIdeas(prev => prev.filter(i => i.id !== payload.ideaId));
+        }
+        break;
+    }
+  }, []);
+
   useEffect(() => {
     const handleRealtime = (event: Event) => {
-      const detail = (event as CustomEvent).detail as { type?: string } | undefined;
+      const detail = (event as CustomEvent).detail as { type?: string; payload?: unknown } | undefined;
       if (detail?.type === 'meal-ideas.updated') {
         if (pendingMutationsRef.current > 0) {
           deferredLoadRef.current = true;
         } else {
-          refreshIdeas();
+          applyRealtimeEvent(detail.payload as MealIdeasSSEPayload);
         }
       }
     };
@@ -192,7 +222,7 @@ export function useMealIdeas() {
     return () => {
       window.removeEventListener('meal-planner-realtime', handleRealtime as EventListener);
     };
-  }, [refreshIdeas]);
+  }, [applyRealtimeEvent]);
 
   // Refetch after offline sync completes to pick up other devices' changes
   useEffect(() => {
