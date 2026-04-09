@@ -214,19 +214,19 @@ export function PantryPanel() {
                 </svg>
               </button>
               {showClearMenu && (
-                <div className="absolute right-0 top-full mt-1 glass-menu rounded-lg py-1 z-20 min-w-[180px]">
+                <div className="absolute right-0 top-full mt-1 glass-menu rounded-lg py-1 z-20 flex flex-col">
                   {sections.length > 1 && (
                     collapsedSections.size > 0 ? (
                       <button
                         onClick={() => { setCollapsedSections(new Set()); try { localStorage.setItem('meal-planner-pantry-collapsed', '[]'); } catch {} setShowClearMenu(false); }}
-                        className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors whitespace-nowrap"
                       >
                         Expand all sections
                       </button>
                     ) : (
                       <button
                         onClick={() => { const all = new Set(sections.map(s => s.name)); setCollapsedSections(all); try { localStorage.setItem('meal-planner-pantry-collapsed', JSON.stringify([...all])); } catch {} setShowClearMenu(false); }}
-                        className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors whitespace-nowrap"
                       >
                         Collapse all sections
                       </button>
@@ -234,7 +234,7 @@ export function PantryPanel() {
                   )}
                   <button
                     onClick={handleClearAll}
-                    className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                    className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors whitespace-nowrap"
                   >
                     Clear all items
                   </button>
