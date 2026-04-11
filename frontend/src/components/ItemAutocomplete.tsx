@@ -13,6 +13,7 @@ interface ItemAutocompleteProps {
   className?: string;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   autoFocus?: boolean;
+  testId?: string;
 }
 
 export function ItemAutocomplete({
@@ -27,6 +28,7 @@ export function ItemAutocomplete({
   className,
   onKeyDown: externalOnKeyDown,
   autoFocus,
+  testId,
 }: ItemAutocompleteProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
@@ -124,6 +126,7 @@ export function ItemAutocomplete({
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         autoFocus={autoFocus}
+        data-testid={testId}
         className={className ?? "flex-1 min-w-0 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"}
       />
       {isOpen && filtered.length > 0 && (

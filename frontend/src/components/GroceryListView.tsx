@@ -6,7 +6,9 @@ import { GrocerySection, Store } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { StoreAutocomplete } from './StoreAutocomplete';
 import { StoreFilterBar } from './StoreFilterBar';
-import { getLocalItemDefaults } from '../db';
+import { ItemAutocomplete } from './ItemAutocomplete';
+import { getLocalItemDefaults, deleteLocalItemDefault } from '../db';
+import { deleteItemDefault } from '../api/client';
 
 export const NONE_STORE_ID = '__none__';
 
@@ -48,6 +50,26 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     }
     return map;
   }, [idbDefaults, sections]);
+
+  const currentListItemNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const section of sections) {
+      for (const item of section.items) {
+        names.add(item.name.toLowerCase());
+      }
+    }
+    return names;
+  }, [sections]);
+
+  const handleDeleteItemDefault = useCallback(async (itemName: string) => {
+    await deleteLocalItemDefault(itemName);
+    setIdbDefaults(prev => {
+      const next = new Map(prev);
+      next.delete(itemName);
+      return next;
+    });
+    deleteItemDefault(itemName).catch(() => {});
+  }, []);
 
   const [addMode, setAddMode] = useState<'closed' | 'quick' | 'paste'>('closed');
   const [toolbarExpanded, setToolbarExpanded] = useState(() => {
@@ -588,15 +610,11 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
 
                 {/* Item + Qty row */}
                 <div className="flex items-center gap-2 mb-2">
-                  <input
-                    ref={quickAddItemRef}
-                    data-testid="quick-add-item"
-                    type="text"
+                  <ItemAutocomplete
                     value={quickAddItemName}
-                    onChange={e => {
-                      const val = e.target.value;
+                    testId="quick-add-item"
+                    onChange={val => {
                       setQuickAddItemName(val);
-                      // Auto-populate store: check current list items first, then item defaults cache
                       const trimmed = val.trim().toLowerCase();
                       if (trimmed) {
                         const match = sections.flatMap(s => s.items).find(
@@ -607,6 +625,19 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                         setQuickAddStoreId(null);
                       }
                     }}
+                    onSelect={displayName => {
+                      setQuickAddItemName(displayName);
+                      const trimmed = displayName.trim().toLowerCase();
+                      const match = sections.flatMap(s => s.items).find(
+                        i => i.name.toLowerCase() === trimmed && i.store_id
+                      );
+                      setQuickAddStoreId(match?.store_id ?? itemDefaultsMap.get(trimmed) ?? null);
+                    }}
+                    items={itemDefaultsMap}
+                    currentListItemNames={currentListItemNames}
+                    onDelete={handleDeleteItemDefault}
+                    inputRef={quickAddItemRef}
+                    placeholder="Item name..."
                     onKeyDown={e => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
@@ -616,7 +647,6 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                         resetQuickAdd();
                       }
                     }}
-                    placeholder="Item name..."
                     className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <div className="flex items-center gap-1 flex-shrink-0">
@@ -903,6 +933,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 editingItemId={editingItemId}
                 onEditingItemChange={handleEditingItemChange}
                 commitEditingRef={commitEditingRef}
+                itemDefaultsMap={itemDefaultsMap}
+                currentListItemNames={currentListItemNames}
+                onDeleteItemDefault={handleDeleteItemDefault}
               />
             </div>
           );
@@ -966,6 +999,9 @@ interface SectionCardProps {
   editingItemId: string | null;
   onEditingItemChange: (id: string | null) => void;
   commitEditingRef: React.MutableRefObject<(() => void) | null>;
+  itemDefaultsMap: Map<string, string | null>;
+  currentListItemNames: Set<string>;
+  onDeleteItemDefault: (itemName: string) => void;
 }
 
 function SectionCard({
@@ -995,6 +1031,9 @@ function SectionCard({
   editingItemId,
   onEditingItemChange,
   commitEditingRef,
+  itemDefaultsMap,
+  currentListItemNames,
+  onDeleteItemDefault,
 }: SectionCardProps) {
   const uncheckedItems = section.items.filter(i => !i.checked);
   const itemContainerRef = useRef<HTMLDivElement>(null);
@@ -1129,16 +1168,21 @@ function SectionCard({
           {/* Add item inline */}
           {addingToSection === section.id ? (
             <div className="flex items-center gap-2 px-4 py-2">
-              <input
-                type="text"
+              <ItemAutocomplete
                 value={newItemName}
-                onChange={e => onNewItemNameChange(e.target.value)}
+                onChange={name => onNewItemNameChange(name)}
+                onSelect={displayName => {
+                  onNewItemNameChange(displayName);
+                }}
+                items={itemDefaultsMap}
+                currentListItemNames={currentListItemNames}
+                onDelete={onDeleteItemDefault}
+                placeholder="Item name..."
+                autoFocus
                 onKeyDown={e => {
                   if (e.key === 'Enter') onAddItem(section.id);
                   if (e.key === 'Escape') onStartAdd(null);
                 }}
-                placeholder="Item name..."
-                autoFocus
                 className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500 text-sm py-1"
               />
               <button
