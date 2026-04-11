@@ -45,7 +45,7 @@ describe('ItemAutocomplete', () => {
   });
 
   it('shows delete button only for items not on the current list', () => {
-    renderAutocomplete({ value: '' });
+    renderAutocomplete({ value: 's' });
     const input = screen.getByPlaceholderText('Item name...');
     fireEvent.focus(input);
 

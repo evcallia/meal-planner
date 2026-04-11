@@ -55,24 +55,33 @@ export function ItemAutocomplete({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const elevatedAncestorRef = useRef<HTMLElement | null>(null);
+  const elevatedAncestorsRef = useRef<HTMLElement[]>([]);
 
   const elevateAncestor = useCallback(() => {
-    const el = containerRef.current?.closest('.glass');
-    if (el instanceof HTMLElement) {
-      el.style.zIndex = '20';
-      el.style.position = 'relative';
-      elevatedAncestorRef.current = el;
+    const ancestors: HTMLElement[] = [];
+    // Elevate .glass card for dropdown visibility
+    const glass = containerRef.current?.closest('.glass');
+    if (glass instanceof HTMLElement) {
+      glass.style.zIndex = '20';
+      glass.style.position = 'relative';
+      ancestors.push(glass);
     }
+    // Elevate [data-section-id] wrapper — its transform creates a stacking context
+    const sectionWrapper = containerRef.current?.closest('[data-section-id]');
+    if (sectionWrapper instanceof HTMLElement) {
+      sectionWrapper.style.zIndex = '20';
+      sectionWrapper.style.position = 'relative';
+      ancestors.push(sectionWrapper);
+    }
+    elevatedAncestorsRef.current = ancestors;
   }, []);
 
   const restoreAncestor = useCallback(() => {
-    const el = elevatedAncestorRef.current;
-    if (el) {
+    for (const el of elevatedAncestorsRef.current) {
       el.style.zIndex = '';
       el.style.position = '';
-      elevatedAncestorRef.current = null;
     }
+    elevatedAncestorsRef.current = [];
   }, []);
 
   const open = useCallback(() => {
@@ -122,7 +131,7 @@ export function ItemAutocomplete({
         type="text"
         value={value}
         onChange={e => { onChange(e.target.value); open(); }}
-        onFocus={() => open()}
+        onFocus={() => { if (value.trim()) open(); }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         autoFocus={autoFocus}
