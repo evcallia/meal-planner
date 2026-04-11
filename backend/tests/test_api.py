@@ -887,6 +887,26 @@ class TestGroceryStoreDefaults:
         assert default.store_id is None
 
 
+class TestItemDefaultsAPI:
+    """Test the item-defaults API endpoints."""
+
+    def test_delete_item_default(self, authenticated_client, db_session):
+        """DELETE /api/grocery/item-defaults/{item_name} removes the default."""
+        from app.models import ItemDefault
+        d = ItemDefault(item_name="sweet potato", store_id=None)
+        db_session.add(d)
+        db_session.commit()
+
+        resp = authenticated_client.delete("/api/grocery/item-defaults/sweet%20potato")
+        assert resp.status_code == 204
+
+        assert db_session.query(ItemDefault).filter_by(item_name="sweet potato").first() is None
+
+    def test_delete_item_default_idempotent(self, authenticated_client):
+        """DELETE returns 204 even when item doesn't exist."""
+        resp = authenticated_client.delete("/api/grocery/item-defaults/nonexistent")
+        assert resp.status_code == 204
+
 class TestSettingsAPI:
     def test_get_settings_empty(self, authenticated_client: TestClient):
         """GET /api/settings returns empty when no settings saved."""

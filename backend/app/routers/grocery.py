@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user
@@ -47,6 +48,18 @@ async def list_item_defaults(
     user: dict = Depends(get_current_user),
 ):
     return db.query(ItemDefault).filter(ItemDefault.store_id.isnot(None)).all()
+
+
+@router.delete("/item-defaults/{item_name}", status_code=204)
+async def delete_item_default(
+    item_name: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    db.query(ItemDefault).filter(
+        func.lower(ItemDefault.item_name) == item_name.lower()
+    ).delete(synchronize_session=False)
+    db.commit()
 
 
 @router.put("", response_model=list[GrocerySectionSchema])
