@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
@@ -59,6 +60,28 @@ async def delete_item_default(
     db.query(ItemDefault).filter(
         func.lower(ItemDefault.item_name) == item_name.lower()
     ).delete(synchronize_session=False)
+    db.commit()
+
+
+class ItemDefaultUpsert(BaseModel):
+    store_id: str | None = None
+
+
+@router.put("/item-defaults/{item_name}", status_code=204)
+async def upsert_item_default(
+    item_name: str,
+    payload: ItemDefaultUpsert,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    store_id = UUID(payload.store_id) if payload.store_id else None
+    existing = db.query(ItemDefault).filter(
+        func.lower(ItemDefault.item_name) == item_name.lower()
+    ).first()
+    if existing:
+        existing.store_id = store_id
+    else:
+        db.add(ItemDefault(item_name=item_name.lower(), store_id=store_id))
     db.commit()
 
 
