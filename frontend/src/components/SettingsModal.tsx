@@ -82,6 +82,8 @@ const typeLabels: Record<ChangeType, string> = {
   'store-rename': 'Rename store',
   'store-delete': 'Delete store',
   'store-reorder': 'Reorder stores',
+  'item-default-delete': 'Delete item default',
+  'item-default-put': 'Restore item default',
 };
 
 async function enrichPendingChanges(changes: PendingChange[]): Promise<EnrichedPendingChange[]> {

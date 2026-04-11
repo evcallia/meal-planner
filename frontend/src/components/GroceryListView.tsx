@@ -7,8 +7,6 @@ import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { StoreAutocomplete } from './StoreAutocomplete';
 import { StoreFilterBar } from './StoreFilterBar';
 import { ItemAutocomplete } from './ItemAutocomplete';
-import { getLocalItemDefaults, deleteLocalItemDefault } from '../db';
-import { deleteItemDefault } from '../api/client';
 
 export const NONE_STORE_ID = '__none__';
 
@@ -17,39 +15,11 @@ interface GroceryListViewProps {
 }
 
 export function GroceryListView({ compactView: _compactView }: GroceryListViewProps) {
-  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, moveItem, batchUpdateStoreId } = useGroceryList();
+  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, moveItem, batchUpdateStoreId, itemDefaultsMap, removeItemDefault } = useGroceryList();
   const { stores, createStore, renameStore, removeStore, reorderStores } = useStores({
     grocerySections: sections,
     onItemsStoreChanged: batchUpdateStoreId,
   });
-  // Item defaults cache for offline store auto-populate
-  // Base layer: IDB item_defaults table (covers items no longer in the list)
-  const [idbDefaults, setIdbDefaults] = useState<Map<string, string | null>>(new Map());
-  useEffect(() => {
-    const load = () => {
-      getLocalItemDefaults().then(defaults => {
-        const map = new Map<string, string | null>();
-        for (const d of defaults) map.set(d.item_name, d.store_id);
-        setIdbDefaults(map);
-      }).catch(() => {});
-    };
-    load();
-    window.addEventListener('pending-changes-synced', load);
-    return () => window.removeEventListener('pending-changes-synced', load);
-  }, []);
-
-  // Merged map: IDB defaults + current list items (list items take priority)
-  const itemDefaultsMap = useMemo(() => {
-    const map = new Map(idbDefaults);
-    for (const section of sections) {
-      for (const item of section.items) {
-        if (item.store_id) {
-          map.set(item.name.toLowerCase(), item.store_id);
-        }
-      }
-    }
-    return map;
-  }, [idbDefaults, sections]);
 
   const currentListItemNames = useMemo(() => {
     const names = new Set<string>();
@@ -60,16 +30,6 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     }
     return names;
   }, [sections]);
-
-  const handleDeleteItemDefault = useCallback(async (itemName: string) => {
-    await deleteLocalItemDefault(itemName);
-    setIdbDefaults(prev => {
-      const next = new Map(prev);
-      next.delete(itemName);
-      return next;
-    });
-    deleteItemDefault(itemName).catch(() => {});
-  }, []);
 
   const [addMode, setAddMode] = useState<'closed' | 'quick' | 'paste'>('closed');
   const [toolbarExpanded, setToolbarExpanded] = useState(() => {
@@ -635,7 +595,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                     }}
                     items={itemDefaultsMap}
                     currentListItemNames={currentListItemNames}
-                    onDelete={handleDeleteItemDefault}
+                    onDelete={removeItemDefault}
                     inputRef={quickAddItemRef}
                     placeholder="Item name..."
                     onKeyDown={e => {
@@ -935,7 +895,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 commitEditingRef={commitEditingRef}
                 itemDefaultsMap={itemDefaultsMap}
                 currentListItemNames={currentListItemNames}
-                onDeleteItemDefault={handleDeleteItemDefault}
+                onDeleteItemDefault={removeItemDefault}
               />
             </div>
           );

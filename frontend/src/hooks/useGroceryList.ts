@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { GrocerySection, GroceryItem } from '../types';
 import {
   getGroceryList,
@@ -14,6 +14,8 @@ import {
   moveGroceryItem as moveGroceryItemAPI,
   deleteGrocerySection as deleteGrocerySectionAPI,
   createGrocerySection as createGrocerySectionAPI,
+  deleteItemDefault as deleteItemDefaultAPI,
+  putItemDefault as putItemDefaultAPI,
 } from '../api/client';
 import {
   saveLocalGrocerySections,
@@ -26,6 +28,8 @@ import {
   generateTempId,
   saveTempIdMapping,
   putLocalItemDefault,
+  deleteLocalItemDefault,
+  getLocalItemDefaults,
 } from '../db';
 import { useOnlineStatus } from './useOnlineStatus';
 import { useUndo } from '../contexts/UndoContext';
@@ -80,6 +84,34 @@ export function useGroceryList() {
   const [loading, setLoading] = useState(true);
   const isOnline = useOnlineStatus();
   const { pushAction } = useUndo();
+
+  // Item defaults cache for offline store auto-populate
+  const [idbDefaults, setIdbDefaults] = useState<Map<string, string | null>>(new Map());
+  useEffect(() => {
+    const load = () => {
+      getLocalItemDefaults().then(defaults => {
+        const map = new Map<string, string | null>();
+        for (const d of defaults) map.set(d.item_name, d.store_id);
+        setIdbDefaults(map);
+      }).catch(() => {});
+    };
+    load();
+    window.addEventListener('pending-changes-synced', load);
+    return () => window.removeEventListener('pending-changes-synced', load);
+  }, []);
+
+  // Merged map: IDB defaults + current list items (list items take priority)
+  const itemDefaultsMap = useMemo(() => {
+    const map = new Map(idbDefaults);
+    for (const section of sections) {
+      for (const item of section.items) {
+        if (item.store_id) {
+          map.set(item.name.toLowerCase(), item.store_id);
+        }
+      }
+    }
+    return map;
+  }, [idbDefaults, sections]);
 
   // Broadcast unchecked item count for the bottom nav badge
   // and keep localStorage and IndexedDB in sync for reliable offline access
@@ -1749,5 +1781,62 @@ export function useGroceryList() {
     })));
   }, []);
 
-  return { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, moveItem, batchUpdateStoreId };
+  // Delete an item default from cache (with undo/redo + offline queue)
+  const removeItemDefault = useCallback(async (itemName: string) => {
+    const prevStoreId = idbDefaults.get(itemName) ?? null;
+
+    pushAction({
+      type: 'delete-item-default',
+      undo: async () => {
+        // Restore to local state + IDB
+        setIdbDefaults(prev => {
+          const next = new Map(prev);
+          next.set(itemName, prevStoreId);
+          return next;
+        });
+        await putLocalItemDefault(itemName, prevStoreId);
+        if (isOnlineRef.current) {
+          try { await putItemDefaultAPI(itemName, prevStoreId); } catch {
+            await queueChange('item-default-put', '', { itemName, storeId: prevStoreId });
+          }
+        } else {
+          await queueChange('item-default-put', '', { itemName, storeId: prevStoreId });
+        }
+      },
+      redo: async () => {
+        // Delete again
+        setIdbDefaults(prev => {
+          const next = new Map(prev);
+          next.delete(itemName);
+          return next;
+        });
+        await deleteLocalItemDefault(itemName);
+        if (isOnlineRef.current) {
+          try { await deleteItemDefaultAPI(itemName); } catch {
+            await queueChange('item-default-delete', '', { itemName });
+          }
+        } else {
+          await queueChange('item-default-delete', '', { itemName });
+        }
+      },
+    });
+
+    // Optimistic delete
+    setIdbDefaults(prev => {
+      const next = new Map(prev);
+      next.delete(itemName);
+      return next;
+    });
+    await deleteLocalItemDefault(itemName);
+
+    if (isOnline) {
+      try { await deleteItemDefaultAPI(itemName); } catch {
+        await queueChange('item-default-delete', '', { itemName });
+      }
+    } else {
+      await queueChange('item-default-delete', '', { itemName });
+    }
+  }, [idbDefaults, isOnline, pushAction]);
+
+  return { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, moveItem, batchUpdateStoreId, itemDefaultsMap, removeItemDefault };
 }

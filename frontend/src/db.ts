@@ -41,7 +41,9 @@ export type ChangeType =
   | 'store-create'
   | 'store-rename'
   | 'store-delete'
-  | 'store-reorder';
+  | 'store-reorder'
+  | 'item-default-delete'
+  | 'item-default-put';
 
 export interface PendingChange {
   id?: number;
