@@ -553,3 +553,7 @@ export async function getLocalItemDefaults(): Promise<LocalItemDefault[]> {
 export async function putLocalItemDefault(itemName: string, storeId: string | null) {
   await db.itemDefaults.put({ item_name: itemName, store_id: storeId });
 }
+
+export async function deleteLocalItemDefault(itemName: string) {
+  await db.itemDefaults.delete(itemName);
+}

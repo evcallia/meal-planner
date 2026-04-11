@@ -281,6 +281,12 @@ export async function getItemDefaults(): Promise<ItemDefault[]> {
   return fetchAPI<ItemDefault[]>('/grocery/item-defaults');
 }
 
+export async function deleteItemDefault(itemName: string): Promise<void> {
+  await fetchAPI(`/grocery/item-defaults/${encodeURIComponent(itemName)}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function replaceGroceryList(sections: { name: string; items: { name: string; quantity: string | null; checked?: boolean; store_id?: string | null }[] }[]): Promise<GrocerySection[]> {
   return fetchAPI<GrocerySection[]>('/grocery', {
     method: 'PUT',
