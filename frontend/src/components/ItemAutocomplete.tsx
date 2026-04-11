@@ -33,7 +33,7 @@ export function ItemAutocomplete({
   const [isOpen, setIsOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const internalRef = useRef<HTMLInputElement>(null);
-  const ref = externalRef ?? internalRef;
+  const ref = (externalRef ?? internalRef) as React.RefObject<HTMLInputElement>;
   const containerRef = useRef<HTMLDivElement>(null);
 
   const query = value.toLowerCase();
