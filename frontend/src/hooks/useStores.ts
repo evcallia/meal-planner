@@ -48,13 +48,14 @@ let storesSessionLoaded = false;
 export function resetStoresSessionLoaded() { storesSessionLoaded = false; }
 export function markStoresSessionLoaded() { storesSessionLoaded = true; }
 
+let _liveStoresDispatch: React.Dispatch<React.SetStateAction<Store[]>> | null = null;
+
 export function useStores(options: UseStoresOptions = {}) {
   const { grocerySections, onItemsStoreChanged } = options;
   const [stores, _setStores] = useState<Store[]>(() => loadStoresFromLocalStorage());
-  const setStoresRef = useRef(_setStores);
-  setStoresRef.current = _setStores;
+  _liveStoresDispatch = _setStores;
   const setStores = useCallback<typeof _setStores>(
-    (action) => setStoresRef.current(action), []
+    (action) => _liveStoresDispatch?.(action), []
   );
   const [loading, setLoading] = useState(() => loadStoresFromLocalStorage().length === 0);
   const isOnline = useOnlineStatus();

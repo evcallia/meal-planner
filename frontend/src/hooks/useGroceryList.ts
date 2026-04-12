@@ -79,13 +79,16 @@ let grocerySessionLoaded = false;
 export function resetGrocerySessionLoaded() { grocerySessionLoaded = false; }
 export function markGrocerySessionLoaded() { grocerySessionLoaded = true; }
 
+// Module-level setter refs — survive across unmount/remount so undo closures
+// from a previous mount can update the current mount's state
+let _liveSectionsDispatch: React.Dispatch<React.SetStateAction<GrocerySection[]>> | null = null;
+let _liveIdbDefaultsDispatch: React.Dispatch<React.SetStateAction<Map<string, string | null>>> | null = null;
+
 export function useGroceryList() {
   const [sections, _setSections] = useState<GrocerySection[]>([]);
-  // Ref-backed setter so undo/redo closures from previous mounts still work
-  const setSectionsRef = useRef(_setSections);
-  setSectionsRef.current = _setSections;
+  _liveSectionsDispatch = _setSections;
   const setSections = useCallback<typeof _setSections>(
-    (action) => setSectionsRef.current(action), []
+    (action) => _liveSectionsDispatch?.(action), []
   );
   const [loading, setLoading] = useState(true);
   const isOnline = useOnlineStatus();
@@ -93,10 +96,9 @@ export function useGroceryList() {
 
   // Item defaults cache for offline store auto-populate
   const [idbDefaults, _setIdbDefaults] = useState<Map<string, string | null>>(new Map());
-  const setIdbDefaultsRef = useRef(_setIdbDefaults);
-  setIdbDefaultsRef.current = _setIdbDefaults;
+  _liveIdbDefaultsDispatch = _setIdbDefaults;
   const setIdbDefaults = useCallback<typeof _setIdbDefaults>(
-    (action) => setIdbDefaultsRef.current(action), []
+    (action) => _liveIdbDefaultsDispatch?.(action), []
   );
   useEffect(() => {
     const load = () => {

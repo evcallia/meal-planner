@@ -52,12 +52,13 @@ let mealIdeasSessionLoaded = false;
 export function resetMealIdeasSessionLoaded() { mealIdeasSessionLoaded = false; }
 export function markMealIdeasSessionLoaded() { mealIdeasSessionLoaded = true; }
 
+let _liveIdeasDispatch: React.Dispatch<React.SetStateAction<MealIdea[]>> | null = null;
+
 export function useMealIdeas() {
   const [ideas, _setIdeas] = useState<MealIdea[]>([]);
-  const setIdeasRef = useRef(_setIdeas);
-  setIdeasRef.current = _setIdeas;
+  _liveIdeasDispatch = _setIdeas;
   const setIdeas = useCallback<typeof _setIdeas>(
-    (action) => setIdeasRef.current(action), []
+    (action) => _liveIdeasDispatch?.(action), []
   );
   const isMountedRef = useRef(true);
   const updateTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});

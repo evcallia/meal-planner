@@ -67,12 +67,13 @@ let pantrySessionLoaded = false;
 export function resetPantrySessionLoaded() { pantrySessionLoaded = false; }
 export function markPantrySessionLoaded() { pantrySessionLoaded = true; }
 
+let _livePantrySectionsDispatch: React.Dispatch<React.SetStateAction<PantrySection[]>> | null = null;
+
 export function usePantry() {
   const [sections, _setSections] = useState<PantrySection[]>([]);
-  const setSectionsRef = useRef(_setSections);
-  setSectionsRef.current = _setSections;
+  _livePantrySectionsDispatch = _setSections;
   const setSections = useCallback<typeof _setSections>(
-    (action) => setSectionsRef.current(action), []
+    (action) => _livePantrySectionsDispatch?.(action), []
   );
   const [loading, setLoading] = useState(true);
   const isOnline = useOnlineStatus();
