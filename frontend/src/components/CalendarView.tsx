@@ -157,7 +157,12 @@ type EventsLoadState = 'loading' | 'loaded' | 'error';
 
 export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false, showAllEvents = false, showHolidays = true, holidayColor = 'red', calendarColor = 'amber' }: CalendarViewProps) {
   // days = what's displayed in the UI
-  const [days, setDays] = useState<DayData[]>([]);
+  const [days, _setDays] = useState<DayData[]>([]);
+  const setDaysRef = useRef(_setDays);
+  setDaysRef.current = _setDays;
+  const setDays = useCallback<typeof _setDays>(
+    (action) => setDaysRef.current(action), []
+  );
   const [loading, setLoading] = useState(true);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [loadingMore, setLoadingMore] = useState<'prev' | 'next' | null>(null);
@@ -447,21 +452,6 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
       scrollToElementWithOffset(todayRef.current, 'auto');
     }
   }, [loading]);
-
-  // Refetch after undo/redo — closures from a previous mount may have used stale state setters
-  useEffect(() => {
-    const handler = async () => {
-      const startStr = formatDate(displayStartRef.current);
-      const endStr = formatDate(displayEndRef.current);
-      try {
-        const localNotes = await getLocalNotesForRange(startStr, endStr);
-        const data = localNotesToDayData(localNotes, startStr, endStr);
-        setDays(data);
-      } catch { /* cache failed */ }
-    };
-    window.addEventListener('undo-redo-applied', handler);
-    return () => window.removeEventListener('undo-redo-applied', handler);
-  }, []);
 
   const enqueueRenderLog = (label: string, start: number, payload?: Record<string, unknown>) => {
     if (!isPerfEnabled()) return;

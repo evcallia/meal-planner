@@ -50,7 +50,12 @@ export function markStoresSessionLoaded() { storesSessionLoaded = true; }
 
 export function useStores(options: UseStoresOptions = {}) {
   const { grocerySections, onItemsStoreChanged } = options;
-  const [stores, setStores] = useState<Store[]>(() => loadStoresFromLocalStorage());
+  const [stores, _setStores] = useState<Store[]>(() => loadStoresFromLocalStorage());
+  const setStoresRef = useRef(_setStores);
+  setStoresRef.current = _setStores;
+  const setStores = useCallback<typeof _setStores>(
+    (action) => setStoresRef.current(action), []
+  );
   const [loading, setLoading] = useState(() => loadStoresFromLocalStorage().length === 0);
   const isOnline = useOnlineStatus();
   const { pushAction } = useUndo();
@@ -172,13 +177,6 @@ export function useStores(options: UseStoresOptions = {}) {
     return () => window.removeEventListener('pending-changes-synced', handler);
   }, []);
 
-  // Reload from cache after undo/redo — closures from a previous mount may have
-  // updated IDB but called a stale setStores. Cache-only (no API call).
-  useEffect(() => {
-    const handler = () => loadStoresRef.current(true);
-    window.addEventListener('undo-redo-applied', handler);
-    return () => window.removeEventListener('undo-redo-applied', handler);
-  }, []);
 
   const createStore = useCallback(async (name: string): Promise<Store | null> => {
     optimisticVersionRef.current++;

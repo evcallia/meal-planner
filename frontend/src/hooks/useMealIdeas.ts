@@ -53,7 +53,12 @@ export function resetMealIdeasSessionLoaded() { mealIdeasSessionLoaded = false; 
 export function markMealIdeasSessionLoaded() { mealIdeasSessionLoaded = true; }
 
 export function useMealIdeas() {
-  const [ideas, setIdeas] = useState<MealIdea[]>([]);
+  const [ideas, _setIdeas] = useState<MealIdea[]>([]);
+  const setIdeasRef = useRef(_setIdeas);
+  setIdeasRef.current = _setIdeas;
+  const setIdeas = useCallback<typeof _setIdeas>(
+    (action) => setIdeasRef.current(action), []
+  );
   const isMountedRef = useRef(true);
   const updateTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingUpdatesRef = useRef<Record<string, Partial<MealIdeaInput>>>({});
@@ -241,13 +246,6 @@ export function useMealIdeas() {
     return () => window.removeEventListener('pending-changes-synced', handler);
   }, [refreshIdeas]);
 
-  // Reload from cache after undo/redo — closures from a previous mount may have
-  // updated IDB but called a stale setIdeas. Cache-only (no API call).
-  useEffect(() => {
-    const handler = () => refreshIdeas(true);
-    window.addEventListener('undo-redo-applied', handler);
-    return () => window.removeEventListener('undo-redo-applied', handler);
-  }, [refreshIdeas]);
 
   const addIdea = useCallback((input: MealIdeaInput): string => {
     const tempId = generateTempId();

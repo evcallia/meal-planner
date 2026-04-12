@@ -80,13 +80,24 @@ export function resetGrocerySessionLoaded() { grocerySessionLoaded = false; }
 export function markGrocerySessionLoaded() { grocerySessionLoaded = true; }
 
 export function useGroceryList() {
-  const [sections, setSections] = useState<GrocerySection[]>([]);
+  const [sections, _setSections] = useState<GrocerySection[]>([]);
+  // Ref-backed setter so undo/redo closures from previous mounts still work
+  const setSectionsRef = useRef(_setSections);
+  setSectionsRef.current = _setSections;
+  const setSections = useCallback<typeof _setSections>(
+    (action) => setSectionsRef.current(action), []
+  );
   const [loading, setLoading] = useState(true);
   const isOnline = useOnlineStatus();
   const { pushAction } = useUndo();
 
   // Item defaults cache for offline store auto-populate
-  const [idbDefaults, setIdbDefaults] = useState<Map<string, string | null>>(new Map());
+  const [idbDefaults, _setIdbDefaults] = useState<Map<string, string | null>>(new Map());
+  const setIdbDefaultsRef = useRef(_setIdbDefaults);
+  setIdbDefaultsRef.current = _setIdbDefaults;
+  const setIdbDefaults = useCallback<typeof _setIdbDefaults>(
+    (action) => setIdbDefaultsRef.current(action), []
+  );
   useEffect(() => {
     const load = () => {
       getLocalItemDefaults().then(defaults => {
@@ -363,13 +374,6 @@ export function useGroceryList() {
     return () => window.removeEventListener('pending-changes-synced', handler);
   }, [loadGroceryList]);
 
-  // Reload from cache after undo/redo — closures from a previous mount may have
-  // updated IDB but called a stale setSections. Cache-only (no API call).
-  useEffect(() => {
-    const handler = () => loadGroceryList(true);
-    window.addEventListener('undo-redo-applied', handler);
-    return () => window.removeEventListener('undo-redo-applied', handler);
-  }, [loadGroceryList]);
 
   // Merge parsed grocery items into existing list
   const mergeList = useCallback(async (parsed: ParsedGrocerySection[]) => {
