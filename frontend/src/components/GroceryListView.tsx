@@ -299,10 +299,36 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
 
   const handleItemDropOutside = useCallback((sourceSectionId: string, fromIndex: number, clientY: number) => {
     const target = findDropTarget(sourceSectionId, clientY);
-    if (target) {
-      moveItem(sourceSectionId, fromIndex, target.sectionId, target.targetIndex);
+    if (!target) return;
+    // Indices are into the filtered/visible items — resolve to unfiltered indices
+    const visSource = visibleSections.find(s => s.id === sourceSectionId);
+    const visSourceUnchecked = visSource?.items.filter(i => !i.checked);
+    const draggedItem = visSourceUnchecked?.[fromIndex];
+    if (!draggedItem) return;
+    // Resolve source index in unfiltered section
+    const fullSource = sections.find(s => s.id === sourceSectionId);
+    const fullSourceUnchecked = fullSource?.items.filter(i => !i.checked) ?? [];
+    const realFromIndex = fullSourceUnchecked.findIndex(i => i.id === draggedItem.id);
+    if (realFromIndex === -1) return;
+    // Resolve target index: find where the drop position maps in the unfiltered list
+    let realToIndex = target.targetIndex;
+    const visTarget = visibleSections.find(s => s.id === target.sectionId);
+    const fullTarget = sections.find(s => s.id === target.sectionId);
+    if (visTarget && fullTarget) {
+      const visTargetUnchecked = visTarget.items.filter(i => !i.checked);
+      const fullTargetUnchecked = fullTarget.items.filter(i => !i.checked);
+      if (target.targetIndex < visTargetUnchecked.length) {
+        // Insert before this visible item — find its position in the full list
+        const anchorItem = visTargetUnchecked[target.targetIndex];
+        realToIndex = fullTargetUnchecked.findIndex(i => i.id === anchorItem.id);
+        if (realToIndex === -1) realToIndex = fullTargetUnchecked.length;
+      } else {
+        // Appending to end
+        realToIndex = fullTargetUnchecked.length;
+      }
     }
-  }, [findDropTarget, moveItem]);
+    moveItem(sourceSectionId, realFromIndex, target.sectionId, realToIndex);
+  }, [findDropTarget, moveItem, visibleSections, sections]);
 
   const toggleCollapsed = useCallback((sectionName: string) => {
     setCollapsedSections(prev => {
