@@ -172,6 +172,14 @@ export function useStores(options: UseStoresOptions = {}) {
     return () => window.removeEventListener('pending-changes-synced', handler);
   }, []);
 
+  // Reload from cache after undo/redo — closures from a previous mount may have
+  // updated IDB but called a stale setStores. Cache-only (no API call).
+  useEffect(() => {
+    const handler = () => loadStoresRef.current(true);
+    window.addEventListener('undo-redo-applied', handler);
+    return () => window.removeEventListener('undo-redo-applied', handler);
+  }, []);
+
   const createStore = useCallback(async (name: string): Promise<Store | null> => {
     optimisticVersionRef.current++;
     const tempId = generateTempId();

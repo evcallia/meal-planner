@@ -448,6 +448,21 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
     }
   }, [loading]);
 
+  // Refetch after undo/redo — closures from a previous mount may have used stale state setters
+  useEffect(() => {
+    const handler = async () => {
+      const startStr = formatDate(displayStartRef.current);
+      const endStr = formatDate(displayEndRef.current);
+      try {
+        const localNotes = await getLocalNotesForRange(startStr, endStr);
+        const data = localNotesToDayData(localNotes, startStr, endStr);
+        setDays(data);
+      } catch { /* cache failed */ }
+    };
+    window.addEventListener('undo-redo-applied', handler);
+    return () => window.removeEventListener('undo-redo-applied', handler);
+  }, []);
+
   const enqueueRenderLog = (label: string, start: number, payload?: Record<string, unknown>) => {
     if (!isPerfEnabled()) return;
     pendingRenderLogsRef.current.push({ label, start, payload });

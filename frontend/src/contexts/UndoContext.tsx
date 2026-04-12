@@ -83,6 +83,9 @@ export function UndoProvider({ id, children }: { id: string; children: ReactNode
     } finally {
       isUndoRedoInProgress.current = false;
     }
+    // Notify hooks to refresh from cache — undo closures may have updated
+    // IDB/server but used a stale setSections from a previous mount.
+    window.dispatchEvent(new Event('undo-redo-applied'));
     resetInactivityTimer(id);
   }, [id]);
 
@@ -98,6 +101,7 @@ export function UndoProvider({ id, children }: { id: string; children: ReactNode
     } finally {
       isUndoRedoInProgress.current = false;
     }
+    window.dispatchEvent(new Event('undo-redo-applied'));
     resetInactivityTimer(id);
   }, [id]);
 

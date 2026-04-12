@@ -241,6 +241,14 @@ export function useMealIdeas() {
     return () => window.removeEventListener('pending-changes-synced', handler);
   }, [refreshIdeas]);
 
+  // Reload from cache after undo/redo — closures from a previous mount may have
+  // updated IDB but called a stale setIdeas. Cache-only (no API call).
+  useEffect(() => {
+    const handler = () => refreshIdeas(true);
+    window.addEventListener('undo-redo-applied', handler);
+    return () => window.removeEventListener('undo-redo-applied', handler);
+  }, [refreshIdeas]);
+
   const addIdea = useCallback((input: MealIdeaInput): string => {
     const tempId = generateTempId();
     const run = async () => {

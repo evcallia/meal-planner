@@ -363,6 +363,14 @@ export function useGroceryList() {
     return () => window.removeEventListener('pending-changes-synced', handler);
   }, [loadGroceryList]);
 
+  // Reload from cache after undo/redo — closures from a previous mount may have
+  // updated IDB but called a stale setSections. Cache-only (no API call).
+  useEffect(() => {
+    const handler = () => loadGroceryList(true);
+    window.addEventListener('undo-redo-applied', handler);
+    return () => window.removeEventListener('undo-redo-applied', handler);
+  }, [loadGroceryList]);
+
   // Merge parsed grocery items into existing list
   const mergeList = useCallback(async (parsed: ParsedGrocerySection[]) => {
     const prevSections = sections;

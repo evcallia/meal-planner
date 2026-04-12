@@ -306,6 +306,14 @@ export function usePantry() {
     return () => window.removeEventListener('pending-changes-synced', handler);
   }, [loadPantryList]);
 
+  // Reload from cache after undo/redo — closures from a previous mount may have
+  // updated IDB but called a stale setSections. Cache-only (no API call).
+  useEffect(() => {
+    const handler = () => loadPantryList(true);
+    window.addEventListener('undo-redo-applied', handler);
+    return () => window.removeEventListener('undo-redo-applied', handler);
+  }, [loadPantryList]);
+
   // Add item to a section
   const addItem = useCallback(async (sectionId: string, name: string, quantity: number = 1) => {
     const section = sections.find(s => s.id === sectionId);
