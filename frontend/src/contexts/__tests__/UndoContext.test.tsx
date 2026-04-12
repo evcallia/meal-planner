@@ -3,12 +3,14 @@ import { renderHook, act } from '@testing-library/react';
 import { UndoProvider, useUndo } from '../UndoContext';
 import type { ReactNode } from 'react';
 
+let testId = 0;
 const wrapper = ({ children }: { children: ReactNode }) => (
-  <UndoProvider>{children}</UndoProvider>
+  <UndoProvider id={`test-${testId}`}>{children}</UndoProvider>
 );
 
 describe('UndoContext', () => {
   beforeEach(() => {
+    testId++;
     vi.clearAllMocks();
   });
 
