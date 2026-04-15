@@ -130,7 +130,7 @@ export function ItemAutocomplete({
         ref={ref}
         type="text"
         value={value}
-        onChange={e => { onChange(e.target.value); open(); }}
+        onChange={e => { onChange(e.target.value); e.target.value.trim() ? open() : close(); }}
         onFocus={() => { if (value.trim()) open(); }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
