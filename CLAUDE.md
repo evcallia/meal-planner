@@ -60,10 +60,13 @@ Key details:
 ## Item Defaults (Store Auto-Populate)
 - `item_defaults` table: `item_name` (PK, lowercase), `store_id` (FK → stores, nullable)
 - `GET /api/grocery/item-defaults` returns all defaults with non-null store_id
+- `DELETE /api/grocery/item-defaults/{item_name}` — idempotent (204), case-insensitive via `func.lower()`
+- `PUT /api/grocery/item-defaults/{item_name}` — upserts item default (used by undo restore)
 - `ItemDefaultSchema` in schemas.py: `item_name`, `store_id`
 - Frontend caches in IDB `itemDefaults` store (version 8), synced on app load via `fetchAllData`
-- `GroceryListView` merges IDB defaults + current list items into `itemDefaultsMap` (useMemo on `[idbDefaults, sections]`)
-- Quick-add and per-section-add forms check `itemDefaultsMap` for store auto-populate when item isn't in current list
+- `useGroceryList` owns `idbDefaults` state and `itemDefaultsMap` (useMemo merging IDB defaults + current list items)
+- `ItemAutocomplete` component: filtered dropdown of previously-used items, title-cased display, X delete button for items not on current list. Used in both quick-add form and per-section inline add
+- `removeItemDefault` in `useGroceryList`: deletes from IDB + server with full undo/redo + offline queue (`item-default-delete`, `item-default-put` change types)
 - `useGroceryList` calls `putLocalItemDefault()` after add/edit API responses to keep IDB cache warm
 - `StoreAutocomplete` always shows as editable input with pre-populated store name; X clears input only (no immediate update)
 
@@ -98,6 +101,7 @@ Key details:
 - **Auto-scroll during drag**: `requestAnimationFrame` loop in `beginDrag` scrolls viewport when `lastClientY` is within 60px of edges (proportional speed, max 12px/frame). Must recache item rects after each scroll frame for accurate hit-testing
 - **Cross-section/cross-day drag**: Each section/day has its own `useDragReorder` instance. Parent component bridges them via `onDropOutside`/`onDragMove` callbacks and shared `crossDrag` state. Drop target found by querying `[data-section-id]` or `[data-day-date]` elements and measuring item rects within `[data-item-container]` or `[data-meal-container]`
 - **Meal drag reordering**: DayCard uses `useDragReorder` for within-day reorder + cross-day moves. CalendarView bridges cross-day via `findMealDropTarget` (queries `[data-day-date]` DOM elements). Dragged item hidden with `opacity: 0` so shifted items are visible. `handleMealReorder` remaps `line_index` for itemized checkboxes. `handleMoveMeal` accepts optional `insertAt` for precise cross-day insertion position
+- **Cross-section drag with store filter**: `handleItemDropOutside` must resolve filtered-view indices to unfiltered indices before calling `moveItem`. Look up the dragged item by filtered index in `visibleSections`, find its real index in the unfiltered section. Same for the target insertion index — find the anchor item's position in the unfiltered target section
 - **Collapsed state with replace APIs**: When `replaceGroceryListAPI`/`replacePantryListAPI` recreates sections (new server IDs), local state keyed by ID resets. Fix: lift collapsed state to parent component, keyed by section **name** (stable across replace operations)
 
 ## Offline Patterns
@@ -106,6 +110,8 @@ Key details:
 - **ID resolution**: Use `resolveId()` (sync, in-memory) in undo/redo handlers. Use `resolveIdAsync()` (async, IndexedDB fallback) in main mutation API calls — temp IDs may have been synced externally by `useSync`.
 - **ID remap chain**: Use `remapId()` (not `idRemapRef.current.set()`) when recording new server IDs — it flattens the entire chain for multi-cycle undo/redo.
 - **Undo/redo serialization**: `UndoContext` blocks concurrent undo/redo to prevent race conditions with ID remaps.
+- **Per-tab undo stacks**: `UndoProvider` takes an `id` prop; stacks are stored in module-level `Map` so they survive unmount/remount across tab switches. 30-minute inactivity timer clears stale stacks.
+- **Module-level setter refs**: All hooks with undo (`useGroceryList`, `usePantry`, `useStores`, `useMealIdeas`) and `CalendarView` use module-level variables for state dispatch (e.g., `_liveSectionsDispatch`). Updated on every render so undo closures from previous mounts call the current mount's setter directly — no cache reload needed.
 - All mutations must: (1) update state optimistically, (2) persist to IndexedDB, (3) call API if online or queue change if offline
 - Undo/redo handlers must use `isOnlineRef.current` (not stale `isOnline`), always queue on failure/offline, always call `settleMutation()`
 - Every `ChangeType` in `db.ts` must have a matching handler in `useSync.ts`
