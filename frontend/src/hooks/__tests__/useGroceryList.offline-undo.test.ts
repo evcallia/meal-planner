@@ -17,6 +17,8 @@ vi.mock('../../api/client', () => ({
   reorderGroceryItems: vi.fn(),
   renameGrocerySection: vi.fn(),
   moveGroceryItem: vi.fn(),
+  deleteItemDefault: vi.fn(() => Promise.resolve()),
+  putItemDefault: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('../../db', () => ({
@@ -32,6 +34,9 @@ vi.mock('../../db', () => ({
   saveTempIdMapping: vi.fn(),
   getTempIdMapping: vi.fn(() => Promise.resolve(undefined)),
   isTempId: vi.fn((id: string) => id.startsWith('temp-')),
+  getLocalItemDefaults: vi.fn(() => Promise.resolve([])),
+  deleteLocalItemDefault: vi.fn(() => Promise.resolve()),
+  putLocalItemDefault: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('../useOnlineStatus', () => ({

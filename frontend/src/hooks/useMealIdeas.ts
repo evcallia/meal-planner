@@ -52,8 +52,14 @@ let mealIdeasSessionLoaded = false;
 export function resetMealIdeasSessionLoaded() { mealIdeasSessionLoaded = false; }
 export function markMealIdeasSessionLoaded() { mealIdeasSessionLoaded = true; }
 
+let _liveIdeasDispatch: React.Dispatch<React.SetStateAction<MealIdea[]>> | null = null;
+
 export function useMealIdeas() {
-  const [ideas, setIdeas] = useState<MealIdea[]>([]);
+  const [ideas, _setIdeas] = useState<MealIdea[]>([]);
+  _liveIdeasDispatch = _setIdeas;
+  const setIdeas = useCallback<typeof _setIdeas>(
+    (action) => _liveIdeasDispatch?.(action), []
+  );
   const isMountedRef = useRef(true);
   const updateTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingUpdatesRef = useRef<Record<string, Partial<MealIdeaInput>>>({});
@@ -240,6 +246,7 @@ export function useMealIdeas() {
     window.addEventListener('pending-changes-synced', handler);
     return () => window.removeEventListener('pending-changes-synced', handler);
   }, [refreshIdeas]);
+
 
   const addIdea = useCallback((input: MealIdeaInput): string => {
     const tempId = generateTempId();

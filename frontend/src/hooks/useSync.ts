@@ -54,6 +54,8 @@ import {
   deleteStore as deleteStoreAPI,
   getStores as getStoresAPI,
   reorderStores as reorderStoresAPI,
+  deleteItemDefault as deleteItemDefaultAPI,
+  putItemDefault as putItemDefaultAPI,
 } from '../api/client';
 import { ConnectionStatus } from '../types';
 
@@ -520,6 +522,13 @@ export function useSync() {
         } else if (change.type === 'store-reorder') {
           const payload = change.payload as { storeIds: string[] };
           await reorderStoresAPI(payload.storeIds);
+        } else if (change.type === 'item-default-delete') {
+          const payload = change.payload as { itemName: string };
+          await deleteItemDefaultAPI(payload.itemName);
+        } else if (change.type === 'item-default-put') {
+          const payload = change.payload as { itemName: string; storeId: string | null };
+          const resolvedStoreId = payload.storeId ? (await getTempIdMapping(payload.storeId)) ?? payload.storeId : null;
+          await putItemDefaultAPI(payload.itemName, resolvedStoreId);
         }
         if (change.id) {
           await removePendingChange(change.id);

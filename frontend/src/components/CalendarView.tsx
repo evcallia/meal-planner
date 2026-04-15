@@ -155,9 +155,15 @@ interface CalendarViewProps {
 // Track which date ranges have finished loading events
 type EventsLoadState = 'loading' | 'loaded' | 'error';
 
+let _liveDaysDispatch: React.Dispatch<React.SetStateAction<DayData[]>> | null = null;
+
 export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false, showAllEvents = false, showHolidays = true, holidayColor = 'red', calendarColor = 'amber' }: CalendarViewProps) {
   // days = what's displayed in the UI
-  const [days, setDays] = useState<DayData[]>([]);
+  const [days, _setDays] = useState<DayData[]>([]);
+  _liveDaysDispatch = _setDays;
+  const setDays = useCallback<typeof _setDays>(
+    (action) => _liveDaysDispatch?.(action), []
+  );
   const [loading, setLoading] = useState(true);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [loadingMore, setLoadingMore] = useState<'prev' | 'next' | null>(null);

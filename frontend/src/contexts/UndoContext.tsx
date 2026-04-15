@@ -17,66 +17,98 @@ interface UndoContextValue {
 const UndoContext = createContext<UndoContextValue | null>(null);
 
 const MAX_HISTORY = 10;
+const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
-export function UndoProvider({ children }: { children: ReactNode }) {
-  const [past, setPast] = useState<UndoAction[]>([]);
-  const [future, setFuture] = useState<UndoAction[]>([]);
-  // Use refs to avoid stale closures in undo/redo callbacks
+// Module-level storage keyed by provider id — survives unmount/remount
+const stacks = new Map<string, { past: UndoAction[]; future: UndoAction[] }>();
+const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function getStack(id: string) {
+  let stack = stacks.get(id);
+  if (!stack) {
+    stack = { past: [], future: [] };
+    stacks.set(id, stack);
+  }
+  return stack;
+}
+
+function resetInactivityTimer(id: string) {
+  const existing = timers.get(id);
+  if (existing) clearTimeout(existing);
+  timers.set(id, setTimeout(() => {
+    const stack = stacks.get(id);
+    if (stack) {
+      stack.past = [];
+      stack.future = [];
+    }
+    timers.delete(id);
+  }, INACTIVITY_TIMEOUT));
+}
+
+export function UndoProvider({ id, children }: { id: string; children: ReactNode }) {
+  const stack = getStack(id);
+  // React state to trigger re-renders — synced from module-level storage
+  const [past, setPast] = useState<UndoAction[]>(stack.past);
+  const [future, setFuture] = useState<UndoAction[]>(stack.future);
+
+  // Keep refs in sync for use inside async callbacks
   const pastRef = useRef(past);
   const futureRef = useRef(future);
   pastRef.current = past;
   futureRef.current = future;
+
   // Guard against re-entrant pushAction calls during undo/redo
   const isUndoRedoInProgress = useRef(false);
 
+  // Sync React state back to module-level storage on every change
+  useEffect(() => { stack.past = past; }, [past, stack]);
+  useEffect(() => { stack.future = future; }, [future, stack]);
+
   const pushAction = useCallback((action: UndoAction) => {
-    // Don't push new actions while undo/redo is in progress
     if (isUndoRedoInProgress.current) return;
     setPast(prev => [...prev.slice(-(MAX_HISTORY - 1)), action]);
     setFuture([]);
-  }, []);
+    resetInactivityTimer(id);
+  }, [id]);
 
   const undo = useCallback(async () => {
-    if (isUndoRedoInProgress.current) return; // Serialize: don't overlap with in-flight undo/redo
+    if (isUndoRedoInProgress.current) return;
     const action = pastRef.current[pastRef.current.length - 1];
     if (!action) return;
-    // Update state first
     setPast(prev => prev.slice(0, -1));
     setFuture(prev => [...prev, action]);
-    // Then execute the undo callback
     isUndoRedoInProgress.current = true;
     try {
       await action.undo();
     } finally {
       isUndoRedoInProgress.current = false;
     }
-  }, []);
+    resetInactivityTimer(id);
+  }, [id]);
 
   const redo = useCallback(async () => {
-    if (isUndoRedoInProgress.current) return; // Serialize: don't overlap with in-flight undo/redo
+    if (isUndoRedoInProgress.current) return;
     const action = futureRef.current[futureRef.current.length - 1];
     if (!action) return;
-    // Update state first
     setFuture(prev => prev.slice(0, -1));
     setPast(prev => [...prev, action]);
-    // Then execute the redo callback
     isUndoRedoInProgress.current = true;
     try {
       await action.redo();
     } finally {
       isUndoRedoInProgress.current = false;
     }
-  }, []);
+    window.dispatchEvent(new Event('undo-redo-applied'));
+    resetInactivityTimer(id);
+  }, [id]);
 
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Don't intercept when editing text
       const target = e.target as HTMLElement;
       if (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') {
         return;
       }
-
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
         if (e.shiftKey) {
           e.preventDefault();

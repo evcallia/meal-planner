@@ -34,6 +34,8 @@ vi.mock('../../hooks/useGroceryList', () => ({
     renameSection: mockRenameSection,
     moveItem: mockMoveItem,
     batchUpdateStoreId: mockBatchUpdateStoreId,
+    itemDefaultsMap: new Map(),
+    removeItemDefault: vi.fn(),
   }),
 }));
 

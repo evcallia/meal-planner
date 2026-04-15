@@ -222,6 +222,8 @@ export function DayCard({
     }
   };
 
+  const dayCardRef = useRef<HTMLDivElement>(null);
+
   const enterEditMode = () => {
     // Focus proxy textarea synchronously within the tap/click handler so
     // mobile browsers open the virtual keyboard immediately.
@@ -230,6 +232,11 @@ export function DayCard({
     // Clear any spacer held by the previously-editing card.
     pendingEditDate = null;
     window.dispatchEvent(new CustomEvent('meal-planner-clear-spacer'));
+    // After keyboard opens and layout settles, scroll the card into view.
+    // Use a delay to allow the visual viewport resize + CSS layout switch.
+    setTimeout(() => {
+      dayCardRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 350);
   };
 
   // Listen for spacer-clear requests from the card that just entered edit mode.
@@ -423,6 +430,7 @@ export function DayCard({
     return (
       <>
         <div
+          ref={dayCardRef}
           data-day-date={day.date}
           className={`
             glass rounded-md overflow-hidden transition-all duration-200
@@ -630,6 +638,7 @@ export function DayCard({
   return (
     <>
       <div
+        ref={dayCardRef}
         data-day-date={day.date}
         className={`
           glass rounded-lg overflow-hidden transition-all duration-200

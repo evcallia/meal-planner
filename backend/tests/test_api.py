@@ -887,6 +887,56 @@ class TestGroceryStoreDefaults:
         assert default.store_id is None
 
 
+class TestItemDefaultsAPI:
+    """Test the item-defaults API endpoints."""
+
+    def test_delete_item_default(self, authenticated_client, db_session):
+        """DELETE /api/grocery/item-defaults/{item_name} removes the default."""
+        store = Store(name="Trader Joe's")
+        db_session.add(store)
+        db_session.flush()
+        d = ItemDefault(item_name="sweet potato", store_id=store.id)
+        db_session.add(d)
+        db_session.commit()
+
+        resp = authenticated_client.delete("/api/grocery/item-defaults/sweet%20potato")
+        assert resp.status_code == 204
+
+        assert db_session.query(ItemDefault).filter_by(item_name="sweet potato").first() is None
+
+    def test_delete_item_default_idempotent(self, authenticated_client):
+        """DELETE returns 204 even when item doesn't exist."""
+        resp = authenticated_client.delete("/api/grocery/item-defaults/nonexistent")
+        assert resp.status_code == 204
+
+    def test_upsert_item_default_create(self, authenticated_client, db_session):
+        """PUT creates a new item default."""
+        resp = authenticated_client.put(
+            "/api/grocery/item-defaults/banana",
+            json={"store_id": None},
+        )
+        assert resp.status_code == 204
+        row = db_session.query(ItemDefault).filter_by(item_name="banana").first()
+        assert row is not None
+
+    def test_upsert_item_default_update(self, authenticated_client, db_session):
+        """PUT updates existing item default's store_id."""
+        store = Store(name="Costco")
+        db_session.add(store)
+        db_session.flush()
+        db_session.add(ItemDefault(item_name="apple", store_id=None))
+        db_session.commit()
+
+        resp = authenticated_client.put(
+            "/api/grocery/item-defaults/apple",
+            json={"store_id": str(store.id)},
+        )
+        assert resp.status_code == 204
+        db_session.expire_all()
+        row = db_session.query(ItemDefault).filter_by(item_name="apple").first()
+        assert str(row.store_id) == str(store.id)
+
+
 class TestSettingsAPI:
     def test_get_settings_empty(self, authenticated_client: TestClient):
         """GET /api/settings returns empty when no settings saved."""

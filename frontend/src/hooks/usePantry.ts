@@ -67,8 +67,14 @@ let pantrySessionLoaded = false;
 export function resetPantrySessionLoaded() { pantrySessionLoaded = false; }
 export function markPantrySessionLoaded() { pantrySessionLoaded = true; }
 
+let _livePantrySectionsDispatch: React.Dispatch<React.SetStateAction<PantrySection[]>> | null = null;
+
 export function usePantry() {
-  const [sections, setSections] = useState<PantrySection[]>([]);
+  const [sections, _setSections] = useState<PantrySection[]>([]);
+  _livePantrySectionsDispatch = _setSections;
+  const setSections = useCallback<typeof _setSections>(
+    (action) => _livePantrySectionsDispatch?.(action), []
+  );
   const [loading, setLoading] = useState(true);
   const isOnline = useOnlineStatus();
   const { pushAction } = useUndo();
@@ -305,6 +311,7 @@ export function usePantry() {
     window.addEventListener('pending-changes-synced', handler);
     return () => window.removeEventListener('pending-changes-synced', handler);
   }, [loadPantryList]);
+
 
   // Add item to a section
   const addItem = useCallback(async (sectionId: string, name: string, quantity: number = 1) => {

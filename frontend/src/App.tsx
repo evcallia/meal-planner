@@ -1054,7 +1054,7 @@ function AppContent() {
 
       {/* Page Content — each wrapped in its own UndoProvider for independent undo/redo */}
       {currentPage === 'meals' && (
-        <UndoProvider>
+        <UndoProvider id="meals">
           <MealsPage
             user={user}
             status={status}
@@ -1066,7 +1066,7 @@ function AppContent() {
         </UndoProvider>
       )}
       {currentPage === 'pantry' && (
-        <UndoProvider>
+        <UndoProvider id="pantry">
           <PantryPage
             user={user}
             status={status}
@@ -1078,7 +1078,7 @@ function AppContent() {
         </UndoProvider>
       )}
       {currentPage === 'grocery' && (
-        <UndoProvider>
+        <UndoProvider id="grocery">
           <GroceryPage
             user={user}
             status={status}
