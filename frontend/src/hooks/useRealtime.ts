@@ -15,6 +15,26 @@ let reconnectAttempts = 0;
 const MAX_RECONNECT_DELAY = 60000; // Max 1 minute between retries
 const BASE_RECONNECT_DELAY = 3000; // Start with 3 seconds
 
+let _authRequired = false;
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('auth-required', () => {
+    _authRequired = true;
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
+    }
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+  });
+}
+
+export function __resetAuthRequiredForTests() {
+  _authRequired = false;
+}
+
 const closeSource = () => {
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
@@ -29,6 +49,7 @@ const closeSource = () => {
 const createSource = () => {
   // Clean up any existing connection first
   closeSource();
+  if (_authRequired) return;
 
   eventSource = new EventSource('/api/stream', { withCredentials: true });
 
@@ -54,8 +75,8 @@ const createSource = () => {
       eventSource = null;
     }
 
-    // Only reconnect if we still have subscribers and haven't exceeded attempts
-    if (subscriberCount > 0 && !reconnectTimeout) {
+    // Only reconnect if we still have subscribers and we're not in auth-required state
+    if (subscriberCount > 0 && !reconnectTimeout && !_authRequired) {
       // Exponential backoff with max delay
       reconnectAttempts++;
       const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_DELAY);
@@ -94,6 +115,7 @@ export function useRealtime() {
 
   // Reconnect when coming back online
   useEffect(() => {
+    if (_authRequired) return;
     if (isOnline && subscriberCount > 0 && !eventSource) {
       reconnectAttempts = 0; // Reset on online status change
       createSource();
