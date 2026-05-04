@@ -5,6 +5,13 @@ const API_BASE = '/api';
 const API_TIMEOUT = 5000; // 5 second timeout for API requests
 export const SOURCE_ID = crypto.randomUUID();
 
+export class AuthError extends Error {
+  constructor(message = 'Authentication required') {
+    super(message);
+    this.name = 'AuthError';
+  }
+}
+
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   const method = options?.method ?? 'GET';
   const requestStart = perfNow();

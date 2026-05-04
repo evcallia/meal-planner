@@ -18,6 +18,7 @@ import {
   getCalendarCacheStatus,
   refreshCalendarCache,
   getCalendarList,
+  AuthError,
 } from '../client';
 
 // Mock fetch
@@ -46,6 +47,17 @@ describe('API client', () => {
       });
 
       await expect(getDays('2024-01-01', '2024-01-07')).rejects.toThrow('API error: 500');
+    });
+  });
+
+  describe('AuthError class', () => {
+    it('is exported from client and is an Error subclass', async () => {
+      const { AuthError } = await import('../client');
+      const err = new AuthError('test');
+      expect(err).toBeInstanceOf(Error);
+      expect(err).toBeInstanceOf(AuthError);
+      expect(err.name).toBe('AuthError');
+      expect(err.message).toBe('test');
     });
   });
 
