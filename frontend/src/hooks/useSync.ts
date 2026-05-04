@@ -17,7 +17,9 @@ import {
   updateLocalHiddenEventId,
   deleteLocalHiddenEvent,
   PendingChange,
+  db,
 } from '../db';
+import { AuthError } from '../api/client';
 import {
   updateNotes,
   toggleItemized,
@@ -59,6 +61,24 @@ import {
 } from '../api/client';
 import { ConnectionStatus } from '../types';
 
+let _authRequired = false;
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('auth-required', () => {
+    _authRequired = true;
+  });
+}
+
+export function __resetAuthRequiredForTests() {
+  _authRequired = false;
+}
+
+async function refreshPendingChangeTimestamps() {
+  const all = await db.pendingChanges.toArray();
+  const now = Date.now();
+  await Promise.all(all.map(c => c.id !== undefined ? db.pendingChanges.update(c.id, { createdAt: now }) : Promise.resolve()));
+}
+
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     // Try to extract HTTP status from common patterns
@@ -80,9 +100,20 @@ export function useSync() {
   const [pendingCount, setPendingCount] = useState(0);
   const syncErrorsRef = useRef<Map<number, string>>(new Map());
 
+  // On first mount, if a previous instance flagged auth-required-pending, refresh
+  // queued changes' createdAt so they get a fresh hour against the stale-discard rule.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (window.localStorage.getItem('auth-required-pending') === '1') {
+      window.localStorage.removeItem('auth-required-pending');
+      refreshPendingChangeTimestamps().catch(err => console.warn('Failed to refresh pending change timestamps:', err));
+    }
+  }, []);
+
   const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
   const syncPendingChanges = useCallback(async () => {
     if (!isOnline) return;
+    if (_authRequired) return;
     // Chain sync calls so they run sequentially, never concurrently
     syncQueueRef.current = syncQueueRef.current.then(async () => {
     try {
@@ -535,6 +566,14 @@ export function useSync() {
         }
         setPendingCount(prev => prev - 1);
       } catch (error) {
+        if (error instanceof AuthError) {
+          // Auth required — pause the entire sync. Do not remove the change,
+          // do not apply the stale-discard rule. The auth-required listener has
+          // already flipped _authRequired; calls into syncPendingChanges below
+          // will short-circuit until the user signs back in (which forces a reload).
+          window.dispatchEvent(new CustomEvent('auth-required'));
+          break;
+        }
         console.error('Failed to sync change:', error);
         if (change.id) {
           syncErrorsRef.current.set(change.id, extractErrorMessage(error));
@@ -572,6 +611,7 @@ export function useSync() {
 
   // Update status when online state changes
   useEffect(() => {
+    if (_authRequired) return;
     if (!isOnline) {
       setStatus('offline');
     } else {
@@ -587,8 +627,8 @@ export function useSync() {
     const checkPending = async () => {
       const changes = await getPendingChanges();
       setPendingCount(changes.length);
-      // Auto-sync if there are pending changes
-      if (changes.length > 0) {
+      // Auto-sync if there are pending changes (and we're not in auth-required state)
+      if (changes.length > 0 && !_authRequired) {
         syncRef.current();
       }
     };

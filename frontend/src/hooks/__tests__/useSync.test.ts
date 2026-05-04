@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useSync } from '../useSync';
+import { useSync, __resetAuthRequiredForTests } from '../useSync';
 
 // Mock dependencies
 vi.mock('../useOnlineStatus', () => ({
@@ -19,24 +19,34 @@ vi.mock('../../db', () => ({
   saveLocalMealIdea: vi.fn(),
   updateLocalHiddenEventId: vi.fn(),
   deleteLocalHiddenEvent: vi.fn(),
+  db: {
+    pendingChanges: {
+      toArray: vi.fn(),
+      update: vi.fn(),
+    },
+  },
 }));
 
-vi.mock('../../api/client', () => ({
-  updateNotes: vi.fn(),
-  toggleItemized: vi.fn(),
-  addPantryItem: vi.fn(),
-  updatePantryItem: vi.fn(),
-  deletePantryItem: vi.fn(),
-  replacePantryList: vi.fn(),
-  reorderPantrySections: vi.fn(),
-  reorderPantryItems: vi.fn(),
-  renamePantrySection: vi.fn(),
-  createMealIdea: vi.fn(),
-  updateMealIdea: vi.fn(),
-  deleteMealIdea: vi.fn(),
-  hideCalendarEvent: vi.fn(),
-  unhideCalendarEvent: vi.fn(),
-}));
+vi.mock('../../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api/client')>();
+  return {
+    ...actual,
+    updateNotes: vi.fn(),
+    toggleItemized: vi.fn(),
+    addPantryItem: vi.fn(),
+    updatePantryItem: vi.fn(),
+    deletePantryItem: vi.fn(),
+    replacePantryList: vi.fn(),
+    reorderPantrySections: vi.fn(),
+    reorderPantryItems: vi.fn(),
+    renamePantrySection: vi.fn(),
+    createMealIdea: vi.fn(),
+    updateMealIdea: vi.fn(),
+    deleteMealIdea: vi.fn(),
+    hideCalendarEvent: vi.fn(),
+    unhideCalendarEvent: vi.fn(),
+  };
+});
 
 import { useOnlineStatus } from '../useOnlineStatus';
 import {
@@ -51,6 +61,7 @@ import {
   saveLocalMealIdea,
   updateLocalHiddenEventId,
   deleteLocalHiddenEvent,
+  db,
 } from '../../db';
 import {
   updateNotes,
@@ -90,6 +101,7 @@ describe('useSync', () => {
   const mockUnhideCalendarEvent = vi.mocked(unhideCalendarEvent);
 
   beforeEach(() => {
+    __resetAuthRequiredForTests();
     vi.clearAllMocks();
     mockGetPendingChanges.mockResolvedValue([]);
   });
@@ -702,6 +714,84 @@ describe('useSync', () => {
       expect(mockUnhideCalendarEvent).not.toHaveBeenCalled();
       expect(mockRemovePendingChange).toHaveBeenCalledWith(28);
       expect(result.current.status).toBe('online');
+    });
+  });
+
+  describe('auth-required handling', () => {
+    // The global localStorage is a mock (vi.fn()). Use a real backing store for
+    // these tests so setItem/getItem/removeItem behave like real localStorage.
+    const localStore: Record<string, string> = {};
+    const realGet = (key: string) => localStore[key] ?? null;
+    const realSet = (key: string, val: string) => { localStore[key] = val; };
+    const realRemove = (key: string) => { delete localStore[key]; };
+
+    beforeEach(() => {
+      delete localStore['auth-required-pending'];
+      vi.mocked(window.localStorage.getItem).mockImplementation(realGet);
+      vi.mocked(window.localStorage.setItem).mockImplementation(realSet);
+      vi.mocked(window.localStorage.removeItem).mockImplementation(realRemove);
+    });
+
+    afterEach(() => {
+      delete localStore['auth-required-pending'];
+    });
+
+    it('does not sync when auth-required event has fired', async () => {
+      mockUseOnlineStatus.mockReturnValue(true);
+      mockGetPendingChanges.mockResolvedValue([
+        { id: 1, type: 'notes', date: '2024-01-01', payload: { notes: 'x' }, createdAt: Date.now() } as any,
+      ]);
+
+      // Fire auth-required BEFORE rendering the hook
+      act(() => { window.dispatchEvent(new CustomEvent('auth-required')); });
+
+      renderHook(() => useSync());
+
+      // Give it a moment — sync should not run
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(mockUpdateNotes).not.toHaveBeenCalled();
+      expect(mockRemovePendingChange).not.toHaveBeenCalled();
+    });
+
+    it('refreshes createdAt for pending changes on init when auth-required-pending flag is set', async () => {
+      const { db } = await import('../../db');
+      const mockToArray = vi.mocked(db.pendingChanges.toArray);
+      const mockUpdate = vi.mocked(db.pendingChanges.update);
+      const oldTime = Date.now() - 60 * 60 * 1000 * 2; // 2h ago
+      mockToArray.mockResolvedValue([
+        { id: 10, type: 'notes', date: '2024-01-01', payload: {}, createdAt: oldTime },
+        { id: 11, type: 'pantry-add', date: '2024-01-01', payload: {}, createdAt: oldTime },
+      ] as any);
+      mockUpdate.mockResolvedValue(1);
+
+      window.localStorage.setItem('auth-required-pending', '1');
+      mockUseOnlineStatus.mockReturnValue(false); // skip the actual sync drain
+      mockGetPendingChanges.mockResolvedValue([]);
+
+      renderHook(() => useSync());
+
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledTimes(2);
+      });
+      expect(window.localStorage.getItem('auth-required-pending')).toBeNull();
+    });
+
+    it('does NOT refresh createdAt on init when flag is absent', async () => {
+      const { db } = await import('../../db');
+      const mockToArray = vi.mocked(db.pendingChanges.toArray);
+      const mockUpdate = vi.mocked(db.pendingChanges.update);
+      mockToArray.mockResolvedValue([]);
+      mockUpdate.mockResolvedValue(1);
+
+      mockUseOnlineStatus.mockReturnValue(false);
+      mockGetPendingChanges.mockResolvedValue([]);
+
+      renderHook(() => useSync());
+
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(mockUpdate).not.toHaveBeenCalled();
     });
   });
 });
