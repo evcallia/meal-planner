@@ -40,6 +40,7 @@ function mockOkResponse(data: unknown) {
   return {
     ok: true,
     status: 200,
+    headers: { get: () => 'application/json' },
     json: () => Promise.resolve(data),
   };
 }
