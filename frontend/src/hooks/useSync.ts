@@ -110,6 +110,19 @@ export function useSync() {
     }
   }, []);
 
+  useEffect(() => {
+    const handler = () => {
+      setStatus('auth-required');
+      try {
+        window.localStorage.setItem('auth-required-pending', '1');
+      } catch {
+        // localStorage might be unavailable; ignore.
+      }
+    };
+    window.addEventListener('auth-required', handler);
+    return () => window.removeEventListener('auth-required', handler);
+  }, []);
+
   const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
   const syncPendingChanges = useCallback(async () => {
     if (!isOnline) return;

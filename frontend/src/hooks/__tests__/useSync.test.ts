@@ -793,5 +793,21 @@ describe('useSync', () => {
 
       expect(mockUpdate).not.toHaveBeenCalled();
     });
+
+    it('sets status to auth-required when the event fires and writes the localStorage flag', async () => {
+      mockUseOnlineStatus.mockReturnValue(true);
+      mockGetPendingChanges.mockResolvedValue([]);
+      window.localStorage.removeItem('auth-required-pending');
+
+      const { result } = renderHook(() => useSync());
+
+      // Initially should be 'online' (mocked)
+      await waitFor(() => expect(result.current.status).toBe('online'));
+
+      act(() => { window.dispatchEvent(new CustomEvent('auth-required')); });
+
+      await waitFor(() => expect(result.current.status).toBe('auth-required'));
+      expect(window.localStorage.getItem('auth-required-pending')).toBe('1');
+    });
   });
 });
