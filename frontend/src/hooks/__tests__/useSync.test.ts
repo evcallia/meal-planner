@@ -718,24 +718,6 @@ describe('useSync', () => {
   });
 
   describe('auth-required handling', () => {
-    // The global localStorage is a mock (vi.fn()). Use a real backing store for
-    // these tests so setItem/getItem/removeItem behave like real localStorage.
-    const localStore: Record<string, string> = {};
-    const realGet = (key: string) => localStore[key] ?? null;
-    const realSet = (key: string, val: string) => { localStore[key] = val; };
-    const realRemove = (key: string) => { delete localStore[key]; };
-
-    beforeEach(() => {
-      delete localStore['auth-required-pending'];
-      vi.mocked(window.localStorage.getItem).mockImplementation(realGet);
-      vi.mocked(window.localStorage.setItem).mockImplementation(realSet);
-      vi.mocked(window.localStorage.removeItem).mockImplementation(realRemove);
-    });
-
-    afterEach(() => {
-      delete localStore['auth-required-pending'];
-    });
-
     it('does not sync when auth-required event has fired', async () => {
       mockUseOnlineStatus.mockReturnValue(true);
       mockGetPendingChanges.mockResolvedValue([
@@ -754,50 +736,9 @@ describe('useSync', () => {
       expect(mockRemovePendingChange).not.toHaveBeenCalled();
     });
 
-    it('refreshes createdAt for pending changes on init when auth-required-pending flag is set', async () => {
-      const { db } = await import('../../db');
-      const mockToArray = vi.mocked(db.pendingChanges.toArray);
-      const mockUpdate = vi.mocked(db.pendingChanges.update);
-      const oldTime = Date.now() - 60 * 60 * 1000 * 2; // 2h ago
-      mockToArray.mockResolvedValue([
-        { id: 10, type: 'notes', date: '2024-01-01', payload: {}, createdAt: oldTime },
-        { id: 11, type: 'pantry-add', date: '2024-01-01', payload: {}, createdAt: oldTime },
-      ] as any);
-      mockUpdate.mockResolvedValue(1);
-
-      window.localStorage.setItem('auth-required-pending', '1');
-      mockUseOnlineStatus.mockReturnValue(false); // skip the actual sync drain
-      mockGetPendingChanges.mockResolvedValue([]);
-
-      renderHook(() => useSync());
-
-      await waitFor(() => {
-        expect(mockUpdate).toHaveBeenCalledTimes(2);
-      });
-      expect(window.localStorage.getItem('auth-required-pending')).toBeNull();
-    });
-
-    it('does NOT refresh createdAt on init when flag is absent', async () => {
-      const { db } = await import('../../db');
-      const mockToArray = vi.mocked(db.pendingChanges.toArray);
-      const mockUpdate = vi.mocked(db.pendingChanges.update);
-      mockToArray.mockResolvedValue([]);
-      mockUpdate.mockResolvedValue(1);
-
-      mockUseOnlineStatus.mockReturnValue(false);
-      mockGetPendingChanges.mockResolvedValue([]);
-
-      renderHook(() => useSync());
-
-      await new Promise(r => setTimeout(r, 50));
-
-      expect(mockUpdate).not.toHaveBeenCalled();
-    });
-
-    it('sets status to auth-required when the event fires and writes the localStorage flag', async () => {
+    it('sets status to auth-required when the event fires', async () => {
       mockUseOnlineStatus.mockReturnValue(true);
       mockGetPendingChanges.mockResolvedValue([]);
-      window.localStorage.removeItem('auth-required-pending');
 
       const { result } = renderHook(() => useSync());
 
@@ -807,7 +748,109 @@ describe('useSync', () => {
       act(() => { window.dispatchEvent(new CustomEvent('auth-required')); });
 
       await waitFor(() => expect(result.current.status).toBe('auth-required'));
-      expect(window.localStorage.getItem('auth-required-pending')).toBe('1');
+    });
+  });
+
+  describe('retry-count stale discard', () => {
+    const mockDbUpdate = vi.mocked(db.pendingChanges.update);
+
+    it('increments attempts and keeps the change when a sync attempt fails, even if the change is hours old', async () => {
+      mockUseOnlineStatus.mockReturnValue(true);
+      mockUpdateNotes.mockRejectedValue(new Error('API error: 500'));
+      const mockChanges = [
+        {
+          id: 50,
+          type: 'notes',
+          date: '2024-01-01',
+          payload: { notes: 'x' },
+          createdAt: Date.now() - 2 * 60 * 60 * 1000, // 2h old — must NOT be discarded
+          attempts: 0,
+        },
+      ];
+
+      const runSync = setupSyncQueue([mockChanges as any, []]);
+      const { result } = renderHook(() => useSync());
+
+      await act(async () => {
+        await runSync(() => result.current.syncPendingChanges());
+      });
+
+      expect(mockDbUpdate).toHaveBeenCalledWith(50, { attempts: 1 });
+      expect(mockRemovePendingChange).not.toHaveBeenCalled();
+    });
+
+    it('discards a change once it reaches 20 failed attempts', async () => {
+      mockUseOnlineStatus.mockReturnValue(true);
+      mockUpdateNotes.mockRejectedValue(new Error('API error: 500'));
+      const mockChanges = [
+        {
+          id: 51,
+          type: 'notes',
+          date: '2024-01-01',
+          payload: { notes: 'x' },
+          createdAt: Date.now(),
+          attempts: 19, // this failure is the 20th
+        },
+      ];
+
+      const runSync = setupSyncQueue([mockChanges as any, []]);
+      const { result } = renderHook(() => useSync());
+
+      await act(async () => {
+        await runSync(() => result.current.syncPendingChanges());
+      });
+
+      expect(mockRemovePendingChange).toHaveBeenCalledWith(51);
+    });
+
+    it('treats changes without an attempts field as attempts 0 (legacy queue rows)', async () => {
+      mockUseOnlineStatus.mockReturnValue(true);
+      mockUpdateNotes.mockRejectedValue(new Error('API error: 500'));
+      const mockChanges = [
+        {
+          id: 52,
+          type: 'notes',
+          date: '2024-01-01',
+          payload: { notes: 'x' },
+          createdAt: Date.now() - 2 * 60 * 60 * 1000,
+        },
+      ];
+
+      const runSync = setupSyncQueue([mockChanges as any, []]);
+      const { result } = renderHook(() => useSync());
+
+      await act(async () => {
+        await runSync(() => result.current.syncPendingChanges());
+      });
+
+      expect(mockDbUpdate).toHaveBeenCalledWith(52, { attempts: 1 });
+      expect(mockRemovePendingChange).not.toHaveBeenCalled();
+    });
+
+    it('does not increment attempts or discard on AuthError', async () => {
+      const { AuthError } = await import('../../api/client');
+      mockUseOnlineStatus.mockReturnValue(true);
+      mockUpdateNotes.mockRejectedValue(new AuthError());
+      const mockChanges = [
+        {
+          id: 53,
+          type: 'notes',
+          date: '2024-01-01',
+          payload: { notes: 'x' },
+          createdAt: Date.now(),
+          attempts: 19,
+        },
+      ];
+
+      const runSync = setupSyncQueue([mockChanges as any, []]);
+      const { result } = renderHook(() => useSync());
+
+      await act(async () => {
+        await runSync(() => result.current.syncPendingChanges());
+      });
+
+      expect(mockDbUpdate).not.toHaveBeenCalledWith(53, expect.anything());
+      expect(mockRemovePendingChange).not.toHaveBeenCalled();
     });
   });
 });

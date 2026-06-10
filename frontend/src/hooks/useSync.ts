@@ -61,6 +61,8 @@ import {
 } from '../api/client';
 import { ConnectionStatus } from '../types';
 
+const MAX_SYNC_ATTEMPTS = 20;
+
 let _authRequired = false;
 
 if (typeof window !== 'undefined') {
@@ -71,12 +73,6 @@ if (typeof window !== 'undefined') {
 
 export function __resetAuthRequiredForTests() {
   _authRequired = false;
-}
-
-async function refreshPendingChangeTimestamps() {
-  const all = await db.pendingChanges.toArray();
-  const now = Date.now();
-  await Promise.all(all.map(c => c.id !== undefined ? db.pendingChanges.update(c.id, { createdAt: now }) : Promise.resolve()));
 }
 
 function extractErrorMessage(error: unknown): string {
@@ -100,25 +96,8 @@ export function useSync() {
   const [pendingCount, setPendingCount] = useState(0);
   const syncErrorsRef = useRef<Map<number, string>>(new Map());
 
-  // On first mount, if a previous instance flagged auth-required-pending, refresh
-  // queued changes' createdAt so they get a fresh hour against the stale-discard rule.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (window.localStorage.getItem('auth-required-pending') === '1') {
-      window.localStorage.removeItem('auth-required-pending');
-      refreshPendingChangeTimestamps().catch(err => console.warn('Failed to refresh pending change timestamps:', err));
-    }
-  }, []);
-
-  useEffect(() => {
-    const handler = () => {
-      setStatus('auth-required');
-      try {
-        window.localStorage.setItem('auth-required-pending', '1');
-      } catch {
-        // localStorage might be unavailable; ignore.
-      }
-    };
+    const handler = () => setStatus('auth-required');
     window.addEventListener('auth-required', handler);
     return () => window.removeEventListener('auth-required', handler);
   }, []);
@@ -591,17 +570,21 @@ export function useSync() {
         if (change.id) {
           syncErrorsRef.current.set(change.id, extractErrorMessage(error));
         }
-        // If change is older than 1 hour, discard it — it's likely stale
-        const ONE_HOUR = 60 * 60 * 1000;
-        if (change.createdAt && Date.now() - change.createdAt > ONE_HOUR) {
-          console.warn('Discarding stale pending change (>1h old):', change.type, change.date);
+        // Give up only after repeated failures — absolute age would punish
+        // users for being offline or signed out, not for broken changes.
+        const attempts = (change.attempts ?? 0) + 1;
+        if (attempts >= MAX_SYNC_ATTEMPTS) {
+          console.warn(`Discarding pending change after ${attempts} failed sync attempts:`, change.type, change.date);
           if (change.id) {
             await removePendingChange(change.id);
           }
           setPendingCount(prev => prev - 1);
           continue;
         }
-        // For recent changes, stop and retry later
+        if (change.id !== undefined) {
+          await db.pendingChanges.update(change.id, { attempts });
+        }
+        // Stop and retry later
         break;
       }
     }
