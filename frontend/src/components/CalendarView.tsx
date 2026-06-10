@@ -304,8 +304,12 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
         const eventsMap = await getEvents(startStr, endStr, true, showHolidaysRef.current);
         logDuration('calendar.events.request', requestStart, { start: startStr, end: endStr });
 
-        for (const [date, events] of Object.entries(eventsMap)) {
-          saveLocalCalendarEvents(date, events);
+        // Write every date in the requested range — dates absent from the
+        // response have zero events; writing [] clears stale entries left by
+        // upstream deletions/moves.
+        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+          const dateStr = formatDate(d);
+          saveLocalCalendarEvents(dateStr, eventsMap[dateStr] ?? []);
         }
 
         applyEvents(eventsMap);
@@ -536,23 +540,40 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
         }));
       }
       if (detail.type === 'calendar.refreshed') {
-        const payload = detail.payload as { events_by_date?: Record<string, CalendarEvent[]> };
+        const payload = detail.payload as {
+          events_by_date?: Record<string, CalendarEvent[]>;
+          cache_start?: string;
+          cache_end?: string;
+        };
         const eventsByDate = payload?.events_by_date;
         if (!eventsByDate) return;
+        const { cache_start: cacheStart, cache_end: cacheEnd } = payload;
+        const inWindow = (date: string) =>
+          cacheStart !== undefined && cacheEnd !== undefined && date >= cacheStart && date <= cacheEnd;
         // Save all events to IndexedDB for offline access
         for (const [date, events] of Object.entries(eventsByDate)) {
           saveLocalCalendarEvents(date, events);
         }
+        // Dates inside the refreshed window but absent from the payload now
+        // have zero events — clear their stale IDB entries.
+        if (cacheStart && cacheEnd) {
+          for (let d = new Date(cacheStart + 'T12:00:00'); formatDate(d) <= cacheEnd; d.setDate(d.getDate() + 1)) {
+            const dateStr = formatDate(d);
+            if (!(dateStr in eventsByDate)) {
+              saveLocalCalendarEvents(dateStr, []);
+            }
+          }
+        }
         // Update display with client-side filtering based on showAllEvents
         setDays(prev => prev.map(day => {
-          const dayEvents = eventsByDate[day.date];
+          const dayEvents = eventsByDate[day.date] ?? (inWindow(day.date) ? [] : undefined);
           if (dayEvents !== undefined) {
             const filtered = showAllEventsRef.current
               ? dayEvents
               : dayEvents.filter(event => !hiddenEventKeysRef.current.has(getEventHiddenKey(event)));
             return { ...day, events: filtered };
           }
-          // If not in the refreshed data, keep existing events
+          // Not in the refreshed data and outside the window: keep existing events
           return day;
         }));
       }

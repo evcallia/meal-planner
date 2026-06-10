@@ -58,7 +58,7 @@ vi.mock('../DayCard', () => ({
 }));
 
 import { getDays, getEvents, updateNotes, toggleItemized, hideCalendarEvent } from '../../api/client';
-import { saveLocalNote, queueChange, getLocalNotesForRange, getLocalCalendarEventsForRange, getLocalHiddenEvents } from '../../db';
+import { saveLocalNote, queueChange, getLocalNotesForRange, getLocalCalendarEventsForRange, getLocalHiddenEvents, saveLocalCalendarEvents } from '../../db';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { DayCard } from '../DayCard';
 
@@ -531,6 +531,36 @@ describe('CalendarView', () => {
     const todayCall = mockDayCard.mock.calls.find(call => call[0].day.date === todayStr);
     expect(todayCall?.[0].crossDragTargetIndex).toBeNull();
     expect(todayCall?.[0].crossDragItemHeight).toBeUndefined();
+  });
+
+  it('clears events for in-window dates absent from calendar.refreshed payload', async () => {
+    const today = formatDate(new Date());
+    vi.mocked(getDays).mockResolvedValue([]);
+    vi.mocked(getEvents).mockResolvedValue({
+      [today]: [{
+        id: 'ev-1', uid: 'uid-1', calendar_name: 'Personal', title: 'Dentist',
+        start_time: `${today}T10:00:00`, end_time: `${today}T11:00:00`, all_day: false,
+      }],
+    });
+
+    render(<CalendarView onTodayRefReady={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId(`events-count-${today}`)).toHaveTextContent('1 events'));
+
+    // Upstream deletion: refresh payload covers the window but omits today's date
+    const windowStart = formatDate(addDays(new Date(), -28));
+    const windowEnd = formatDate(addDays(new Date(), 56));
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+        detail: {
+          type: 'calendar.refreshed',
+          payload: { events_by_date: {}, cache_start: windowStart, cache_end: windowEnd },
+          source_id: 'other-client',
+        },
+      }));
+    });
+
+    await waitFor(() => expect(screen.queryByTestId(`events-count-${today}`)).not.toBeInTheDocument());
+    expect(vi.mocked(saveLocalCalendarEvents)).toHaveBeenCalledWith(today, []);
   });
 
   it('keeps days appended by infinite scroll when the initial fetch resolves later', async () => {

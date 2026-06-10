@@ -13,7 +13,7 @@ import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
 import { useRealtime } from './hooks/useRealtime';
 import { useKeyboardOpen } from './hooks/useKeyboardOpen';
-import { getCurrentUser, getLoginUrl, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents } from './api/client';
+import { getCurrentUser, getLoginUrl, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents, refreshCalendarCache } from './api/client';
 import { UserInfo, GrocerySection, GroceryItem, PantrySection, PantryItem, Store, MealIdea } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
@@ -25,6 +25,10 @@ import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, sav
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'pantry' | 'grocery';
+
+// Throttle server-side iCal feed refreshes triggered on app focus/reconnect
+let lastCalendarFeedRefresh = 0;
+const CALENDAR_FEED_REFRESH_COOLDOWN_MS = 15 * 60 * 1000;
 
 function PageHeader({
   title,
@@ -892,10 +896,21 @@ function AppContent() {
             }
           }
           if (detail.type === 'calendar.refreshed') {
-            const payload = detail.payload as { events_by_date?: Record<string, any[]> };
+            const payload = detail.payload as { events_by_date?: Record<string, any[]>; cache_start?: string; cache_end?: string };
             if (payload?.events_by_date) {
               for (const [date, events] of Object.entries(payload.events_by_date)) {
                 try { saveLocalCalendarEvents(date, events); } catch {}
+              }
+              // Dates inside the refreshed window but absent from the payload
+              // now have zero events — clear their stale IDB entries.
+              if (payload.cache_start && payload.cache_end) {
+                for (let d = new Date(payload.cache_start + 'T12:00:00'); ; d.setDate(d.getDate() + 1)) {
+                  const dateStr = d.toISOString().split('T')[0];
+                  if (dateStr > payload.cache_end) break;
+                  if (!(dateStr in payload.events_by_date)) {
+                    try { saveLocalCalendarEvents(dateStr, []); } catch {}
+                  }
+                }
               }
             }
           }
@@ -944,6 +959,13 @@ function AppContent() {
     window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
       detail: { type: 'calendar.refreshed', payload: {}, source_id: '__focus_refresh__' },
     }));
+    // Ask the server to re-pull the iCal feed so upstream deletions/moves
+    // propagate on app open/focus. Server-side _refresh_in_progress dedupes;
+    // the resulting calendar.refreshed SSE updates all clients.
+    if (Date.now() - lastCalendarFeedRefresh > CALENDAR_FEED_REFRESH_COOLDOWN_MS) {
+      lastCalendarFeedRefresh = Date.now();
+      refreshCalendarCache().catch(() => { /* best-effort */ });
+    }
   }, [fetchAllData]);
 
   // Refresh when the app regains focus (e.g. returning to PWA or browser tab).
