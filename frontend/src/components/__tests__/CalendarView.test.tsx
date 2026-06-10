@@ -572,5 +572,8 @@ describe('CalendarView', () => {
     expect(screen.getByTestId(`day-card-${today}`)).toBeInTheDocument();
     expect(screen.getByTestId(`day-card-${week2Day}`)).toBeInTheDocument();
     expect(screen.getByTestId(`day-card-${formatDate(addDays(new Date(), 13))}`)).toBeInTheDocument();
+
+    // Restore the setup.ts IntersectionObserver so the stub doesn't leak into later tests
+    vi.unstubAllGlobals();
   });
 });
