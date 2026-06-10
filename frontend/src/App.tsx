@@ -905,7 +905,7 @@ function AppContent() {
               // now have zero events — clear their stale IDB entries.
               if (payload.cache_start && payload.cache_end) {
                 for (let d = new Date(payload.cache_start + 'T12:00:00'); ; d.setDate(d.getDate() + 1)) {
-                  const dateStr = d.toISOString().split('T')[0];
+                  const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
                   if (dateStr > payload.cache_end) break;
                   if (!(dateStr in payload.events_by_date)) {
                     try { saveLocalCalendarEvents(dateStr, []); } catch {}

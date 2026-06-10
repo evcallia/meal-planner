@@ -276,6 +276,46 @@ class TestDoRefreshAndBroadcast:
         mock_get_events.assert_called_once()
 
 
+class TestRefreshBroadcastMultidayEvents:
+    """Test that multi-day events appear under all spanned dates in the broadcast."""
+
+    def test_refresh_broadcast_expands_multiday_events(self, authenticated_client: TestClient):
+        """Multi-day events must appear under every date they span in events_by_date."""
+        from datetime import datetime, timedelta, date as date_cls
+        from app.schemas import CalendarEvent
+
+        start_day = date_cls.today()
+        event = CalendarEvent(
+            id=f"uid-1|Personal|{datetime.combine(start_day, datetime.min.time()).isoformat()}",
+            uid="uid-1",
+            calendar_name="Personal",
+            title="Camping Trip",
+            start_time=datetime.combine(start_day, datetime.min.time()),
+            end_time=datetime.combine(start_day + timedelta(days=3), datetime.min.time()),  # all-day exclusive end => spans 3 days
+            all_day=True,
+        )
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.first.return_value = None
+
+        with patch("app.routers.calendar._refresh_db_cache_sync"), \
+             patch("app.routers.calendar._get_events_from_db", return_value=[event]), \
+             patch("app.routers.calendar.SessionLocal", return_value=mock_db), \
+             patch("app.routers.calendar.broadcast_event", new_callable=AsyncMock) as mock_broadcast:
+            response = authenticated_client.post("/api/calendar/refresh")
+            assert response.status_code == 200
+
+        assert mock_broadcast.call_count == 1
+        payload = mock_broadcast.call_args[0][1]
+        d0, d1, d2 = (str(start_day + timedelta(days=n)) for n in range(3))
+        d3 = str(start_day + timedelta(days=3))
+        assert d0 in payload["events_by_date"], f"Day 0 ({d0}) missing from events_by_date"
+        assert d1 in payload["events_by_date"], f"Day 1 ({d1}) missing from events_by_date"
+        assert d2 in payload["events_by_date"], f"Day 2 ({d2}) missing from events_by_date"
+        assert d3 not in payload["events_by_date"], f"Day 3 ({d3}) should not appear (exclusive all-day end)"
+        assert payload["events_by_date"][d1][0]["title"] == "Camping Trip"
+
+
 class TestCacheStatusWithNullFields:
     """Test cache status edge cases."""
 

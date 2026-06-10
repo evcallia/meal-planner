@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
 
@@ -10,7 +10,7 @@ from app.auth import get_current_user
 from app.config import get_settings
 from app.database import SessionLocal, get_db
 from app.models import CalendarCacheMetadata, HiddenCalendarEvent
-from app.ical_service import _refresh_db_cache_sync, _get_events_from_db, _get_cache_range, list_available_calendars_sync, _event_key
+from app.ical_service import _refresh_db_cache_sync, _get_events_from_db, _get_cache_range, list_available_calendars_sync, _event_key, get_events_for_date
 from app.realtime import broadcast_event
 from app.schemas import CalendarEvent, HiddenCalendarEventSchema
 
@@ -60,21 +60,26 @@ def _do_refresh_and_broadcast():
         start, end = _get_cache_range()
         events = _get_events_from_db(start, end)
 
-        # Group events by date for broadcast
+        # Group events by date for broadcast, expanding multi-day events across all
+        # spanned dates (mirrors the expansion done in days.py get_events_in_range)
         events_by_date: dict[str, list[dict]] = {}
-        for event in events:
-            date_str = event.start_time.date().isoformat()
-            if date_str not in events_by_date:
-                events_by_date[date_str] = []
-            events_by_date[date_str].append({
-                "id": event.id,
-                "uid": event.uid,
-                "calendar_name": event.calendar_name,
-                "title": event.title,
-                "start_time": event.start_time.isoformat(),
-                "end_time": event.end_time.isoformat() if event.end_time else None,
-                "all_day": event.all_day,
-            })
+        current = start
+        while current <= end:
+            day_events = get_events_for_date(events, current)
+            if day_events:
+                events_by_date[current.isoformat()] = [
+                    {
+                        "id": event.id,
+                        "uid": event.uid,
+                        "calendar_name": event.calendar_name,
+                        "title": event.title,
+                        "start_time": event.start_time.isoformat(),
+                        "end_time": event.end_time.isoformat() if event.end_time else None,
+                        "all_day": event.all_day,
+                    }
+                    for event in day_events
+                ]
+            current += timedelta(days=1)
 
         # Get updated metadata
         db = SessionLocal()
