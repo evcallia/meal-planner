@@ -27,22 +27,36 @@ full-screen editor, far heavier than a one-row inline form needs.
 
 **Symptom:** Events deleted or moved in the upstream iCal calendar keep showing in the app.
 
-**Root cause:** `_refresh_db_cache_sync()` (backend/app/ical_service.py) correctly
-delete-and-reinserts the rolling cache window (-4/+8 weeks), but only runs when the
-24h TTL expires. Rows outside the rolling window are never reconciled.
+**Root cause (corrected during plan grounding):** The backend cache is healthy — a
+30-minute background loop (`_background_refresh_loop`, ical_service.py:459) fully
+rewrites the -4/+8 week window, and out-of-window requests fetch fresh from CalDAV.
+The staleness is **frontend cache reconciliation**: `GET /api/days/events` responses
+and the `calendar.refreshed` SSE payload only include dates that *have* events
+(days.py:110-115, calendar.py:64-77). All frontend consumers treat an absent date as
+"keep existing events" (CalendarView.tsx `loadEventsForRange` IDB save loop ~307-309,
+`calendar.refreshed` handler ~529-548, App.tsx warmer ~894-899) — so when an upstream
+event is deleted or moved, its old date keeps the stale entry in React state and
+IndexedDB indefinitely. (The user's "cached indefinitely" hunch was right, but it's
+the client cache, not the server.)
 
 **Fix:**
-- Shorten the feed-refresh cooldown from 24h to **15 minutes** (module constant in
-  `ical_service.py`). Refresh remains request-driven, so feed traffic stays low; the
-  existing `broadcastFullRefresh` on app focus/reopen re-requests events, which now
-  triggers a fresh feed pull if the cache is older than 15 min.
-- During each cache refresh, also delete `cached_calendar_events` rows **outside** the
-  rolling window (event_date < window start or > window end), so ancient rows can't
-  resurface. (The 30-day cached-events startup cleanup in main.py stays as a backstop;
-  see item 7.)
+- Backend: include `cache_start`/`cache_end` (ISO dates) in the `calendar.refreshed`
+  broadcast payload (calendar.py `_do_refresh_and_broadcast` already has them).
+- CalendarView `calendar.refreshed` handler: for dates within
+  [cache_start, cache_end], treat absence as empty — apply `?? []` to display state
+  and write `[]` to IndexedDB for in-window dates missing from the payload.
+- CalendarView `loadEventsForRange` online path: write `eventsMap[date] ?? []` to
+  IndexedDB for **every** date in the requested range (clears stale entries).
+- App.tsx cache warmer: same window-aware clearing using the payload bounds.
+- On-focus feed refresh (per the chosen "on app open/focus" behavior):
+  `broadcastFullRefresh` calls the existing-but-unused `POST /api/calendar/refresh`
+  client function with a 15-minute client-side cooldown; the server's
+  `_refresh_in_progress` guard dedupes, and the resulting SSE broadcast updates all
+  connected clients.
 
-**Tests (pytest):** refresh prunes out-of-window rows; cache served within cooldown;
-re-fetch after cooldown expiry.
+**Tests:** pytest — broadcast payload includes cache bounds. Vitest — in-window
+absent date clears events from state and IDB; out-of-window dates untouched;
+focus-refresh cooldown.
 
 ## 3. Itemized checkboxes reset on meal edit/add
 
