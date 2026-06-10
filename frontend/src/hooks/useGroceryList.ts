@@ -178,6 +178,12 @@ export function useGroceryList() {
   const isOnlineRef = useRef(isOnline);
   isOnlineRef.current = isOnline;
 
+  // Latest sections — lets callbacks read fresh state when callers chain
+  // mutations across awaits (e.g. createSection then moveItem) where the
+  // closed-over `sections` would be stale.
+  const sectionsRef = useRef(sections);
+  sectionsRef.current = sections;
+
   // Load grocery list (cache-first: show cached data immediately, fetch API only if cache empty)
   // skipApi: true to force cache-only (used by deferred load, pending-changes-synced calls it without skipApi to get fresh data)
   const loadGroceryList = useCallback(async (skipApi = false) => {
@@ -1667,12 +1673,49 @@ export function useGroceryList() {
     }
   }, [sections, isOnline, pushAction]);
 
+  // Create a new empty section (no undo push — used by edit-form section moves,
+  // where the subsequent moveItem carries its own undo)
+  const createSection = useCallback(async (name: string): Promise<GrocerySection> => {
+    const position = sectionsRef.current.length;
+    const tempId = generateTempId();
+    const newSection: GrocerySection = { id: tempId, name, position, items: [] };
+
+    optimisticVersionRef.current++;
+    pendingMutationsRef.current++;
+    const nextSections = [...sectionsRef.current, newSection];
+    setSections(nextSections);
+    sectionsRef.current = nextSections;
+    await saveLocalGrocerySections(nextSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+
+    let resultSection = newSection;
+    if (isOnlineRef.current) {
+      try {
+        const created = await createGrocerySectionAPI(name, position);
+        remapId(tempId, created.id);
+        await saveTempIdMapping(tempId, created.id);
+        optimisticVersionRef.current++;
+        setSections(prev => prev.map(s => (s.id === tempId ? { ...s, id: created.id } : s)));
+        sectionsRef.current = sectionsRef.current.map(s => (s.id === tempId ? { ...s, id: created.id } : s));
+        resultSection = { ...newSection, id: created.id };
+      } catch {
+        await queueChange('grocery-create-section', '', { tempId, name, position });
+      }
+    } else {
+      await queueChange('grocery-create-section', '', { tempId, name, position });
+    }
+    settleMutation();
+    return resultSection;
+  }, [settleMutation, remapId]);
+
   // Move item between sections
   const moveItem = useCallback(async (fromSectionId: string, fromIndex: number, toSectionId: string, toIndex: number) => {
     if (fromSectionId === toSectionId) return;
 
-    const fromSection = sections.find(s => s.id === fromSectionId);
-    const toSection = sections.find(s => s.id === toSectionId);
+    // Read from the ref — callers may have just awaited createSection, whose
+    // new section isn't in this closure's `sections` yet
+    const currentSections = sectionsRef.current;
+    const fromSection = currentSections.find(s => s.id === fromSectionId);
+    const toSection = currentSections.find(s => s.id === toSectionId);
     if (!fromSection || !toSection) return;
 
     const unchecked = fromSection.items.filter(i => !i.checked);
@@ -1680,7 +1723,7 @@ export function useGroceryList() {
     if (!item) return;
 
     // Optimistic local update
-    const newSections = sections.map(s => {
+    const newSections = currentSections.map(s => {
       if (s.id === fromSectionId) {
         const items = s.items.filter(i => i.id !== item.id).map((i, idx) => ({ ...i, position: idx }));
         return { ...s, items };
@@ -1763,6 +1806,7 @@ export function useGroceryList() {
 
     optimisticVersionRef.current++;
     setSections(newSections);
+    sectionsRef.current = newSections;
 
     await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
     await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
@@ -1852,5 +1896,5 @@ export function useGroceryList() {
     }
   }, [idbDefaults, isOnline, pushAction]);
 
-  return { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, moveItem, batchUpdateStoreId, itemDefaultsMap, removeItemDefault };
+  return { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, createSection, moveItem, batchUpdateStoreId, itemDefaultsMap, removeItemDefault };
 }
