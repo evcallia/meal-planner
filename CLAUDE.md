@@ -191,6 +191,8 @@ Key details:
 
 ## Preview / Local Dev Auth
 - Backend has a `/api/auth/dev-login` endpoint that's only available when `OIDC_ISSUER` env var is empty. It sets a fake session (`dev-user` / `dev@localhost`) and redirects to `/`
+- **Docker in dev-login mode**: `.env` has real OIDC + `SECURE_COOKIES=true`, so dev-login is disabled by default. Shell env overrides `.env` in docker-compose: `OIDC_ISSUER= OIDC_CLIENT_ID= OIDC_CLIENT_SECRET= SECURE_COOKIES=false FRONTEND_URL=http://localhost:8000 docker-compose up -d`. All five are required — `validate_security()` in `config.py` rejects `SECURE_COOKIES=false` unless `FRONTEND_URL` is localhost and OIDC is unset. Restore by re-running `docker-compose up -d` with a clean shell env
+- In dev mode `/api/auth/login` returns 500 ("OIDC not configured") — sign in via `/api/auth/dev-login` directly
 - The `.env` file is in the project root — run uvicorn from the project root with `--app-dir backend` (not `cd backend && uvicorn`) so pydantic-settings can find `.env`
 - Launch config overrides for local dev: `OIDC_ISSUER=` (empty), `SECURE_COOKIES=false`, `FRONTEND_URL=http://localhost:5173`, `POSTGRES_HOST=localhost`
 - To authenticate in preview: navigate to `/api/auth/dev-login` (e.g. `window.location.href = '/api/auth/dev-login'`)
