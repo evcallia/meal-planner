@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { DayData } from '../types';
 import { MealItem } from './MealItem';
 import { decodeHtmlEntities } from '../utils/html';
@@ -80,6 +80,8 @@ function splitHtmlLines(html: string): string[] {
   });
 }
 
+const AUTOSAVE_DEBOUNCE_MS = 1500;
+
 const LONG_PRESS_MS = 350;
 const DOUBLE_TAP_MS = 250;
 const MOVE_THRESHOLD = 12;
@@ -146,6 +148,22 @@ export function DayCard({
   const lastTapRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const longPressTriggeredRef = useRef(false);
   const focusProxyRef = useRef<HTMLTextAreaElement>(null);
+  const autosaveTimerRef = useRef<number | null>(null);
+
+  // Save any pending edit immediately: cancel the debounce timer and, if
+  // there are unsaved changes, persist them and show the "saved" status.
+  const flushSave = useCallback(() => {
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    if (dirtyRef.current) {
+      dirtyRef.current = false;
+      onNotesChangeRef.current(notesRef.current);
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 1500);
+    }
+  }, []);
 
   const { dayName, dateDisplay, isWeekend } = formatDate(day.date, compactView);
 
@@ -182,6 +200,9 @@ export function DayCard({
       if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
       }
+      if (autosaveTimerRef.current !== null) {
+        clearTimeout(autosaveTimerRef.current);
+      }
       // Save unsaved changes on unmount (e.g., navigating away)
       if (dirtyRef.current) {
         dirtyRef.current = false;
@@ -194,16 +215,20 @@ export function DayCard({
     setNotes(value);
     dirtyRef.current = true;
     setSaveStatus('saving');
+    // Debounced auto-save: persist 1.5s after typing stops so edits survive
+    // the PWA being backgrounded or killed before blur fires.
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+    }
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
+      flushSave();
+    }, AUTOSAVE_DEBOUNCE_MS);
   };
 
   const handleBlur = () => {
     // Save unsaved changes on blur
-    if (dirtyRef.current) {
-      dirtyRef.current = false;
-      onNotesChange(notesRef.current);
-      setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 1500);
-    }
+    flushSave();
 
     // If the user tapped another card's meal area, hold a spacer at the
     // editor's current height so cards below don't shift and swallow the
@@ -221,6 +246,21 @@ export function DayCard({
       setIsEditing(false);
     }
   };
+
+  // Flush pending edits when the PWA is backgrounded or the page unloads —
+  // blur never fires if the app is killed with the editor focused.
+  useEffect(() => {
+    if (!isEditing) return;
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') flushSave();
+    };
+    window.addEventListener('pagehide', flushSave);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flushSave);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [isEditing, flushSave]);
 
   const dayCardRef = useRef<HTMLDivElement>(null);
 
