@@ -563,6 +563,33 @@ describe('CalendarView', () => {
     expect(vi.mocked(saveLocalCalendarEvents)).toHaveBeenCalledWith(today, []);
   });
 
+  it('does not clear events for dates outside the cache window', async () => {
+    const oldDate = formatDate(addDays(new Date(), -60)); // outside the -28 window below
+    vi.mocked(getDays).mockResolvedValue([]);
+    vi.mocked(getEvents).mockResolvedValue({});
+
+    render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
+    await waitFor(() => expect(screen.getByTestId(`day-card-${formatDate(new Date())}`)).toBeInTheDocument());
+    vi.mocked(saveLocalCalendarEvents).mockClear();
+
+    const windowStart = formatDate(addDays(new Date(), -28));
+    const windowEnd = formatDate(addDays(new Date(), 56));
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+        detail: {
+          type: 'calendar.refreshed',
+          payload: { events_by_date: {}, cache_start: windowStart, cache_end: windowEnd },
+          source_id: 'other-client',
+        },
+      }));
+    });
+
+    // In-window dates get cleared...
+    expect(vi.mocked(saveLocalCalendarEvents)).toHaveBeenCalledWith(windowStart, []);
+    // ...but the out-of-window date is never touched
+    expect(vi.mocked(saveLocalCalendarEvents)).not.toHaveBeenCalledWith(oldDate, []);
+  });
+
   it('keeps days appended by infinite scroll when the initial fetch resolves later', async () => {
     let ioCallback: IntersectionObserverCallback | null = null;
     class MockIntersectionObserver {
