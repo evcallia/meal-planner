@@ -200,16 +200,10 @@ export function DayCard({
       if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
       }
-      if (autosaveTimerRef.current !== null) {
-        clearTimeout(autosaveTimerRef.current);
-      }
       // Save unsaved changes on unmount (e.g., navigating away)
-      if (dirtyRef.current) {
-        dirtyRef.current = false;
-        onNotesChangeRef.current(notesRef.current);
-      }
+      flushSave();
     };
-  }, []);
+  }, [flushSave]);
 
   const handleNotesChange = (value: string) => {
     setNotes(value);
