@@ -58,6 +58,7 @@ def _carry_itemized_state(
     Sequence alignment handles unchanged lines, insertions, deletions, and
     in-place edits (positional pairing inside `replace` blocks). A second
     content-matching pass over the leftovers handles moved/reordered lines.
+    In-place edits are paired positionally within `replace` blocks; simultaneously editing and reordering two adjacent lines may swap their states.
     """
     old_norm = [_normalize_line(line) for line in old_lines]
     new_norm = [_normalize_line(line) for line in new_lines]
@@ -189,7 +190,7 @@ async def update_notes(
 
     # Sync meal items with lines (match frontend HTML line splitting)
     old_lines = _split_note_lines(old_notes) if old_notes else []
-    new_lines = _split_note_lines(update.notes)
+    new_lines = _split_note_lines(update.notes) if update.notes else []
 
     old_itemized = {item.line_index: item.itemized for item in meal_note.items}
     itemized_by_index = _carry_itemized_state(old_lines, new_lines, old_itemized)
