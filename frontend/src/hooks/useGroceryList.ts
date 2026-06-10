@@ -181,6 +181,12 @@ export function useGroceryList() {
   // Latest sections — lets callbacks read fresh state when callers chain
   // mutations across awaits (e.g. createSection then moveItem) where the
   // closed-over `sections` would be stale.
+  //
+  // IMPORTANT: the render-time assignment below is NOT synchronously visible
+  // between two awaits in the same async function. Any mutation that calls
+  // setSections and needs that new state visible to code later in the same
+  // async chain MUST also assign sectionsRef.current immediately after
+  // setSections (currently only createSection and moveItem do this).
   const sectionsRef = useRef(sections);
   sectionsRef.current = sections;
 
