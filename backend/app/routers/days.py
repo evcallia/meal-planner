@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 import time
 import re
+import difflib
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
@@ -43,6 +44,52 @@ def _split_note_lines(notes: str) -> list[str]:
         if text_content:
             filtered.append(line)
     return filtered
+
+
+def _normalize_line(line: str) -> str:
+    return re.sub(r"<[^>]*>", "", line).strip().lower()
+
+
+def _carry_itemized_state(
+    old_lines: list[str], new_lines: list[str], old_itemized: dict[int, bool]
+) -> list[bool]:
+    """Map itemized state from old line positions to new line positions.
+
+    Sequence alignment handles unchanged lines, insertions, deletions, and
+    in-place edits (positional pairing inside `replace` blocks). A second
+    content-matching pass over the leftovers handles moved/reordered lines.
+    """
+    old_norm = [_normalize_line(line) for line in old_lines]
+    new_norm = [_normalize_line(line) for line in new_lines]
+    result = [False] * len(new_norm)
+    matched_old: set[int] = set()
+    matched_new: set[int] = set()
+
+    matcher = difflib.SequenceMatcher(a=old_norm, b=new_norm, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for k in range(i2 - i1):
+                result[j1 + k] = old_itemized.get(i1 + k, False)
+                matched_old.add(i1 + k)
+                matched_new.add(j1 + k)
+        elif tag == "replace":
+            for k in range(min(i2 - i1, j2 - j1)):
+                result[j1 + k] = old_itemized.get(i1 + k, False)
+                matched_old.add(i1 + k)
+                matched_new.add(j1 + k)
+
+    remaining_old: dict[str, list[int]] = {}
+    for i, text in enumerate(old_norm):
+        if i not in matched_old:
+            remaining_old.setdefault(text, []).append(i)
+    for j, text in enumerate(new_norm):
+        if j in matched_new:
+            continue
+        candidates = remaining_old.get(text)
+        if candidates:
+            result[j] = old_itemized.get(candidates.pop(0), False)
+
+    return result
 
 
 @router.get("", response_model=list[DayData])
@@ -144,27 +191,16 @@ async def update_notes(
     old_lines = _split_note_lines(old_notes) if old_notes else []
     new_lines = _split_note_lines(update.notes)
 
-    # Build a mapping of old line content to its itemized status
-    old_items = {item.line_index: item for item in meal_note.items}
-    old_line_to_itemized: dict[str, bool] = {}
-    for idx, line in enumerate(old_lines):
-        # Strip HTML and normalize for comparison
-        line_text = re.sub(r"<[^>]*>", "", line).strip().lower()
-        if idx in old_items:
-            old_line_to_itemized[line_text] = old_items[idx].itemized
+    old_itemized = {item.line_index: item.itemized for item in meal_note.items}
+    itemized_by_index = _carry_itemized_state(old_lines, new_lines, old_itemized)
 
     # Delete all existing items - we'll recreate with correct indices
     for item in list(meal_note.items):
         db.delete(item)
     db.flush()
 
-    # Create new items with correct indices, preserving itemized status by content match
-    for i, line in enumerate(new_lines):
-        line_text = re.sub(r"<[^>]*>", "", line).strip().lower()
-        # Try to find matching content from old lines to preserve itemized status
-        itemized = old_line_to_itemized.get(line_text, False)
-        new_item = MealItem(meal_note=meal_note, line_index=i, itemized=itemized)
-        db.add(new_item)
+    for i in range(len(new_lines)):
+        db.add(MealItem(meal_note=meal_note, line_index=i, itemized=itemized_by_index[i]))
 
     db.commit()
     db.refresh(meal_note)
