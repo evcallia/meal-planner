@@ -18,6 +18,7 @@ import {
   getCalendarCacheStatus,
   refreshCalendarCache,
   getCalendarList,
+  AuthError,
 } from '../client';
 
 // Mock fetch
@@ -30,22 +31,124 @@ describe('API client', () => {
   });
 
   describe('fetchAPI error handling', () => {
-    it('should handle 401 unauthorized errors', async () => {
+    it('should throw AuthError on 401 unauthorized', async () => {
       mockFetch.mockResolvedValue({
         ok: false,
         status: 401,
+        headers: { get: () => 'application/json' },
       });
 
-      await expect(getDays('2024-01-01', '2024-01-07')).rejects.toThrow('Unauthorized');
+      const { AuthError } = await import('../client');
+      await expect(getDays('2024-01-01', '2024-01-07')).rejects.toBeInstanceOf(AuthError);
     });
 
     it('should handle other API errors', async () => {
       mockFetch.mockResolvedValue({
         ok: false,
         status: 500,
+        headers: { get: () => 'application/json' },
       });
 
       await expect(getDays('2024-01-01', '2024-01-07')).rejects.toThrow('API error: 500');
+    });
+  });
+
+  describe('AuthError detection', () => {
+    let dispatchSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+    });
+
+    afterEach(() => {
+      dispatchSpy.mockRestore();
+    });
+
+    it('throws AuthError on 401 from protected endpoints and dispatches auth-required', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 401,
+        headers: { get: () => 'application/json' },
+      });
+
+      await expect(getDays('2024-01-01', '2024-01-07')).rejects.toBeInstanceOf(AuthError);
+      const calls = dispatchSpy.mock.calls.map(c => (c[0] as Event).type);
+      expect(calls).toContain('auth-required');
+    });
+
+    it('throws AuthError on 403 with HTML body', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 403,
+        headers: { get: (name: string) => name.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null },
+      });
+
+      await expect(getDays('2024-01-01', '2024-01-07')).rejects.toBeInstanceOf(AuthError);
+      const calls = dispatchSpy.mock.calls.map(c => (c[0] as Event).type);
+      expect(calls).toContain('auth-required');
+    });
+
+    it('throws AuthError on 200 with HTML body (CF interstitial)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: (name: string) => name.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null },
+        json: () => Promise.reject(new Error('should not parse')),
+      });
+
+      await expect(getDays('2024-01-01', '2024-01-07')).rejects.toBeInstanceOf(AuthError);
+      const calls = dispatchSpy.mock.calls.map(c => (c[0] as Event).type);
+      expect(calls).toContain('auth-required');
+    });
+
+    it('does NOT throw AuthError on 401 from /api/auth/me (legitimate logged-out case)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 401,
+        headers: { get: () => 'application/json' },
+      });
+
+      const result = await getCurrentUser();
+      expect(result).toBeNull();
+      const calls = dispatchSpy.mock.calls.map(c => (c[0] as Event).type);
+      expect(calls).not.toContain('auth-required');
+    });
+
+    it('does NOT throw AuthError on 500 with JSON body', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        headers: { get: () => 'application/json' },
+      });
+
+      await expect(getDays('2024-01-01', '2024-01-07')).rejects.toThrow('API error: 500');
+      const calls = dispatchSpy.mock.calls.map(c => (c[0] as Event).type);
+      expect(calls).not.toContain('auth-required');
+    });
+
+    it('does NOT throw AuthError on 204 (no content) with no content-type', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 204,
+        headers: { get: () => null },
+      });
+
+      // Use deletePantryItem which expects 204 No Content
+      const { deletePantryItem } = await import('../client');
+      await expect(deletePantryItem('item-123')).resolves.toBeUndefined();
+      const calls = dispatchSpy.mock.calls.map(c => (c[0] as Event).type);
+      expect(calls).not.toContain('auth-required');
+    });
+  });
+
+  describe('AuthError class', () => {
+    it('is exported from client and is an Error subclass', async () => {
+      const { AuthError } = await import('../client');
+      const err = new AuthError('test');
+      expect(err).toBeInstanceOf(Error);
+      expect(err).toBeInstanceOf(AuthError);
+      expect(err.name).toBe('AuthError');
+      expect(err.message).toBe('test');
     });
   });
 
@@ -61,6 +164,7 @@ describe('API client', () => {
 
       mockFetch.mockResolvedValue({
         ok: true,
+        headers: { get: () => 'application/json' },
         json: () => Promise.resolve(mockDays),
       });
 
@@ -95,6 +199,7 @@ describe('API client', () => {
 
       mockFetch.mockResolvedValue({
         ok: true,
+        headers: { get: () => 'application/json' },
         json: () => Promise.resolve(mockEvents),
       });
 
@@ -121,6 +226,7 @@ describe('API client', () => {
 
       mockFetch.mockResolvedValue({
         ok: true,
+        headers: { get: () => 'application/json' },
         json: () => Promise.resolve(mockNote),
       });
 
@@ -149,6 +255,7 @@ describe('API client', () => {
 
       mockFetch.mockResolvedValue({
         ok: true,
+        headers: { get: () => 'application/json' },
         json: () => Promise.resolve(mockItem),
       });
 
@@ -255,6 +362,7 @@ describe('API client', () => {
       const mockSections = [{ id: 's1', name: 'General', position: 0, items: [] }];
       mockFetch.mockResolvedValue({
         ok: true,
+        headers: { get: () => 'application/json' },
         json: () => Promise.resolve(mockSections),
       });
 
@@ -272,6 +380,7 @@ describe('API client', () => {
       const mockItem = { id: '1', section_id: 's1', name: 'Rice', quantity: 2, position: 0, updated_at: '2026-01-01T00:00:00Z' };
       mockFetch.mockResolvedValue({
         ok: true,
+        headers: { get: () => 'application/json' },
         json: () => Promise.resolve(mockItem),
       });
 
@@ -308,6 +417,7 @@ describe('API client', () => {
       const mockIdeas = [{ id: '1', title: 'Pasta', updated_at: '2026-01-01T00:00:00Z' }];
       mockFetch.mockResolvedValue({
         ok: true,
+        headers: { get: () => 'application/json' },
         json: () => Promise.resolve(mockIdeas),
       });
 
@@ -325,6 +435,7 @@ describe('API client', () => {
       const mockIdea = { id: '1', title: 'Pasta', updated_at: '2026-01-01T00:00:00Z' };
       mockFetch.mockResolvedValue({
         ok: true,
+        headers: { get: () => 'application/json' },
         json: () => Promise.resolve(mockIdea),
       });
 
@@ -361,6 +472,7 @@ describe('API client', () => {
       const mockStatus = { last_refresh: null, cache_start: null, cache_end: null, is_refreshing: false };
       mockFetch.mockResolvedValue({
         ok: true,
+        headers: { get: () => 'application/json' },
         json: () => Promise.resolve(mockStatus),
       });
 
@@ -380,6 +492,7 @@ describe('API client', () => {
       const mockList = { available: ['A'], selected: ['B'] };
       mockFetch.mockResolvedValue({
         ok: true,
+        headers: { get: () => 'application/json' },
         json: () => Promise.resolve(mockList),
       });
 

@@ -139,7 +139,8 @@ describe('db utilities', () => {
         type,
         date,
         payload,
-        createdAt: expect.any(Number)
+        createdAt: expect.any(Number),
+        attempts: 0
       });
     });
 
@@ -154,7 +155,8 @@ describe('db utilities', () => {
         type,
         date,
         payload,
-        createdAt: expect.any(Number)
+        createdAt: expect.any(Number),
+        attempts: 0
       });
     });
   });

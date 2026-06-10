@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useSync } from '../useSync';
+import { useSync, __resetAuthRequiredForTests } from '../useSync';
 
 // Mock dependencies
 vi.mock('../useOnlineStatus', () => ({
@@ -19,24 +19,34 @@ vi.mock('../../db', () => ({
   saveLocalMealIdea: vi.fn(),
   updateLocalHiddenEventId: vi.fn(),
   deleteLocalHiddenEvent: vi.fn(),
+  db: {
+    pendingChanges: {
+      toArray: vi.fn(),
+      update: vi.fn(),
+    },
+  },
 }));
 
-vi.mock('../../api/client', () => ({
-  updateNotes: vi.fn(),
-  toggleItemized: vi.fn(),
-  addPantryItem: vi.fn(),
-  updatePantryItem: vi.fn(),
-  deletePantryItem: vi.fn(),
-  replacePantryList: vi.fn(),
-  reorderPantrySections: vi.fn(),
-  reorderPantryItems: vi.fn(),
-  renamePantrySection: vi.fn(),
-  createMealIdea: vi.fn(),
-  updateMealIdea: vi.fn(),
-  deleteMealIdea: vi.fn(),
-  hideCalendarEvent: vi.fn(),
-  unhideCalendarEvent: vi.fn(),
-}));
+vi.mock('../../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api/client')>();
+  return {
+    ...actual,
+    updateNotes: vi.fn(),
+    toggleItemized: vi.fn(),
+    addPantryItem: vi.fn(),
+    updatePantryItem: vi.fn(),
+    deletePantryItem: vi.fn(),
+    replacePantryList: vi.fn(),
+    reorderPantrySections: vi.fn(),
+    reorderPantryItems: vi.fn(),
+    renamePantrySection: vi.fn(),
+    createMealIdea: vi.fn(),
+    updateMealIdea: vi.fn(),
+    deleteMealIdea: vi.fn(),
+    hideCalendarEvent: vi.fn(),
+    unhideCalendarEvent: vi.fn(),
+  };
+});
 
 import { useOnlineStatus } from '../useOnlineStatus';
 import {
@@ -51,6 +61,7 @@ import {
   saveLocalMealIdea,
   updateLocalHiddenEventId,
   deleteLocalHiddenEvent,
+  db,
 } from '../../db';
 import {
   updateNotes,
@@ -90,6 +101,7 @@ describe('useSync', () => {
   const mockUnhideCalendarEvent = vi.mocked(unhideCalendarEvent);
 
   beforeEach(() => {
+    __resetAuthRequiredForTests();
     vi.clearAllMocks();
     mockGetPendingChanges.mockResolvedValue([]);
   });
@@ -702,6 +714,143 @@ describe('useSync', () => {
       expect(mockUnhideCalendarEvent).not.toHaveBeenCalled();
       expect(mockRemovePendingChange).toHaveBeenCalledWith(28);
       expect(result.current.status).toBe('online');
+    });
+  });
+
+  describe('auth-required handling', () => {
+    it('does not sync when auth-required event has fired', async () => {
+      mockUseOnlineStatus.mockReturnValue(true);
+      mockGetPendingChanges.mockResolvedValue([
+        { id: 1, type: 'notes', date: '2024-01-01', payload: { notes: 'x' }, createdAt: Date.now() } as any,
+      ]);
+
+      // Fire auth-required BEFORE rendering the hook
+      act(() => { window.dispatchEvent(new CustomEvent('auth-required')); });
+
+      renderHook(() => useSync());
+
+      // Give it a moment — sync should not run
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(mockUpdateNotes).not.toHaveBeenCalled();
+      expect(mockRemovePendingChange).not.toHaveBeenCalled();
+    });
+
+    it('sets status to auth-required when the event fires', async () => {
+      mockUseOnlineStatus.mockReturnValue(true);
+      mockGetPendingChanges.mockResolvedValue([]);
+
+      const { result } = renderHook(() => useSync());
+
+      // Initially should be 'online' (mocked)
+      await waitFor(() => expect(result.current.status).toBe('online'));
+
+      act(() => { window.dispatchEvent(new CustomEvent('auth-required')); });
+
+      await waitFor(() => expect(result.current.status).toBe('auth-required'));
+    });
+  });
+
+  describe('retry-count stale discard', () => {
+    const mockDbUpdate = vi.mocked(db.pendingChanges.update);
+
+    it('increments attempts and keeps the change when a sync attempt fails, even if the change is hours old', async () => {
+      mockUseOnlineStatus.mockReturnValue(true);
+      mockUpdateNotes.mockRejectedValue(new Error('API error: 500'));
+      const mockChanges = [
+        {
+          id: 50,
+          type: 'notes',
+          date: '2024-01-01',
+          payload: { notes: 'x' },
+          createdAt: Date.now() - 2 * 60 * 60 * 1000, // 2h old — must NOT be discarded
+          attempts: 0,
+        },
+      ];
+
+      const runSync = setupSyncQueue([mockChanges as any, []]);
+      const { result } = renderHook(() => useSync());
+
+      await act(async () => {
+        await runSync(() => result.current.syncPendingChanges());
+      });
+
+      expect(mockDbUpdate).toHaveBeenCalledWith(50, { attempts: 1 });
+      expect(mockRemovePendingChange).not.toHaveBeenCalled();
+    });
+
+    it('discards a change once it reaches 20 failed attempts', async () => {
+      mockUseOnlineStatus.mockReturnValue(true);
+      mockUpdateNotes.mockRejectedValue(new Error('API error: 500'));
+      const mockChanges = [
+        {
+          id: 51,
+          type: 'notes',
+          date: '2024-01-01',
+          payload: { notes: 'x' },
+          createdAt: Date.now(),
+          attempts: 19, // this failure is the 20th
+        },
+      ];
+
+      const runSync = setupSyncQueue([mockChanges as any, []]);
+      const { result } = renderHook(() => useSync());
+
+      await act(async () => {
+        await runSync(() => result.current.syncPendingChanges());
+      });
+
+      expect(mockRemovePendingChange).toHaveBeenCalledWith(51);
+    });
+
+    it('treats changes without an attempts field as attempts 0 (legacy queue rows)', async () => {
+      mockUseOnlineStatus.mockReturnValue(true);
+      mockUpdateNotes.mockRejectedValue(new Error('API error: 500'));
+      const mockChanges = [
+        {
+          id: 52,
+          type: 'notes',
+          date: '2024-01-01',
+          payload: { notes: 'x' },
+          createdAt: Date.now() - 2 * 60 * 60 * 1000,
+        },
+      ];
+
+      const runSync = setupSyncQueue([mockChanges as any, []]);
+      const { result } = renderHook(() => useSync());
+
+      await act(async () => {
+        await runSync(() => result.current.syncPendingChanges());
+      });
+
+      expect(mockDbUpdate).toHaveBeenCalledWith(52, { attempts: 1 });
+      expect(mockRemovePendingChange).not.toHaveBeenCalled();
+    });
+
+    it('does not increment attempts or discard on AuthError', async () => {
+      const { AuthError } = await import('../../api/client');
+      mockUseOnlineStatus.mockReturnValue(true);
+      mockUpdateNotes.mockRejectedValue(new AuthError());
+      const mockChanges = [
+        {
+          id: 53,
+          type: 'notes',
+          date: '2024-01-01',
+          payload: { notes: 'x' },
+          createdAt: Date.now(),
+          attempts: 19,
+        },
+      ];
+
+      const runSync = setupSyncQueue([mockChanges as any, []]);
+      const { result } = renderHook(() => useSync());
+
+      await act(async () => {
+        await runSync(() => result.current.syncPendingChanges());
+      });
+
+      expect(mockDbUpdate).not.toHaveBeenCalledWith(53, expect.anything());
+      expect(mockRemovePendingChange).not.toHaveBeenCalled();
     });
   });
 });

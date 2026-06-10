@@ -5,6 +5,13 @@ const API_BASE = '/api';
 const API_TIMEOUT = 5000; // 5 second timeout for API requests
 export const SOURCE_ID = crypto.randomUUID();
 
+export class AuthError extends Error {
+  constructor(message = 'Authentication required') {
+    super(message);
+    this.name = 'AuthError';
+  }
+}
+
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   const method = options?.method ?? 'GET';
   const requestStart = perfNow();
@@ -35,16 +42,28 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
 
   logDuration('api.request', requestStart, { path, method, status: response.status });
 
+  const contentType = response.headers.get('content-type') ?? '';
+  const isHtml = contentType.toLowerCase().startsWith('text/html');
+
+  // Detect auth-required conditions:
+  //   - 401 from any path except GET /api/auth/me
+  //   - 403 + HTML body (CF challenge denial)
+  //   - 2xx + HTML body, excluding 204 (CF interstitial proxied as success)
+  const is401Protected = response.status === 401 && path !== '/auth/me';
+  const is403Html = response.status === 403 && isHtml;
+  const is2xxHtml = response.ok && response.status !== 204 && isHtml;
+
+  if (is401Protected || is403Html || is2xxHtml) {
+    window.dispatchEvent(new CustomEvent('auth-required'));
+    throw new AuthError();
+  }
+
   // Any successful response proves we're online — notify the status hook
   if (response.ok) {
     window.dispatchEvent(new Event('api-request-succeeded'));
   }
 
   if (!response.ok) {
-    if (response.status === 401) {
-      window.dispatchEvent(new CustomEvent('auth-unauthorized'));
-      throw new Error('Unauthorized');
-    }
     throw new Error(`API error: ${response.status}`);
   }
 

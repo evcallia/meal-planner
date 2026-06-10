@@ -50,7 +50,14 @@ async function healthFetch(): Promise<boolean> {
       cache: 'no-store',
     });
     clearTimeout(timeoutId);
-    return response.ok;
+    if (!response.ok) return false;
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+    if (contentType.startsWith('text/html')) {
+      // Cloudflare challenge or similar — health endpoint is being intercepted
+      window.dispatchEvent(new CustomEvent('auth-required'));
+      return false;
+    }
+    return true;
   } catch {
     clearTimeout(timeoutId);
     return false;

@@ -6,7 +6,7 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ status, pendingCount }: StatusBarProps) {
-  if (status === 'online') {
+  if (status === 'online' || status === 'auth-required') {
     return null;
   }
 

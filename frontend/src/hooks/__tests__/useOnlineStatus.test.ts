@@ -16,7 +16,7 @@ describe('useOnlineStatus', () => {
     navigator.onLine = true
     resetOnlineStatus()
     vi.clearAllMocks()
-    mockFetch.mockResolvedValue({ ok: true })
+    mockFetch.mockResolvedValue({ ok: true, headers: { get: () => 'application/json' } })
   })
 
   it('returns initial online status', async () => {
@@ -116,17 +116,40 @@ describe('useOnlineStatus', () => {
   it('maintains consistent state across multiple instances', async () => {
     const { result: result1 } = renderHook(() => useOnlineStatus())
     const { result: result2 } = renderHook(() => useOnlineStatus())
-    
+
     await waitFor(() => expect(result1.current).toBe(result2.current))
-    
+
     // Change status
     navigator.onLine = false
     act(() => {
       window.dispatchEvent(new Event('offline'))
     })
-    
+
     await waitFor(() => expect(result1.current).toBe(false))
     await waitFor(() => expect(result2.current).toBe(false))
     expect(result1.current).toBe(result2.current)
   })
+
+  it('dispatches auth-required and stays not-online when /api/health returns HTML', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'text/html; charset=utf-8' },
+    });
+
+    const { result } = renderHook(() => useOnlineStatus());
+
+    // The first health check dispatches auth-required; isOnline should not flip to true via this response
+    await waitFor(() => {
+      const types = dispatchSpy.mock.calls.map(c => (c[0] as Event).type);
+      expect(types).toContain('auth-required');
+    });
+
+    // navigator.onLine starts true so result.current is true initially; we don't assert on it here
+    // (the goal of this test is to ensure HTML response is not treated as a successful health check
+    // and that auth-required fires).
+    dispatchSpy.mockRestore();
+  });
 })

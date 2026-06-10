@@ -5,6 +5,7 @@ import { PantryPanel } from './components/PantryPanel';
 import { MealIdeasPanel } from './components/MealIdeasPanel';
 import { GroceryListView } from './components/GroceryListView';
 import { StatusBar } from './components/StatusBar';
+import { ReAuthModal } from './components/ReAuthModal';
 import { SettingsModal } from './components/SettingsModal';
 import { UpdateNotification } from './components/UpdateNotification';
 import { useSync } from './hooks/useSync';
@@ -1010,14 +1011,6 @@ function AppContent() {
     }
   }, []);
 
-  // Log out when any API call returns 401 — don't redirect to provider
-  // since the session is already gone (avoids redirect loop)
-  useEffect(() => {
-    const handler = () => { handleLogout(false); };
-    window.addEventListener('auth-unauthorized', handler);
-    return () => window.removeEventListener('auth-unauthorized', handler);
-  }, [handleLogout]);
-
   if (loading) {
     return (
       <div
@@ -1051,6 +1044,7 @@ function AppContent() {
     <div className="min-h-screen bg-gray-100 dark:bg-transparent flex flex-col">
       {/* Status Bar */}
       <StatusBar status={status} pendingCount={pendingCount} />
+      {status === 'auth-required' && <ReAuthModal pendingCount={pendingCount} />}
 
       {/* Page Content — each wrapped in its own UndoProvider for independent undo/redo */}
       {currentPage === 'meals' && (

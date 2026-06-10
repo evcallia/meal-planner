@@ -51,6 +51,7 @@ export interface PendingChange {
   date: string;
   payload: unknown;
   createdAt: number;
+  attempts?: number;
 }
 
 export interface LocalPantrySection {
@@ -277,7 +278,8 @@ export async function queueChange(type: ChangeType, date: string, payload: unkno
     type,
     date,
     payload,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    attempts: 0
   });
 }
 

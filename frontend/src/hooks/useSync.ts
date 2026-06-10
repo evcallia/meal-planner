@@ -17,7 +17,9 @@ import {
   updateLocalHiddenEventId,
   deleteLocalHiddenEvent,
   PendingChange,
+  db,
 } from '../db';
+import { AuthError } from '../api/client';
 import {
   updateNotes,
   toggleItemized,
@@ -59,6 +61,20 @@ import {
 } from '../api/client';
 import { ConnectionStatus } from '../types';
 
+const MAX_SYNC_ATTEMPTS = 20;
+
+let _authRequired = false;
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('auth-required', () => {
+    _authRequired = true;
+  });
+}
+
+export function __resetAuthRequiredForTests() {
+  _authRequired = false;
+}
+
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     // Try to extract HTTP status from common patterns
@@ -80,9 +96,16 @@ export function useSync() {
   const [pendingCount, setPendingCount] = useState(0);
   const syncErrorsRef = useRef<Map<number, string>>(new Map());
 
+  useEffect(() => {
+    const handler = () => setStatus('auth-required');
+    window.addEventListener('auth-required', handler);
+    return () => window.removeEventListener('auth-required', handler);
+  }, []);
+
   const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
   const syncPendingChanges = useCallback(async () => {
     if (!isOnline) return;
+    if (_authRequired) return;
     // Chain sync calls so they run sequentially, never concurrently
     syncQueueRef.current = syncQueueRef.current.then(async () => {
     try {
@@ -535,21 +558,33 @@ export function useSync() {
         }
         setPendingCount(prev => prev - 1);
       } catch (error) {
+        if (error instanceof AuthError) {
+          // Auth required — pause the entire sync. Do not remove the change,
+          // do not apply the stale-discard rule. The auth-required listener has
+          // already flipped _authRequired; calls into syncPendingChanges below
+          // will short-circuit until the user signs back in (which forces a reload).
+          window.dispatchEvent(new CustomEvent('auth-required'));
+          break;
+        }
         console.error('Failed to sync change:', error);
         if (change.id) {
           syncErrorsRef.current.set(change.id, extractErrorMessage(error));
         }
-        // If change is older than 1 hour, discard it — it's likely stale
-        const ONE_HOUR = 60 * 60 * 1000;
-        if (change.createdAt && Date.now() - change.createdAt > ONE_HOUR) {
-          console.warn('Discarding stale pending change (>1h old):', change.type, change.date);
+        // Give up only after repeated failures — absolute age would punish
+        // users for being offline or signed out, not for broken changes.
+        const attempts = (change.attempts ?? 0) + 1;
+        if (attempts >= MAX_SYNC_ATTEMPTS) {
+          console.warn(`Discarding pending change after ${attempts} failed sync attempts:`, change.type, change.date);
           if (change.id) {
             await removePendingChange(change.id);
           }
           setPendingCount(prev => prev - 1);
           continue;
         }
-        // For recent changes, stop and retry later
+        if (change.id !== undefined) {
+          await db.pendingChanges.update(change.id, { attempts });
+        }
+        // Stop and retry later
         break;
       }
     }
@@ -572,6 +607,7 @@ export function useSync() {
 
   // Update status when online state changes
   useEffect(() => {
+    if (_authRequired) return;
     if (!isOnline) {
       setStatus('offline');
     } else {
@@ -587,8 +623,8 @@ export function useSync() {
     const checkPending = async () => {
       const changes = await getPendingChanges();
       setPendingCount(changes.length);
-      // Auto-sync if there are pending changes
-      if (changes.length > 0) {
+      // Auto-sync if there are pending changes (and we're not in auth-required state)
+      if (changes.length > 0 && !_authRequired) {
         syncRef.current();
       }
     };

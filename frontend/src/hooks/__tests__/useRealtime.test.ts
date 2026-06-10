@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
-import { useRealtime } from '../useRealtime';
+import { renderHook, act, waitFor } from '@testing-library/react';
+import { useRealtime, __resetAuthRequiredForTests } from '../useRealtime';
 import { useOnlineStatus } from '../useOnlineStatus';
 
 vi.mock('../useOnlineStatus', () => ({
@@ -26,6 +26,7 @@ describe('useRealtime', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseOnlineStatus.mockReturnValue(true);
+    __resetAuthRequiredForTests();
   });
 
   it('creates an EventSource and dispatches events', () => {
@@ -123,5 +124,47 @@ describe('useRealtime', () => {
 
     warnSpy.mockRestore();
     unmount();
+  });
+
+  it('closes the EventSource and stops reconnecting when auth-required fires', async () => {
+    vi.useFakeTimers();
+    const originalEventSource = (globalThis as any).EventSource;
+    const constructorSpy = vi.fn();
+    let lastInstance: { onerror: (() => void) | null } = { onerror: null };
+    class LocalMockEventSource {
+      readyState = 0;
+      close = vi.fn();
+      addEventListener = vi.fn();
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onmessage: ((e: MessageEvent) => void) | null = null;
+      constructor(url: string, opts?: EventSourceInit) {
+        constructorSpy(url, opts);
+        lastInstance = this;
+      }
+    }
+    (globalThis as any).EventSource = LocalMockEventSource;
+
+    try {
+      const { unmount } = renderHook(() => useRealtime());
+      expect(constructorSpy).toHaveBeenCalledTimes(1);
+
+      // Fire auth-required — this should close the connection and set _authRequired
+      act(() => { window.dispatchEvent(new CustomEvent('auth-required')); });
+
+      // Now trigger an onerror — without the fix this would schedule a reconnect
+      act(() => { lastInstance.onerror?.(); });
+
+      // Advance timers past the first backoff delay (3 seconds)
+      act(() => { vi.advanceTimersByTime(5000); });
+
+      // Without the fix, constructorSpy would be called a second time
+      expect(constructorSpy).toHaveBeenCalledTimes(1);
+
+      unmount();
+    } finally {
+      (globalThis as any).EventSource = originalEventSource;
+      vi.useRealTimers();
+    }
   });
 });

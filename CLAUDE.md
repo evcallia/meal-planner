@@ -22,12 +22,19 @@ Key details:
 - Shell cwd may reset — always use absolute paths or `cd` in the same command
 
 ## Architecture Notes
-- `authEvents.ts` provides a global event bus for auth/CF failures (created Feb 2026)
-- `getCurrentUser()` returns `AuthCheckResult` (not `UserInfo | null`) — has 3 states: `authenticated`, `auth-failed`, `network-error`
+- `getCurrentUser()` returns `UserInfo | null` (null on 401 from `/api/auth/me` — the one endpoint where 401 is a legitimate logged-out state)
 - `AuthError` class in `api/client.ts` for distinguishing auth errors from network errors in catch blocks
 - `ConnectionStatus` type includes `'auth-required'` state (in addition to online/offline/syncing)
-- Service worker has a `cacheWillUpdate` plugin that rejects HTML responses for API routes (prevents CF challenge caching)
 - `fetchAPI` handles 204 No Content responses by returning `undefined` without parsing JSON body
+
+## PWA Re-Auth Flow
+- Detection in `fetchAPI`: 401 from any path except `/auth/me`, 403 + HTML body, or 2xx + HTML body (CF interstitial) → dispatch `'auth-required'` window event + throw `AuthError`. `healthFetch` in `useOnlineStatus` also dispatches on HTML from `/api/health`
+- `useSync` and `useRealtime` each have a module-level `_authRequired` flag set by the `'auth-required'` listener — sync drains and SSE reconnects pause until full-page navigation resets the modules
+- `useSync` sets `status = 'auth-required'` on the event; queued changes are untouched and sync resumes after the post-login reload
+- `ReAuthModal` (non-dismissable, shows pending count) renders in App.tsx when `status === 'auth-required'`; Sign in button does full-window `window.location.href = getLoginUrl()`
+- A 401 does NOT clear local data — the old destructive `auth-unauthorized` → `handleLogout(false)` handler was removed
+- **Queue discard rule**: failed changes are retried with a per-change `attempts` counter (`PendingChange.attempts`, incremented on each sync failure); discarded only after `MAX_SYNC_ATTEMPTS` (20) failures. `AuthError` failures pause sync without incrementing. There is no absolute-age discard
+- Service worker `NetworkFirst` for `/api/*` has a `cacheWillUpdate` plugin (vite.config.ts) rejecting HTML and non-ok responses so CF challenge pages never enter `api-cache`
 
 ## Server-Side User Settings
 - `user_settings` table: `sub` (PK, from OIDC), `settings` (JSON), `updated_at` (DateTime)
@@ -179,11 +186,13 @@ Key details:
 - Frontend `logout()` in `api/client.ts` returns the `end_session_url` (or null)
 - `handleLogout(endProviderSession)` in App.tsx: clears local data, then opens authentik's invalidation flow in a popup (desktop) or full redirect (PWA) to kill the authentik session
 - PWA detection: `window.matchMedia('(display-mode: standalone)')` or `navigator.standalone`
-- 401 auto-logout (`auth-unauthorized` event) passes `endProviderSession=false` to avoid redirect loops — only user-initiated logout triggers authentik invalidation
+- 401s no longer trigger auto-logout — they raise the re-auth modal instead (see PWA Re-Auth Flow); only user-initiated logout triggers authentik invalidation
 - authentik's invalidation flow (`/if/flow/default-invalidation-flow/`) auto-logs out without a confirmation prompt (unlike the OIDC end_session_endpoint which shows an interstitial)
 
 ## Preview / Local Dev Auth
 - Backend has a `/api/auth/dev-login` endpoint that's only available when `OIDC_ISSUER` env var is empty. It sets a fake session (`dev-user` / `dev@localhost`) and redirects to `/`
+- **Docker in dev-login mode**: `.env` has real OIDC + `SECURE_COOKIES=true`, so dev-login is disabled by default. Shell env overrides `.env` in docker-compose: `OIDC_ISSUER= OIDC_CLIENT_ID= OIDC_CLIENT_SECRET= SECURE_COOKIES=false FRONTEND_URL=http://localhost:8000 docker-compose up -d`. All five are required — `validate_security()` in `config.py` rejects `SECURE_COOKIES=false` unless `FRONTEND_URL` is localhost and OIDC is unset. Restore by re-running `docker-compose up -d` with a clean shell env
+- In dev mode `/api/auth/login` returns 500 ("OIDC not configured") — sign in via `/api/auth/dev-login` directly
 - The `.env` file is in the project root — run uvicorn from the project root with `--app-dir backend` (not `cd backend && uvicorn`) so pydantic-settings can find `.env`
 - Launch config overrides for local dev: `OIDC_ISSUER=` (empty), `SECURE_COOKIES=false`, `FRONTEND_URL=http://localhost:5173`, `POSTGRES_HOST=localhost`
 - To authenticate in preview: navigate to `/api/auth/dev-login` (e.g. `window.location.href = '/api/auth/dev-login'`)
@@ -210,8 +219,8 @@ Key details:
 - **Calendar load-previous scroll preservation**: `loadPreviousWeek` uses `flushSync` + scroll anchor pattern — captures first visible day card's position, flushes the state update synchronously, then adjusts `window.scrollBy` so the view stays in place while new days appear above
 
 ## Testing Patterns
-- Mock `authEvents` in test files that import modules using it: `vi.mock('../../authEvents', () => ({ emitAuthFailure: vi.fn(), onAuthFailure: vi.fn(() => vi.fn()) }))`
-- Mock fetch responses need `headers: { get: () => 'application/json' }` since `fetchAPI` now checks content-type on errors
+- Mock fetch responses need `headers: { get: () => 'application/json' }` since `fetchAPI` checks content-type for auth-required detection
+- `useSync`/`useRealtime` have module-level `_authRequired` flags that leak across tests — call `__resetAuthRequiredForTests()` in `beforeEach`
 - `useSync.test.ts` uses `importOriginal` for `api/client` mock to preserve `AuthError` class for `instanceof` checks
 - `useSettings.test.ts` mocks `useOnlineStatus` to return `false` (offline) to isolate localStorage behavior from server sync. Also mocks `api/client` with `getSettings`/`putSettings` rejecting to simulate offline
 - Backend settings tests use `authenticated_client` fixture (not bare `client`) and mock `broadcast_to_user` with `AsyncMock`
