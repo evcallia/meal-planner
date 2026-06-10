@@ -40,4 +40,44 @@ describe('useScrollIntoViewOnEdit', () => {
     vi.advanceTimersByTime(400);
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
+
+  it('re-scrolls on viewport resize while the keyboard is open', () => {
+    const resizeListeners: EventListener[] = [];
+    const viewport = {
+      height: window.innerHeight - 300, // keyboard covering the screen
+      addEventListener: vi.fn((_: string, fn: EventListener) => resizeListeners.push(fn)),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal('visualViewport', viewport);
+
+    const { unmount } = renderHook(
+      ({ editing }) => useScrollIntoViewOnEdit(ref, editing),
+      { initialProps: { editing: true } },
+    );
+    expect(viewport.addEventListener).toHaveBeenCalledWith('resize', expect.any(Function));
+
+    resizeListeners.forEach(fn => fn(new Event('resize')));
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' });
+
+    unmount();
+    expect(viewport.removeEventListener).toHaveBeenCalledWith('resize', expect.any(Function));
+    vi.unstubAllGlobals();
+  });
+
+  it('does not re-scroll on resize after the keyboard is dismissed', () => {
+    const resizeListeners: EventListener[] = [];
+    const viewport = {
+      height: window.innerHeight, // keyboard gone — full-height viewport
+      addEventListener: vi.fn((_: string, fn: EventListener) => resizeListeners.push(fn)),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal('visualViewport', viewport);
+
+    renderHook(({ editing }) => useScrollIntoViewOnEdit(ref, editing), {
+      initialProps: { editing: true },
+    });
+    resizeListeners.forEach(fn => fn(new Event('resize')));
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
 });

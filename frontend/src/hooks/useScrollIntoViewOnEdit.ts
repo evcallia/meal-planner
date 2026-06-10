@@ -7,6 +7,11 @@ export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, isEd
     if (!isEditing) return;
 
     const scrollIntoView = () => {
+      // Only scroll while the keyboard is actually covering the screen —
+      // re-centering on keyboard dismiss would yank the page away from
+      // wherever the user scrolled (threshold matches useKeyboardOpen).
+      const viewport = window.visualViewport;
+      if (viewport && window.innerHeight - viewport.height < 150) return;
       ref.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     };
 
