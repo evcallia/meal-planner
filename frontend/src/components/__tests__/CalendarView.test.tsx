@@ -532,4 +532,45 @@ describe('CalendarView', () => {
     expect(todayCall?.[0].crossDragTargetIndex).toBeNull();
     expect(todayCall?.[0].crossDragItemHeight).toBeUndefined();
   });
+
+  it('keeps days appended by infinite scroll when the initial fetch resolves later', async () => {
+    let ioCallback: IntersectionObserverCallback | null = null;
+    class MockIntersectionObserver {
+      constructor(cb: IntersectionObserverCallback) {
+        ioCallback = cb;
+      }
+      observe = vi.fn();
+      disconnect = vi.fn();
+      unobserve = vi.fn();
+    }
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+
+    // Capture one resolver per getDays call so we control resolution order
+    const dayResolvers: Array<(v: unknown) => void> = [];
+    vi.mocked(getDays).mockImplementation(
+      () => new Promise(resolve => { dayResolvers.push(resolve); }) as never
+    );
+    vi.mocked(getEvents).mockResolvedValue({});
+
+    render(<CalendarView onTodayRefReady={() => {}} />);
+
+    const today = formatDate(new Date());
+    await waitFor(() => expect(screen.getByTestId(`day-card-${today}`)).toBeInTheDocument());
+
+    // Infinite scroll fires while the init fetch (dayResolvers[0]) is still pending
+    await act(async () => {
+      ioCallback?.([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+    });
+    const week2Day = formatDate(addDays(new Date(), 7));
+    await waitFor(() => expect(screen.getByTestId(`day-card-${week2Day}`)).toBeInTheDocument());
+
+    // Resolve loadNextWeek's own API call (second), then the init fetch (first)
+    await act(async () => { dayResolvers[1]?.([]); });
+    await act(async () => { dayResolvers[0]?.([]); });
+
+    // Week 1 and week 2 cards must both still be displayed
+    expect(screen.getByTestId(`day-card-${today}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`day-card-${week2Day}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`day-card-${formatDate(addDays(new Date(), 13))}`)).toBeInTheDocument();
+  });
 });

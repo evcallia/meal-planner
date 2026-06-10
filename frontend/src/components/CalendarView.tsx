@@ -401,15 +401,24 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             end: fullEndStr,
           });
 
-          // Split: display range gets rendered, rest goes to cache only
-          const displayData = allData.filter(d => d.date >= startStr && d.date <= endStr);
+          // Split: display range gets rendered, rest goes to cache only.
+          // Read display bounds from the refs at resolution time and MERGE into
+          // existing days — loadNextWeek may have appended more days while this
+          // fetch was in flight (replacing would wipe them).
+          const displayStartStr = formatDate(displayStartRef.current);
+          const displayEndStr = formatDate(displayEndRef.current);
+          const displayData = allData.filter(d => d.date >= displayStartStr && d.date <= displayEndStr);
           const renderStart = perfNow();
           setDays(prev => {
-            const prevEventsMap = new Map(prev.map(d => [d.date, d.events]));
-            return displayData.map(d => ({
-              ...d,
-              events: d.events.length > 0 ? d.events : (prevEventsMap.get(d.date) ?? []),
-            }));
+            const merged = new Map(prev.map(d => [d.date, d]));
+            for (const d of displayData) {
+              const existing = merged.get(d.date);
+              merged.set(d.date, {
+                ...d,
+                events: d.events.length > 0 ? d.events : (existing?.events ?? []),
+              });
+            }
+            return Array.from(merged.values()).sort((a, b) => a.date.localeCompare(b.date));
           });
           enqueueRenderLog('calendar.days.render', renderStart, { count: displayData.length });
 
