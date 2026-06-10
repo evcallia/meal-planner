@@ -7,6 +7,7 @@ import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { StoreAutocomplete } from './StoreAutocomplete';
 import { StoreFilterBar } from './StoreFilterBar';
 import { ItemAutocomplete } from './ItemAutocomplete';
+import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
 
 export const NONE_STORE_ID = '__none__';
 
@@ -1224,6 +1225,8 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
   const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const swipeModeRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const editFormRef = useRef<HTMLDivElement>(null);
+  useScrollIntoViewOnEdit(editFormRef, isEditing);
 
   const storeName = stores?.find(s => s.id === item.store_id)?.name;
 
@@ -1285,7 +1288,7 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
   if (isEditing) {
     const qtyNum = parseInt(editQuantity) || 0;
     return (
-      <div className="px-4 py-1.5 bg-blue-50 dark:bg-blue-900/20 space-y-1.5">
+      <div ref={editFormRef} className="px-4 py-1.5 bg-blue-50 dark:bg-blue-900/20 space-y-1.5">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 flex-shrink-0">
             <button

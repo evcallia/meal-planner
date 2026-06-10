@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { usePantry } from '../hooks/usePantry';
 import { PantrySection } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
+import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
 
 export function PantryPanel() {
   const { sections, loading, addSection, deleteSection, addItem, updateItem, adjustQuantity, removeItem, clearAll, reorderSections, reorderItems, renameSection, moveItem } = usePantry();
@@ -558,6 +559,8 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
   const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const swipeModeRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const editFormRef = useRef<HTMLDivElement>(null);
+  useScrollIntoViewOnEdit(editFormRef, isEditing);
 
   const SWIPE_THRESHOLD = 50;
   const SWIPE_MAX = 80;
@@ -589,7 +592,7 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
 
   if (isEditing) {
     return (
-      <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 dark:bg-blue-900/20">
+      <div ref={editFormRef} className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 dark:bg-blue-900/20">
         <input
           ref={nameInputRef}
           type="text"
