@@ -571,7 +571,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             const filtered = showAllEventsRef.current
               ? dayEvents
               : dayEvents.filter(event => !hiddenEventKeysRef.current.has(getEventHiddenKey(event)));
-            return { ...day, events: filtered };
+            return { ...day, events: [...filtered].sort(compareEvents) };
           }
           // Not in the refreshed data and outside the window: keep existing events
           return day;

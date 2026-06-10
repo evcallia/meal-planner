@@ -29,6 +29,7 @@ type Page = 'meals' | 'pantry' | 'grocery';
 // Throttle server-side iCal feed refreshes triggered on app focus/reconnect
 let lastCalendarFeedRefresh = 0;
 const CALENDAR_FEED_REFRESH_COOLDOWN_MS = 15 * 60 * 1000;
+export function __resetCalendarFeedRefreshForTests() { lastCalendarFeedRefresh = 0; }
 
 function PageHeader({
   title,
