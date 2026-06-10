@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     secure_cookies: bool = False  # Set to True for HTTPS in production
     debug_timing: bool = False  # Enable timing logs for performance debugging
     allow_tunnel: bool = False  # Set to True when testing with ngrok/tunnels
+    meal_history_retention_days: int = 365  # how long to keep past meal notes
 
     @property
     def database_url(self) -> str:

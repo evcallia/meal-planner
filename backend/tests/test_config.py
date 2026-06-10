@@ -122,6 +122,19 @@ class TestSettings:
         assert settings.allow_tunnel is False
 
 
+class TestMealHistoryRetention:
+    """Test meal_history_retention_days setting."""
+
+    def test_meal_history_retention_defaults_to_one_year(self):
+        settings = Settings()
+        assert settings.meal_history_retention_days == 365
+
+    def test_meal_history_retention_env_override(self, monkeypatch):
+        monkeypatch.setenv("MEAL_HISTORY_RETENTION_DAYS", "30")
+        settings = Settings()
+        assert settings.meal_history_retention_days == 30
+
+
 class TestGetSettings:
     """Test the get_settings function."""
 
