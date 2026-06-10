@@ -94,6 +94,8 @@ def _do_refresh_and_broadcast():
 
         loop.run_until_complete(broadcast_event("calendar.refreshed", {
             "events_by_date": events_by_date,
+            "cache_start": start.isoformat(),
+            "cache_end": end.isoformat(),
             "last_refresh": last_refresh,
         }))
 

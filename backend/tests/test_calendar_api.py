@@ -93,6 +93,27 @@ class TestCalendarRefreshBroadcast:
         assert response.status_code == 200
         # Background task is added but may not be called immediately
 
+    def test_refresh_broadcast_includes_cache_bounds(self, authenticated_client: TestClient):
+        """Test that the refresh broadcast payload includes the cache window bounds."""
+        mock_db = MagicMock()
+        mock_db.query.return_value.first.return_value = None
+
+        with patch("app.routers.calendar._refresh_db_cache_sync"), \
+             patch("app.routers.calendar._get_events_from_db", return_value=[]), \
+             patch("app.routers.calendar.SessionLocal", return_value=mock_db), \
+             patch("app.routers.calendar.broadcast_event", new_callable=AsyncMock) as mock_broadcast:
+            response = authenticated_client.post("/api/calendar/refresh")
+            assert response.status_code == 200
+
+        # TestClient runs background tasks before returning
+        assert mock_broadcast.call_count == 1
+        event_type, payload = mock_broadcast.call_args[0][0], mock_broadcast.call_args[0][1]
+        assert event_type == "calendar.refreshed"
+        assert "events_by_date" in payload
+        assert payload["cache_start"] is not None
+        assert payload["cache_end"] is not None
+        assert payload["cache_start"] < payload["cache_end"]
+
 
 class TestCalendarCacheIntegration:
     """Integration tests for calendar caching."""
