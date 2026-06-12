@@ -6,6 +6,8 @@ export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, isEd
   useEffect(() => {
     if (!isEditing) return;
 
+    let lastHeight = window.visualViewport?.height ?? window.innerHeight;
+
     const scrollIntoView = () => {
       // Only scroll while the keyboard is actually covering the screen —
       // re-centering on keyboard dismiss would yank the page away from
@@ -15,16 +17,27 @@ export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, isEd
       ref.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     };
 
+    const handleResize = () => {
+      const viewport = window.visualViewport;
+      if (!viewport) return;
+      const growing = viewport.height > lastHeight;
+      lastHeight = viewport.height;
+      // A growing viewport means the keyboard is CLOSING (Save/done tapped).
+      // Starting a smooth scroll here races the edit form's unmount and the
+      // in-flight animation lands somewhere arbitrary — skip it.
+      if (growing) return;
+      scrollIntoView();
+    };
+
     // After the keyboard begins opening / layout settles (same delay DayCard uses)
     const timer = window.setTimeout(scrollIntoView, 350);
 
-    // Re-scroll when the visual viewport resizes (keyboard open/close animation)
     const viewport = window.visualViewport;
-    viewport?.addEventListener('resize', scrollIntoView);
+    viewport?.addEventListener('resize', handleResize);
 
     return () => {
       window.clearTimeout(timer);
-      viewport?.removeEventListener('resize', scrollIntoView);
+      viewport?.removeEventListener('resize', handleResize);
     };
   }, [isEditing, ref]);
 }

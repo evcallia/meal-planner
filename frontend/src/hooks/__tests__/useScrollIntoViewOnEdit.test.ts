@@ -80,4 +80,30 @@ describe('useScrollIntoViewOnEdit', () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
+
+  it('does not re-scroll while the keyboard is closing (viewport growing)', () => {
+    const resizeListeners: EventListener[] = [];
+    const viewport = {
+      height: window.innerHeight - 300, // keyboard fully open at mount
+      addEventListener: vi.fn((_: string, fn: EventListener) => resizeListeners.push(fn)),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal('visualViewport', viewport);
+
+    renderHook(({ editing }) => useScrollIntoViewOnEdit(ref, editing), {
+      initialProps: { editing: true },
+    });
+
+    // Keyboard begins closing: viewport grows but is still >150px covered.
+    // Pre-fix this started a smooth scroll that raced the edit-form unmount.
+    viewport.height = window.innerHeight - 200;
+    resizeListeners.forEach(fn => fn(new Event('resize')));
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    // Keyboard re-opens / shrinks again: scrolling resumes
+    viewport.height = window.innerHeight - 300;
+    resizeListeners.forEach(fn => fn(new Event('resize')));
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
 });
