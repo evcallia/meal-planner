@@ -1,7 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { DayData } from '../types';
 import { MealItem } from './MealItem';
 import { decodeHtmlEntities } from '../utils/html';
+import { exitEditAnchored } from '../utils/exitEditAnchored';
+import { getEditHighlight } from '../utils/editHighlightColors';
 import { RichTextEditor } from './RichTextEditor';
 import { useDragReorder } from '../hooks/useDragReorder';
 
@@ -25,6 +27,7 @@ interface DayCardProps {
   onDeleteMeal?: (lineIndex: number) => void;
   holidayColor?: string;
   calendarColor?: string;
+  editHighlightColor?: string;
 }
 
 function formatTime(isoString: string): string {
@@ -80,6 +83,8 @@ function splitHtmlLines(html: string): string[] {
   });
 }
 
+const AUTOSAVE_DEBOUNCE_MS = 1500;
+
 const LONG_PRESS_MS = 350;
 const DOUBLE_TAP_MS = 250;
 const MOVE_THRESHOLD = 12;
@@ -125,8 +130,10 @@ export function DayCard({
   onDeleteMeal,
   holidayColor = 'red',
   calendarColor = 'amber',
+  editHighlightColor = 'emerald',
 }: DayCardProps) {
   const normalizeNotes = (value?: string | null) => decodeHtmlEntities(value ?? '');
+  const editHighlight = getEditHighlight(editHighlightColor);
   const [notes, setNotes] = useState(() => normalizeNotes(day.meal_note?.notes));
   const [isEditing, setIsEditing] = useState(false);
   // Height of the editor when it was open, used to hold a spacer during
@@ -146,6 +153,22 @@ export function DayCard({
   const lastTapRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const longPressTriggeredRef = useRef(false);
   const focusProxyRef = useRef<HTMLTextAreaElement>(null);
+  const autosaveTimerRef = useRef<number | null>(null);
+
+  // Save any pending edit immediately: cancel the debounce timer and, if
+  // there are unsaved changes, persist them and show the "saved" status.
+  const flushSave = useCallback(() => {
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    if (dirtyRef.current) {
+      dirtyRef.current = false;
+      onNotesChangeRef.current(notesRef.current);
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 1500);
+    }
+  }, []);
 
   const { dayName, dateDisplay, isWeekend } = formatDate(day.date, compactView);
 
@@ -183,27 +206,28 @@ export function DayCard({
         clearTimeout(longPressTimerRef.current);
       }
       // Save unsaved changes on unmount (e.g., navigating away)
-      if (dirtyRef.current) {
-        dirtyRef.current = false;
-        onNotesChangeRef.current(notesRef.current);
-      }
+      flushSave();
     };
-  }, []);
+  }, [flushSave]);
 
   const handleNotesChange = (value: string) => {
     setNotes(value);
     dirtyRef.current = true;
     setSaveStatus('saving');
+    // Debounced auto-save: persist 1.5s after typing stops so edits survive
+    // the PWA being backgrounded or killed before blur fires.
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+    }
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
+      flushSave();
+    }, AUTOSAVE_DEBOUNCE_MS);
   };
 
   const handleBlur = () => {
     // Save unsaved changes on blur
-    if (dirtyRef.current) {
-      dirtyRef.current = false;
-      onNotesChange(notesRef.current);
-      setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 1500);
-    }
+    flushSave();
 
     // If the user tapped another card's meal area, hold a spacer at the
     // editor's current height so cards below don't shift and swallow the
@@ -218,9 +242,26 @@ export function DayCard({
         setTimeout(() => setCollapseHeight(null), 300);
       }
     } else {
-      setIsEditing(false);
+      // Keep the card visually stationary while the editor collapses back to
+      // the display layout (and avoid the iOS focused-element-removed jump).
+      exitEditAnchored(dayCardRef.current, () => setIsEditing(false));
     }
   };
+
+  // Flush pending edits when the PWA is backgrounded or the page unloads —
+  // blur never fires if the app is killed with the editor focused.
+  useEffect(() => {
+    if (!isEditing) return;
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') flushSave();
+    };
+    window.addEventListener('pagehide', flushSave);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flushSave);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [isEditing, flushSave]);
 
   const dayCardRef = useRef<HTMLDivElement>(null);
 
@@ -434,10 +475,10 @@ export function DayCard({
           data-day-date={day.date}
           className={`
             glass rounded-md overflow-hidden transition-all duration-200
-            ${isToday ? 'ring-1 ring-blue-100 dark:ring-blue-900' : ''}
+            ${isEditing ? editHighlight.cardRing : isToday ? 'ring-1 ring-blue-100 dark:ring-blue-900' : ''}
             ${crossDragTargetIndex != null ? 'ring-2 ring-blue-500 border-blue-500' : ''}
           `}
-          style={isToday ? { borderColor: 'rgb(96, 165, 250)' } : undefined}
+          style={isEditing ? { borderColor: editHighlight.cardBorderColor } : isToday ? { borderColor: 'rgb(96, 165, 250)' } : undefined}
         >
           {/* Compact Header - inline with content */}
           <div className="px-2 py-1.5 flex items-start gap-2">
@@ -642,10 +683,10 @@ export function DayCard({
         data-day-date={day.date}
         className={`
           glass rounded-lg overflow-hidden transition-all duration-200
-          ${isToday ? 'ring-1 ring-blue-100 dark:ring-blue-900' : ''}
+          ${isEditing ? editHighlight.cardRing : isToday ? 'ring-1 ring-blue-100 dark:ring-blue-900' : ''}
           ${crossDragTargetIndex != null ? 'ring-2 ring-blue-500 border-blue-500' : ''}
         `}
-        style={isToday ? { borderColor: 'rgb(96, 165, 250)' } : undefined}
+        style={isEditing ? { borderColor: editHighlight.cardBorderColor } : isToday ? { borderColor: 'rgb(96, 165, 250)' } : undefined}
       >
         {/* Header */}
         <div className={`

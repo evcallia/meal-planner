@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import { useGroceryList } from '../hooks/useGroceryList';
+import { useGroceryList, ItemDefaultEntry } from '../hooks/useGroceryList';
 import { useStores } from '../hooks/useStores';
 import { parseGroceryText } from '../utils/groceryParser';
 import { GrocerySection, Store } from '../types';
@@ -7,15 +7,20 @@ import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { StoreAutocomplete } from './StoreAutocomplete';
 import { StoreFilterBar } from './StoreFilterBar';
 import { ItemAutocomplete } from './ItemAutocomplete';
+import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
+import { exitEditAnchored } from '../utils/exitEditAnchored';
+import { getEditHighlight } from '../utils/editHighlightColors';
+import { toTitleCase } from '../utils/titleCase';
 
 export const NONE_STORE_ID = '__none__';
 
 interface GroceryListViewProps {
   compactView?: boolean;
+  editHighlightColor?: string;
 }
 
-export function GroceryListView({ compactView: _compactView }: GroceryListViewProps) {
-  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, moveItem, batchUpdateStoreId, itemDefaultsMap, removeItemDefault } = useGroceryList();
+export function GroceryListView({ compactView: _compactView, editHighlightColor = 'emerald' }: GroceryListViewProps) {
+  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, createSection, moveItem, batchUpdateStoreId, itemDefaultsMap, removeItemDefault } = useGroceryList();
   const { stores, createStore, renameStore, removeStore, reorderStores } = useStores({
     grocerySections: sections,
     onItemsStoreChanged: batchUpdateStoreId,
@@ -330,6 +335,24 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     moveItem(sourceSectionId, realFromIndex, target.sectionId, realToIndex);
   }, [findDropTarget, moveItem, visibleSections, sections]);
 
+  // Move an item to another section from the edit form (creates the section if needed)
+  const handleChangeItemSection = useCallback(async (itemId: string, targetName: string) => {
+    const fromSection = sections.find(s => s.items.some(i => i.id === itemId));
+    if (!fromSection) return;
+    // moveItem indexes into the section's unchecked items
+    const fromIndex = fromSection.items.filter(i => !i.checked).findIndex(i => i.id === itemId);
+    if (fromIndex === -1) return;
+    const trimmed = toTitleCase(targetName.trim());
+    if (!trimmed || trimmed.toLowerCase() === fromSection.name.toLowerCase()) return;
+
+    let target = sections.find(s => s.name.toLowerCase() === trimmed.toLowerCase());
+    if (!target) {
+      target = await createSection(trimmed);
+    }
+    // Append to the end of the target section's unchecked items
+    await moveItem(fromSection.id, fromIndex, target.id, target.items.filter(i => !i.checked).length);
+  }, [sections, createSection, moveItem]);
+
   const toggleCollapsed = useCallback((sectionName: string) => {
     setCollapsedSections(prev => {
       const next = new Set(prev);
@@ -414,15 +437,13 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     const qtyMatch = newItemName.trim().match(/^\((\d+)\)\s+(.+)$/);
     const name = qtyMatch ? qtyMatch[2] : newItemName.trim();
     const qty = qtyMatch ? qtyMatch[1] : undefined;
-    // Auto-populate store: check current list items first, then item defaults cache
+    // Auto-populate store from item defaults (merged IDB + current list items).
+    // Never touch the target section — the user picked it explicitly.
     const nameLower = name.toLowerCase();
-    const match = sections.flatMap(s => s.items).find(
-      i => i.name.toLowerCase() === nameLower && i.store_id
-    );
-    await addItem(sectionId, name, qty, match?.store_id ?? itemDefaultsMap.get(nameLower) ?? null);
+    await addItem(sectionId, name, qty, itemDefaultsMap.get(nameLower)?.storeId ?? null);
     setNewItemName('');
     setAddingToSection(null);
-  }, [newItemName, sections, addItem]);
+  }, [newItemName, itemDefaultsMap, addItem]);
 
   const handleQuickAdd = useCallback(async () => {
     const trimmedName = quickAddItemName.trim();
@@ -446,6 +467,20 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
     setQuickAddStoreId(null);
     requestAnimationFrame(() => quickAddItemRef.current?.focus());
   }, [quickAddItemName, quickAddSection, quickAddQuantity, quickAddStoreId, sections, addItem, mergeList]);
+
+  // Autofill store + section when the typed name exactly matches a known item
+  // (current list items or remembered item defaults). Unmatched names clear the
+  // store but leave the section untouched.
+  const applyQuickAddDefaults = useCallback((name: string) => {
+    const trimmed = name.trim().toLowerCase();
+    if (!trimmed) {
+      setQuickAddStoreId(null);
+      return;
+    }
+    const defaults = itemDefaultsMap.get(trimmed);
+    setQuickAddStoreId(defaults?.storeId ?? null);
+    if (defaults?.sectionName) setQuickAddSection(defaults.sectionName);
+  }, [itemDefaultsMap]);
 
   const resetQuickAdd = useCallback(() => {
     setQuickAddSection('');
@@ -510,7 +545,10 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
   );
 
   return (
-    <div>
+    <div
+      className="edit-accent-scope"
+      style={{ '--edit-accent': getEditHighlight(editHighlightColor).accent } as React.CSSProperties}
+    >
       {/* Sticky header: action bar + store chips */}
       <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3 space-y-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
       {/* Action bar: add items + sort + kebab + chevron */}
@@ -601,23 +639,11 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                     testId="quick-add-item"
                     onChange={val => {
                       setQuickAddItemName(val);
-                      const trimmed = val.trim().toLowerCase();
-                      if (trimmed) {
-                        const match = sections.flatMap(s => s.items).find(
-                          i => i.name.toLowerCase() === trimmed && i.store_id
-                        );
-                        setQuickAddStoreId(match?.store_id ?? itemDefaultsMap.get(trimmed) ?? null);
-                      } else {
-                        setQuickAddStoreId(null);
-                      }
+                      applyQuickAddDefaults(val);
                     }}
                     onSelect={displayName => {
                       setQuickAddItemName(displayName);
-                      const trimmed = displayName.trim().toLowerCase();
-                      const match = sections.flatMap(s => s.items).find(
-                        i => i.name.toLowerCase() === trimmed && i.store_id
-                      );
-                      setQuickAddStoreId(match?.store_id ?? itemDefaultsMap.get(trimmed) ?? null);
+                      applyQuickAddDefaults(displayName);
                     }}
                     items={itemDefaultsMap}
                     currentListItemNames={currentListItemNames}
@@ -646,6 +672,8 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 <div className="flex gap-2 mb-2 relative z-20">
                   <div className="relative flex-1 min-w-0" ref={sectionDropdownRef}>
                     <label className="block text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-0.5 ml-1">Section</label>
+                    {/* Inner wrapper so the clear X centers on the input, not input+label */}
+                    <div className="relative">
                     <input
                       data-testid="quick-add-section"
                       type="text"
@@ -673,6 +701,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                         </svg>
                       </button>
                     )}
+                    </div>
                     {showSectionDropdown && filteredSections.length > 0 && (
                       <div className="absolute z-30 left-0 right-0 mt-1 glass-menu rounded-lg max-h-40 overflow-y-auto shadow-lg">
                         {filteredSections.map(s => (
@@ -922,6 +951,9 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 itemDefaultsMap={itemDefaultsMap}
                 currentListItemNames={currentListItemNames}
                 onDeleteItemDefault={removeItemDefault}
+                allSections={sections}
+                editHighlightColor={editHighlightColor}
+                onChangeSection={handleChangeItemSection}
               />
             </div>
           );
@@ -948,6 +980,10 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 editingItemId={editingItemId}
                 onEditingItemChange={handleEditingItemChange}
                 commitEditingRef={commitEditingRef}
+                sectionName={sections.find(s => s.id === item.section_id)?.name ?? ''}
+                allSections={sections}
+                editHighlightColor={editHighlightColor}
+                onChangeSection={handleChangeItemSection}
               />
             ))}
           </div>
@@ -985,9 +1021,12 @@ interface SectionCardProps {
   editingItemId: string | null;
   onEditingItemChange: (id: string | null) => void;
   commitEditingRef: React.MutableRefObject<(() => void) | null>;
-  itemDefaultsMap: Map<string, string | null>;
+  itemDefaultsMap: Map<string, ItemDefaultEntry>;
   currentListItemNames: Set<string>;
   onDeleteItemDefault: (itemName: string) => void;
+  allSections: { id: string; name: string }[];
+  editHighlightColor: string;
+  onChangeSection: (itemId: string, targetSectionName: string) => void;
 }
 
 function SectionCard({
@@ -1020,6 +1059,9 @@ function SectionCard({
   itemDefaultsMap,
   currentListItemNames,
   onDeleteItemDefault,
+  allSections,
+  editHighlightColor,
+  onChangeSection,
 }: SectionCardProps) {
   const uncheckedItems = section.items.filter(i => !i.checked);
   const itemContainerRef = useRef<HTMLDivElement>(null);
@@ -1078,7 +1120,8 @@ function SectionCard({
                 if (e.key === 'Escape') { setEditNameValue(section.name); setIsEditingName(false); }
               }}
               onBlur={commitRename}
-              className="font-semibold text-sm bg-white dark:bg-gray-700 border border-blue-400 dark:border-blue-500 rounded px-1.5 py-0.5 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-0"
+              className="font-semibold text-sm bg-white dark:bg-gray-700 border rounded px-1.5 py-0.5 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 min-w-0"
+              style={{ borderColor: 'var(--edit-accent)' }}
             />
           ) : (
             <h3
@@ -1140,6 +1183,10 @@ function SectionCard({
                   editingItemId={editingItemId}
                   onEditingItemChange={onEditingItemChange}
                   commitEditingRef={commitEditingRef}
+                  sectionName={section.name}
+                  allSections={allSections}
+                  editHighlightColor={editHighlightColor}
+                  onChangeSection={onChangeSection}
                 />
               </div>
             );
@@ -1198,6 +1245,77 @@ function SectionCard({
   );
 }
 
+function SectionCombobox({ sections, value, onChange }: {
+  sections: { id: string; name: string }[];
+  value: string;
+  onChange: (name: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const sectionInputRef = useRef<HTMLInputElement>(null);
+
+  const matches = useMemo(() => {
+    const sorted = [...sections].sort((a, b) => a.name.localeCompare(b.name));
+    const q = value.trim().toLowerCase();
+    if (!q) return sorted;
+    return sorted.filter(s => s.name.toLowerCase().includes(q));
+  }, [sections, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        ref={sectionInputRef}
+        type="text"
+        value={value}
+        placeholder="Section"
+        onChange={e => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        className="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 pl-2 pr-7 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      />
+      {value.trim() && (
+        <button
+          type="button"
+          onMouseDown={e => e.preventDefault()}
+          onClick={() => { onChange(''); setOpen(true); sectionInputRef.current?.focus(); }}
+          aria-label="Clear section"
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      )}
+      {open && matches.length > 0 && (
+        <div className="absolute left-0 right-0 top-full mt-1 glass-menu rounded-lg shadow-lg z-20 max-h-40 overflow-y-auto">
+          {matches.map(s => (
+            <button
+              key={s.id}
+              type="button"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => { onChange(s.name); setOpen(false); }}
+              className="block w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+            >
+              {s.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface GroceryItemRowProps {
   item: GrocerySection['items'][number];
   onToggle: (id: string, checked: boolean) => void;
@@ -1212,18 +1330,25 @@ interface GroceryItemRowProps {
   editingItemId: string | null;
   onEditingItemChange: (id: string | null) => void;
   commitEditingRef: React.MutableRefObject<(() => void) | null>;
+  sectionName: string;
+  allSections: { id: string; name: string }[];
+  editHighlightColor: string;
+  onChangeSection: (itemId: string, targetSectionName: string) => void;
 }
 
-function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging, stores, onStoreAssign: _onStoreAssign, onCreateStore, editingItemId, onEditingItemChange, commitEditingRef }: GroceryItemRowProps) {
+function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging, stores, onStoreAssign: _onStoreAssign, onCreateStore, editingItemId, onEditingItemChange, commitEditingRef, sectionName, allSections, onChangeSection, editHighlightColor }: GroceryItemRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
   const isEditing = editingItemId === item.id;
   const [editName, setEditName] = useState(item.name);
   const [editQuantity, setEditQuantity] = useState(item.quantity ?? '');
   const [editStoreId, setEditStoreId] = useState<string | null>(item.store_id);
+  const [editSectionName, setEditSectionName] = useState(sectionName);
   const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const swipeModeRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const editFormRef = useRef<HTMLDivElement>(null);
+  useScrollIntoViewOnEdit(editFormRef, isEditing);
 
   const storeName = stores?.find(s => s.id === item.store_id)?.name;
 
@@ -1232,18 +1357,24 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
 
   const commitEditRef = useRef<(() => void) | null>(null) as React.MutableRefObject<(() => void) | null>;
 
+  const exitEditMode = useCallback(() => {
+    const anchor = (editFormRef.current?.closest('[data-drag-index]') ?? editFormRef.current) as HTMLElement | null;
+    exitEditAnchored(anchor, () => onEditingItemChange(null));
+  }, [onEditingItemChange]);
+
   const startEditing = useCallback(() => {
     if (item.checked) return;
     setEditName(item.name);
     setEditQuantity(item.quantity ?? '');
     setEditStoreId(item.store_id);
+    setEditSectionName(sectionName);
     onEditingItemChange(item.id);
-  }, [item.id, item.name, item.quantity, item.store_id, item.checked, onEditingItemChange]);
+  }, [item.id, item.name, item.quantity, item.store_id, item.checked, sectionName, onEditingItemChange]);
 
   const commitEdit = useCallback(() => {
     const trimmedName = editName.trim();
     if (!trimmedName) {
-      onEditingItemChange(null);
+      exitEditMode();
       return;
     }
 
@@ -1257,15 +1388,21 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
     if (Object.keys(updates).length > 0) {
       onEdit(item.id, updates);
     }
-    onEditingItemChange(null);
-  }, [editName, editQuantity, editStoreId, item.id, item.name, item.quantity, item.store_id, onEdit, onEditingItemChange]);
+    // Empty section box falls back to the same default category quick-add uses
+    const targetSection = editSectionName.trim() || 'Default';
+    if (targetSection.toLowerCase() !== sectionName.toLowerCase()) {
+      onChangeSection(item.id, targetSection);
+    }
+    exitEditMode();
+  }, [editName, editQuantity, editStoreId, editSectionName, sectionName, item.id, item.name, item.quantity, item.store_id, onEdit, onChangeSection, exitEditMode]);
 
   const cancelEdit = useCallback(() => {
-    onEditingItemChange(null);
+    exitEditMode();
     setEditName(item.name);
     setEditQuantity(item.quantity ?? '');
     setEditStoreId(item.store_id);
-  }, [item.name, item.quantity, item.store_id, onEditingItemChange]);
+    setEditSectionName(sectionName);
+  }, [item.name, item.quantity, item.store_id, sectionName, exitEditMode]);
 
   // Expose commitEdit so parent can call it before switching to another item
   commitEditRef.current = commitEdit;
@@ -1285,7 +1422,7 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
   if (isEditing) {
     const qtyNum = parseInt(editQuantity) || 0;
     return (
-      <div className="px-4 py-1.5 bg-blue-50 dark:bg-blue-900/20 space-y-1.5">
+      <div ref={editFormRef} className={`px-4 py-1.5 space-y-1.5 ${getEditHighlight(editHighlightColor).form}`}>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 flex-shrink-0">
             <button
@@ -1316,6 +1453,11 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
             className="flex-1 min-w-0 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
+        <SectionCombobox
+          sections={allSections}
+          value={editSectionName}
+          onChange={setEditSectionName}
+        />
         <StoreAutocomplete
           stores={stores}
           selectedStoreId={editStoreId}

@@ -549,9 +549,15 @@ export function useSync() {
           const payload = change.payload as { itemName: string };
           await deleteItemDefaultAPI(payload.itemName);
         } else if (change.type === 'item-default-put') {
-          const payload = change.payload as { itemName: string; storeId: string | null };
-          const resolvedStoreId = payload.storeId ? (await getTempIdMapping(payload.storeId)) ?? payload.storeId : null;
-          await putItemDefaultAPI(payload.itemName, resolvedStoreId);
+          const payload = change.payload as { itemName: string; storeId?: string | null; sectionName?: string | null };
+          const fields: { store_id?: string | null; section_name?: string | null } = {};
+          if (payload.storeId !== undefined) {
+            fields.store_id = payload.storeId ? (await getTempIdMapping(payload.storeId)) ?? payload.storeId : null;
+          }
+          if (payload.sectionName !== undefined) {
+            fields.section_name = payload.sectionName;
+          }
+          await putItemDefaultAPI(payload.itemName, fields);
         }
         if (change.id) {
           await removePendingChange(change.id);

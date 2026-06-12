@@ -48,8 +48,14 @@ async function healthFetch(): Promise<boolean> {
       method: 'GET',
       signal: controller.signal,
       cache: 'no-store',
+      redirect: 'manual',
     });
     clearTimeout(timeoutId);
+    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+      // An auth proxy (Cloudflare Access) is redirecting the API to its login
+      window.dispatchEvent(new CustomEvent('auth-required'));
+      return false;
+    }
     if (!response.ok) return false;
     const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
     if (contentType.startsWith('text/html')) {

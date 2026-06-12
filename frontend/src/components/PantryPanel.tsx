@@ -2,8 +2,11 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { usePantry } from '../hooks/usePantry';
 import { PantrySection } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
+import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
+import { exitEditAnchored } from '../utils/exitEditAnchored';
+import { getEditHighlight } from '../utils/editHighlightColors';
 
-export function PantryPanel() {
+export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightColor?: string } = {}) {
   const { sections, loading, addSection, deleteSection, addItem, updateItem, adjustQuantity, removeItem, clearAll, reorderSections, reorderItems, renameSection, moveItem } = usePantry();
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
   const [newItemName, setNewItemName] = useState('');
@@ -159,7 +162,10 @@ export function PantryPanel() {
   }
 
   return (
-    <div>
+    <div
+      className="edit-accent-scope"
+      style={{ '--edit-accent': getEditHighlight(editHighlightColor).accent } as React.CSSProperties}
+    >
       {/* Sticky header: action bar */}
       <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
       {/* Action bar */}
@@ -269,6 +275,7 @@ export function PantryPanel() {
               }}
             >
               <PantrySectionCard
+                editHighlightColor={editHighlightColor}
                 section={section}
                 sectionDragHandlers={getSectionDragHandlers(sectionIndex)}
                 sectionHandleMouseDown={getSectionHandleMouseDown(sectionIndex)}
@@ -303,6 +310,7 @@ export function PantryPanel() {
 
 interface PantrySectionCardProps {
   section: PantrySection;
+  editHighlightColor: string;
   sectionDragHandlers: ReturnType<ReturnType<typeof useDragReorder>['getDragHandlers']>;
   sectionHandleMouseDown: (e: React.MouseEvent) => void;
   isSectionDragging: boolean;
@@ -329,6 +337,7 @@ interface PantrySectionCardProps {
 
 function PantrySectionCard({
   section,
+  editHighlightColor,
   sectionDragHandlers,
   sectionHandleMouseDown,
   isSectionDragging,
@@ -408,7 +417,8 @@ function PantrySectionCard({
                 if (e.key === 'Escape') { setEditNameValue(section.name); setIsEditingName(false); }
               }}
               onBlur={commitRename}
-              className="font-semibold text-sm bg-white dark:bg-gray-700 border border-blue-400 dark:border-blue-500 rounded px-1.5 py-0.5 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-0"
+              className="font-semibold text-sm bg-white dark:bg-gray-700 border rounded px-1.5 py-0.5 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 min-w-0"
+              style={{ borderColor: 'var(--edit-accent)' }}
             />
           ) : (
             <h3
@@ -470,6 +480,7 @@ function PantrySectionCard({
               >
                 <PantryItemRow
                   item={item}
+                  editHighlightColor={editHighlightColor}
                   onUpdate={onUpdateItem}
                   onAdjustQuantity={onAdjustQuantity}
                   onDelete={onDelete}
@@ -541,6 +552,7 @@ function PantrySectionCard({
 }
 
 interface PantryItemRowProps {
+  editHighlightColor: string;
   item: PantrySection['items'][number];
   onUpdate: (id: string, updates: { name?: string; quantity?: number }) => void;
   onAdjustQuantity: (id: string, delta: number) => void;
@@ -550,7 +562,7 @@ interface PantryItemRowProps {
   isDragging?: boolean;
 }
 
-function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandlers, handleMouseDown, isDragging }: PantryItemRowProps) {
+function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandlers, handleMouseDown, isDragging, editHighlightColor }: PantryItemRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -558,6 +570,8 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
   const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const swipeModeRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const editFormRef = useRef<HTMLDivElement>(null);
+  useScrollIntoViewOnEdit(editFormRef, isEditing);
 
   const SWIPE_THRESHOLD = 50;
   const SWIPE_MAX = 80;
@@ -567,18 +581,23 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
     setIsEditing(true);
   }, [item.name]);
 
+  const exitEditMode = useCallback(() => {
+    const anchor = (editFormRef.current?.closest('[data-drag-index]') ?? editFormRef.current) as HTMLElement | null;
+    exitEditAnchored(anchor, () => setIsEditing(false));
+  }, []);
+
   const commitEdit = useCallback(() => {
     const trimmedName = editName.trim();
     if (trimmedName && trimmedName !== item.name) {
       onUpdate(item.id, { name: trimmedName });
     }
-    setIsEditing(false);
-  }, [editName, item.id, item.name, onUpdate]);
+    exitEditMode();
+  }, [editName, item.id, item.name, onUpdate, exitEditMode]);
 
   const cancelEdit = useCallback(() => {
-    setIsEditing(false);
+    exitEditMode();
     setEditName(item.name);
-  }, [item.name]);
+  }, [item.name, exitEditMode]);
 
   useEffect(() => {
     if (isEditing && nameInputRef.current) {
@@ -589,7 +608,7 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
 
   if (isEditing) {
     return (
-      <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 dark:bg-blue-900/20">
+      <div ref={editFormRef} className={`flex items-center gap-2 px-4 py-1.5 ${getEditHighlight(editHighlightColor).form}`}>
         <input
           ref={nameInputRef}
           type="text"

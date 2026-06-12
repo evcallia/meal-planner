@@ -89,14 +89,20 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
     }
   };
 
+  // Guards the focus handler when clear programmatically focuses the input:
+  // the parent's selectedStoreId prop hasn't updated yet, so onFocus would
+  // repopulate the query with the store name we just removed.
   const justClearedRef = useRef(false);
 
   const handleClear = () => {
-    justClearedRef.current = true;
+    justClearedRef.current = document.activeElement !== inputRef.current;
+    onSelect(null);
     setQuery('');
     open();
-    setTimeout(() => inputRef.current?.focus(), 0);
+    inputRef.current?.focus();
   };
+
+  const displayValue = isOpen ? query : (selectedStore?.name ?? '');
 
   return (
     <div ref={containerRef} className="relative">
@@ -105,18 +111,24 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
           <input
             ref={inputRef}
             type="text"
-            value={isOpen ? query : (selectedStore?.name ?? '')}
+            value={displayValue}
             onChange={(e) => { setQuery(e.target.value); open(); }}
             onFocus={() => {
-              if (justClearedRef.current) { justClearedRef.current = false; return; }
+              if (justClearedRef.current) {
+                justClearedRef.current = false;
+                open();
+                return;
+              }
               setQuery(selectedStore?.name ?? '');
               open();
             }}
+            onBlur={() => close()}
             placeholder="Assign store..."
-            className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full pl-3 pr-7 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-          {selectedStore && !isOpen && (
+          {displayValue && (
             <button
+              onMouseDown={e => e.preventDefault()}
               onClick={handleClear}
               aria-label="Remove store"
               className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
@@ -133,6 +145,7 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
           {filtered.map(store => (
             <button
               key={store.id}
+              onMouseDown={e => e.preventDefault()}
               onClick={() => handleSelect(store)}
               className="w-full text-left px-3 py-2 text-sm text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700"
             >
@@ -141,6 +154,7 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
           ))}
           {query.trim() && !exactMatch && (
             <button
+              onMouseDown={e => e.preventDefault()}
               onClick={handleCreate}
               className="w-full text-left px-3 py-2 text-sm text-blue-500 hover:bg-gray-100 dark:hover:bg-gray-700"
             >

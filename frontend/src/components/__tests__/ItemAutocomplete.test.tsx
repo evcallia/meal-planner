@@ -1,12 +1,13 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { ItemAutocomplete } from '../ItemAutocomplete';
+import type { ItemDefaultEntry } from '../../hooks/useGroceryList';
 
-const items = new Map<string, string | null>([
-  ['sweet potato', 'store-1'],
-  ['sweet chili sauce', 'store-2'],
-  ['milk', null],
-  ['bread', 'store-1'],
+const items = new Map<string, ItemDefaultEntry>([
+  ['sweet potato', { storeId: 'store-1', sectionName: 'Produce' }],
+  ['sweet chili sauce', { storeId: 'store-2', sectionName: null }],
+  ['milk', { storeId: null, sectionName: 'Dairy' }],
+  ['bread', { storeId: 'store-1', sectionName: null }],
 ]);
 const currentListItemNames = new Set(['milk', 'bread']);
 

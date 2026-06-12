@@ -28,7 +28,8 @@ Key details:
 - `fetchAPI` handles 204 No Content responses by returning `undefined` without parsing JSON body
 
 ## PWA Re-Auth Flow
-- Detection in `fetchAPI`: 401 from any path except `/auth/me`, 403 + HTML body, or 2xx + HTML body (CF interstitial) → dispatch `'auth-required'` window event + throw `AuthError`. `healthFetch` in `useOnlineStatus` also dispatches on HTML from `/api/health`
+- Detection in `fetchAPI`: 401 from any path except `/auth/me`, 403 + HTML body, 2xx + HTML body (CF interstitial), or ANY redirect (`opaqueredirect`/3xx) → dispatch `'auth-required'` window event + throw `AuthError`. `healthFetch` in `useOnlineStatus` also dispatches on HTML or redirect from `/api/health`
+- **`redirect: 'manual'` on all API fetches**: Cloudflare Access answers expired sessions with a 302 to `cloudflareaccess.com`; following it fails as a cross-origin TypeError indistinguishable from being offline. Manual mode surfaces it as a detectable `opaqueredirect`. API endpoints never legitimately redirect (OIDC redirects are full-page navigations, not fetches)
 - `useSync` and `useRealtime` each have a module-level `_authRequired` flag set by the `'auth-required'` listener — sync drains and SSE reconnects pause until full-page navigation resets the modules
 - `useSync` sets `status = 'auth-required'` on the event; queued changes are untouched and sync resumes after the post-login reload
 - `ReAuthModal` (non-dismissable, shows pending count) renders in App.tsx when `status === 'auth-required'`; Sign in button does full-window `window.location.href = getLoginUrl()`
@@ -64,12 +65,15 @@ Key details:
 - **IndexedDB persistence**: State sync `useEffect` in each hook persists to IDB whenever state changes, keeping offline cache current after SSE deltas
 - All entities referenced by server-assigned ID in SSE payloads — never match on mutable fields like names
 
-## Item Defaults (Store Auto-Populate)
-- `item_defaults` table: `item_name` (PK, lowercase), `store_id` (FK → stores, nullable)
-- `GET /api/grocery/item-defaults` returns all defaults with non-null store_id
+## Item Defaults (Store + Section Auto-Populate)
+- `item_defaults` table: `item_name` (PK, lowercase), `store_id` (FK → stores, nullable), `section_name` (Text, nullable — by NAME since section IDs are unstable across replace ops)
+- `GET /api/grocery/item-defaults` returns defaults with non-null store_id OR section_name
 - `DELETE /api/grocery/item-defaults/{item_name}` — idempotent (204), case-insensitive via `func.lower()`
-- `PUT /api/grocery/item-defaults/{item_name}` — upserts item default (used by undo restore)
-- `ItemDefaultSchema` in schemas.py: `item_name`, `store_id`
+- `PUT /api/grocery/item-defaults/{item_name}` — PARTIAL upsert via `model_fields_set` (`store_id` and/or `section_name`); used by undo restore
+- `ItemDefaultSchema` in schemas.py: `item_name`, `store_id`, `section_name`
+- **Server writes section defaults** on item add (POST /items), cross-section move (PATCH /items/{id}/move), and list replace (PUT /api/grocery — merge/paste path); store defaults written on PATCH store_id as before
+- **Quick-add autofill**: exact item-name match fills store AND section (section combobox only overwritten when a remembered name exists). Per-section inline add fills store only — never moves the item
+- `itemDefaultsMap` values are `{ storeId, sectionName }` (per-field merge: current-list values win; IDB fills gaps). `putLocalItemDefault(name, { storeId?, sectionName? })` is a partial read-modify-write
 - Frontend caches in IDB `itemDefaults` store (version 8), synced on app load via `fetchAllData`
 - `useGroceryList` owns `idbDefaults` state and `itemDefaultsMap` (useMemo merging IDB defaults + current list items)
 - `ItemAutocomplete` component: filtered dropdown of previously-used items, title-cased display, X delete button for items not on current list. Used in both quick-add form and per-section inline add

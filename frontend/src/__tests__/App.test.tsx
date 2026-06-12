@@ -8,7 +8,7 @@ vi.mock('../components/CalendarView', () => ({
   CalendarView: vi.fn(({ onTodayRefReady }) => {
     return (
       <div data-testid="calendar-view">
-        <div 
+        <div
           data-testid="today-element"
           ref={(el) => onTodayRefReady && onTodayRefReady(el)}
         >
@@ -16,7 +16,9 @@ vi.mock('../components/CalendarView', () => ({
         </div>
       </div>
     );
-  })
+  }),
+  resetCalendarSessionLoaded: vi.fn(),
+  markCalendarSessionLoaded: vi.fn(),
 }));
 
 vi.mock('../components/MealIdeasPanel', () => ({
@@ -90,6 +92,10 @@ vi.mock('../api/client', () => ({
   deleteMealIdea: vi.fn(),
   getGroceryList: vi.fn(() => Promise.resolve([])),
   getStores: vi.fn(() => Promise.resolve([])),
+  getEvents: vi.fn(() => Promise.resolve({})),
+  getHiddenCalendarEvents: vi.fn(() => Promise.resolve([])),
+  getItemDefaults: vi.fn(() => Promise.resolve([])),
+  refreshCalendarCache: vi.fn(() => Promise.resolve({ message: '' })),
 }));
 
 vi.mock('../db', () => ({
@@ -114,6 +120,12 @@ vi.mock('../db', () => ({
   saveLocalStores: vi.fn(() => Promise.resolve()),
   clearAllLocalData: vi.fn(() => Promise.resolve()),
   getPendingChanges: vi.fn(() => Promise.resolve([])),
+  saveLocalCalendarEvents: vi.fn(() => Promise.resolve()),
+  saveLocalHiddenEvents: vi.fn(() => Promise.resolve()),
+  clearLocalHiddenEvents: vi.fn(() => Promise.resolve()),
+  saveLocalItemDefaults: vi.fn(() => Promise.resolve()),
+  deleteLocalHiddenEvent: vi.fn(() => Promise.resolve()),
+  saveLocalHiddenEvent: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('../utils/scroll', () => ({
@@ -132,9 +144,10 @@ window.IntersectionObserver = mockIntersectionObserver;
 import { useSync } from '../hooks/useSync';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSettings } from '../hooks/useSettings';
-import { getCurrentUser, logout } from '../api/client';
+import { getCurrentUser, logout, refreshCalendarCache } from '../api/client';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { getDays, updateNotes } from '../api/client';
+import { __resetCalendarFeedRefreshForTests } from '../App';
 import { queueChange, getLocalNote, saveLocalNote } from '../db';
 import { scrollToElementWithOffset } from '../utils/scroll';
 
@@ -151,19 +164,21 @@ describe('App', () => {
   const mockGetLocalNote = vi.mocked(getLocalNote);
   const mockSaveLocalNote = vi.mocked(saveLocalNote);
   const mockScrollToElementWithOffset = vi.mocked(scrollToElementWithOffset);
+  const mockRefreshCalendarCache = vi.mocked(refreshCalendarCache);
 
   beforeEach(() => {
     vi.clearAllMocks();
-    
+    __resetCalendarFeedRefreshForTests();
+
     mockUseSync.mockReturnValue({ status: 'online', pendingCount: 0 });
-    
+
     const mockToggle = vi.fn();
     mockUseDarkMode.mockReturnValue({ isDark: false, toggle: mockToggle });
-    
+
     const mockUpdateSettings = vi.fn();
-    mockUseSettings.mockReturnValue({ 
-      settings: { showItemizedColumn: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1 }, 
-      updateSettings: mockUpdateSettings 
+    mockUseSettings.mockReturnValue({
+      settings: { showItemizedColumn: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1 },
+      updateSettings: mockUpdateSettings
     });
     mockUseOnlineStatus.mockReturnValue(true);
   });
@@ -458,5 +473,46 @@ describe('App', () => {
     fireEvent.click(screen.getByLabelText('Jump to today'));
 
     expect(mockScrollToElementWithOffset).toHaveBeenCalled();
+  });
+
+  it('triggers a server calendar refresh on focus at most once per cooldown', async () => {
+    __resetCalendarFeedRefreshForTests();
+    const mockUser = { id: '123', name: 'Test User', email: 'test@example.com' };
+    mockGetCurrentUser.mockResolvedValue(mockUser);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
+    });
+
+    // Reset call count after initial render (fetchAllData may call related things)
+    mockRefreshCalendarCache.mockClear();
+
+    // First hide/show cycle — should trigger refreshCalendarCache
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(mockRefreshCalendarCache).toHaveBeenCalledTimes(1);
+
+    // Second hide/show cycle — cooldown still active, should NOT call again
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(mockRefreshCalendarCache).toHaveBeenCalledTimes(1); // still — cooldown
   });
 });

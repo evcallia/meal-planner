@@ -52,6 +52,13 @@ interface GrocerySSEPayload {
 
 const GROCERY_STORAGE_KEY = 'meal-planner-grocery';
 
+// Remembered defaults for an item name (lowercase) — used to auto-populate
+// the store and quick-add section for previously-used items.
+export interface ItemDefaultEntry {
+  storeId: string | null;
+  sectionName: string | null;
+}
+
 function saveGroceryToLocalStorage(sections: GrocerySection[]) {
   try {
     localStorage.setItem(GROCERY_STORAGE_KEY, JSON.stringify(sections));
@@ -82,7 +89,7 @@ export function markGrocerySessionLoaded() { grocerySessionLoaded = true; }
 // Module-level setter refs — survive across unmount/remount so undo closures
 // from a previous mount can update the current mount's state
 let _liveSectionsDispatch: React.Dispatch<React.SetStateAction<GrocerySection[]>> | null = null;
-let _liveIdbDefaultsDispatch: React.Dispatch<React.SetStateAction<Map<string, string | null>>> | null = null;
+let _liveIdbDefaultsDispatch: React.Dispatch<React.SetStateAction<Map<string, ItemDefaultEntry>>> | null = null;
 
 export function useGroceryList() {
   const [sections, _setSections] = useState<GrocerySection[]>([]);
@@ -94,8 +101,8 @@ export function useGroceryList() {
   const isOnline = useOnlineStatus();
   const { pushAction } = useUndo();
 
-  // Item defaults cache for offline store auto-populate
-  const [idbDefaults, _setIdbDefaults] = useState<Map<string, string | null>>(new Map());
+  // Item defaults cache for offline store/section auto-populate
+  const [idbDefaults, _setIdbDefaults] = useState<Map<string, ItemDefaultEntry>>(new Map());
   _liveIdbDefaultsDispatch = _setIdbDefaults;
   const setIdbDefaults = useCallback<typeof _setIdbDefaults>(
     (action) => _liveIdbDefaultsDispatch?.(action), []
@@ -103,8 +110,8 @@ export function useGroceryList() {
   useEffect(() => {
     const load = () => {
       getLocalItemDefaults().then(defaults => {
-        const map = new Map<string, string | null>();
-        for (const d of defaults) map.set(d.item_name, d.store_id);
+        const map = new Map<string, ItemDefaultEntry>();
+        for (const d of defaults) map.set(d.item_name, { storeId: d.store_id, sectionName: d.section_name ?? null });
         setIdbDefaults(map);
       }).catch(() => {});
     };
@@ -113,14 +120,20 @@ export function useGroceryList() {
     return () => window.removeEventListener('pending-changes-synced', load);
   }, []);
 
-  // Merged map: IDB defaults + current list items (list items take priority)
+  // Merged map: IDB defaults + current list items. List items take priority
+  // per-field: their section name always wins; their store wins when set,
+  // otherwise the IDB store is retained.
   const itemDefaultsMap = useMemo(() => {
-    const map = new Map(idbDefaults);
+    const map = new Map<string, ItemDefaultEntry>();
+    for (const [name, entry] of idbDefaults) map.set(name, { ...entry });
     for (const section of sections) {
       for (const item of section.items) {
-        if (item.store_id) {
-          map.set(item.name.toLowerCase(), item.store_id);
-        }
+        const key = item.name.toLowerCase();
+        const existing = map.get(key);
+        map.set(key, {
+          storeId: item.store_id ?? existing?.storeId ?? null,
+          sectionName: section.name,
+        });
       }
     }
     return map;
@@ -177,6 +190,18 @@ export function useGroceryList() {
   // when going online→offline, which would overwrite in-memory optimistic state.
   const isOnlineRef = useRef(isOnline);
   isOnlineRef.current = isOnline;
+
+  // Latest sections — lets callbacks read fresh state when callers chain
+  // mutations across awaits (e.g. createSection then moveItem) where the
+  // closed-over `sections` would be stale.
+  //
+  // IMPORTANT: the render-time assignment below is NOT synchronously visible
+  // between two awaits in the same async function. Any mutation that calls
+  // setSections and needs that new state visible to code later in the same
+  // async chain MUST also assign sectionsRef.current immediately after
+  // setSections (currently only createSection and moveItem do this).
+  const sectionsRef = useRef(sections);
+  sectionsRef.current = sections;
 
   // Load grocery list (cache-first: show cached data immediately, fetch API only if cache empty)
   // skipApi: true to force cache-only (used by deferred load, pending-changes-synced calls it without skipApi to get fresh data)
@@ -777,14 +802,26 @@ export function useGroceryList() {
           await deleteLocalGroceryItem(tempId);
         }
         // Update local item default cache with server's auto-populated store
-        if (created.store_id) {
-          putLocalItemDefault(trimmedName.toLowerCase(), created.store_id).catch(() => {});
-        }
+        // and the target section (server writes the section default itself)
+        putLocalItemDefault(trimmedName.toLowerCase(), {
+          ...(created.store_id ? { storeId: created.store_id } : {}),
+          sectionName: section.name,
+        }).catch(() => {});
       } catch {
         await queueChange('grocery-add', '', { id: tempId, sectionId, name: trimmedName, quantity, store_id: resolvedStoreId });
+        putLocalItemDefault(trimmedName.toLowerCase(), {
+          ...(resolvedStoreId ? { storeId: resolvedStoreId } : {}),
+          sectionName: section.name,
+        }).catch(() => {});
       } finally { settleMutation(); }
     } else {
       await queueChange('grocery-add', '', { id: tempId, sectionId, name: trimmedName, quantity, store_id: resolvedStoreId });
+      // Warm the local default cache so autofill works offline immediately.
+      // The server-side row is written by the queued grocery-add on sync.
+      putLocalItemDefault(trimmedName.toLowerCase(), {
+        ...(resolvedStoreId ? { storeId: resolvedStoreId } : {}),
+        sectionName: section.name,
+      }).catch(() => {});
     }
 
     pushAction({
@@ -1153,7 +1190,7 @@ export function useGroceryList() {
         // Update local item default when store changes
         if (updates.store_id !== undefined) {
           const itemName = (updates.name ?? item.name).trim().toLowerCase();
-          putLocalItemDefault(itemName, updates.store_id).catch(() => {});
+          putLocalItemDefault(itemName, { storeId: updates.store_id }).catch(() => {});
         }
       } catch {
         await queueChange('grocery-edit', '', { id: itemId, ...updates });
@@ -1162,7 +1199,7 @@ export function useGroceryList() {
       // Offline: still update local item default for offline auto-populate
       if (updates.store_id !== undefined) {
         const itemName = (updates.name ?? item.name).trim().toLowerCase();
-        putLocalItemDefault(itemName, updates.store_id).catch(() => {});
+        putLocalItemDefault(itemName, { storeId: updates.store_id }).catch(() => {});
       }
       await queueChange('grocery-edit', '', { id: itemId, ...updates });
     }
@@ -1667,12 +1704,49 @@ export function useGroceryList() {
     }
   }, [sections, isOnline, pushAction]);
 
+  // Create a new empty section (no undo push — used by edit-form section moves,
+  // where the subsequent moveItem carries its own undo)
+  const createSection = useCallback(async (name: string): Promise<GrocerySection> => {
+    const position = sectionsRef.current.length;
+    const tempId = generateTempId();
+    const newSection: GrocerySection = { id: tempId, name, position, items: [] };
+
+    optimisticVersionRef.current++;
+    pendingMutationsRef.current++;
+    const nextSections = [...sectionsRef.current, newSection];
+    setSections(nextSections);
+    sectionsRef.current = nextSections;
+    await saveLocalGrocerySections(nextSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
+
+    let resultSection = newSection;
+    if (isOnlineRef.current) {
+      try {
+        const created = await createGrocerySectionAPI(name, position);
+        remapId(tempId, created.id);
+        await saveTempIdMapping(tempId, created.id);
+        optimisticVersionRef.current++;
+        setSections(prev => prev.map(s => (s.id === tempId ? { ...s, id: created.id } : s)));
+        sectionsRef.current = sectionsRef.current.map(s => (s.id === tempId ? { ...s, id: created.id } : s));
+        resultSection = { ...newSection, id: created.id };
+      } catch {
+        await queueChange('grocery-create-section', '', { tempId, name, position });
+      }
+    } else {
+      await queueChange('grocery-create-section', '', { tempId, name, position });
+    }
+    settleMutation();
+    return resultSection;
+  }, [settleMutation, remapId]);
+
   // Move item between sections
   const moveItem = useCallback(async (fromSectionId: string, fromIndex: number, toSectionId: string, toIndex: number) => {
     if (fromSectionId === toSectionId) return;
 
-    const fromSection = sections.find(s => s.id === fromSectionId);
-    const toSection = sections.find(s => s.id === toSectionId);
+    // Read from the ref — callers may have just awaited createSection, whose
+    // new section isn't in this closure's `sections` yet
+    const currentSections = sectionsRef.current;
+    const fromSection = currentSections.find(s => s.id === fromSectionId);
+    const toSection = currentSections.find(s => s.id === toSectionId);
     if (!fromSection || !toSection) return;
 
     const unchecked = fromSection.items.filter(i => !i.checked);
@@ -1680,7 +1754,7 @@ export function useGroceryList() {
     if (!item) return;
 
     // Optimistic local update
-    const newSections = sections.map(s => {
+    const newSections = currentSections.map(s => {
       if (s.id === fromSectionId) {
         const items = s.items.filter(i => i.id !== item.id).map((i, idx) => ({ ...i, position: idx }));
         return { ...s, items };
@@ -1720,6 +1794,7 @@ export function useGroceryList() {
             return s;
           });
         });
+        putLocalItemDefault(item.name.trim().toLowerCase(), { sectionName: fromSection.name }).catch(() => {});
         if (isOnlineRef.current) {
           try { await moveGroceryItemAPI(currentItemId, fromSectionId, fromIndex); } catch {
             await queueChange('grocery-move-item', '', { id: currentItemId, toSectionId: fromSectionId, toPosition: fromIndex });
@@ -1750,6 +1825,7 @@ export function useGroceryList() {
             return s;
           });
         });
+        putLocalItemDefault(item.name.trim().toLowerCase(), { sectionName: toSection.name }).catch(() => {});
         if (isOnlineRef.current) {
           try { await moveGroceryItemAPI(currentItemId, toSectionId, toIndex); } catch {
             await queueChange('grocery-move-item', '', { id: currentItemId, toSectionId, toPosition: toIndex });
@@ -1763,6 +1839,10 @@ export function useGroceryList() {
 
     optimisticVersionRef.current++;
     setSections(newSections);
+    sectionsRef.current = newSections;
+
+    // Warm the local section default — the server writes its own row on move
+    putLocalItemDefault(item.name.trim().toLowerCase(), { sectionName: toSection.name }).catch(() => {});
 
     await saveLocalGrocerySections(newSections.map(s => ({ id: s.id, name: s.name, position: s.position })));
     await saveLocalGroceryItems(newSections.flatMap(s => s.items.map(i => ({
@@ -1797,7 +1877,9 @@ export function useGroceryList() {
 
   // Delete an item default from cache (with undo/redo + offline queue)
   const removeItemDefault = useCallback(async (itemName: string) => {
-    const prevStoreId = idbDefaults.get(itemName) ?? null;
+    const prevDefault = idbDefaults.get(itemName);
+    const prevStoreId = prevDefault?.storeId ?? null;
+    const prevSectionName = prevDefault?.sectionName ?? null;
 
     pushAction({
       type: 'delete-item-default',
@@ -1805,16 +1887,16 @@ export function useGroceryList() {
         // Restore to local state + IDB
         setIdbDefaults(prev => {
           const next = new Map(prev);
-          next.set(itemName, prevStoreId);
+          next.set(itemName, { storeId: prevStoreId, sectionName: prevSectionName });
           return next;
         });
-        await putLocalItemDefault(itemName, prevStoreId);
+        await putLocalItemDefault(itemName, { storeId: prevStoreId, sectionName: prevSectionName });
         if (isOnlineRef.current) {
-          try { await putItemDefaultAPI(itemName, prevStoreId); } catch {
-            await queueChange('item-default-put', '', { itemName, storeId: prevStoreId });
+          try { await putItemDefaultAPI(itemName, { store_id: prevStoreId, section_name: prevSectionName }); } catch {
+            await queueChange('item-default-put', '', { itemName, storeId: prevStoreId, sectionName: prevSectionName });
           }
         } else {
-          await queueChange('item-default-put', '', { itemName, storeId: prevStoreId });
+          await queueChange('item-default-put', '', { itemName, storeId: prevStoreId, sectionName: prevSectionName });
         }
       },
       redo: async () => {
@@ -1852,5 +1934,5 @@ export function useGroceryList() {
     }
   }, [idbDefaults, isOnline, pushAction]);
 
-  return { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, moveItem, batchUpdateStoreId, itemDefaultsMap, removeItemDefault };
+  return { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, createSection, moveItem, batchUpdateStoreId, itemDefaultsMap, removeItemDefault };
 }

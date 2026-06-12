@@ -58,7 +58,7 @@ vi.mock('../DayCard', () => ({
 }));
 
 import { getDays, getEvents, updateNotes, toggleItemized, hideCalendarEvent } from '../../api/client';
-import { saveLocalNote, queueChange, getLocalNotesForRange, getLocalCalendarEventsForRange, getLocalHiddenEvents } from '../../db';
+import { saveLocalNote, queueChange, getLocalNotesForRange, getLocalCalendarEventsForRange, getLocalHiddenEvents, saveLocalCalendarEvents } from '../../db';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { DayCard } from '../DayCard';
 
@@ -531,5 +531,111 @@ describe('CalendarView', () => {
     const todayCall = mockDayCard.mock.calls.find(call => call[0].day.date === todayStr);
     expect(todayCall?.[0].crossDragTargetIndex).toBeNull();
     expect(todayCall?.[0].crossDragItemHeight).toBeUndefined();
+  });
+
+  it('clears events for in-window dates absent from calendar.refreshed payload', async () => {
+    const today = formatDate(new Date());
+    vi.mocked(getDays).mockResolvedValue([]);
+    vi.mocked(getEvents).mockResolvedValue({
+      [today]: [{
+        id: 'ev-1', uid: 'uid-1', calendar_name: 'Personal', title: 'Dentist',
+        start_time: `${today}T10:00:00`, end_time: `${today}T11:00:00`, all_day: false,
+      }],
+    });
+
+    render(<CalendarView onTodayRefReady={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId(`events-count-${today}`)).toHaveTextContent('1 events'));
+
+    // Upstream deletion: refresh payload covers the window but omits today's date
+    const windowStart = formatDate(addDays(new Date(), -28));
+    const windowEnd = formatDate(addDays(new Date(), 56));
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+        detail: {
+          type: 'calendar.refreshed',
+          payload: { events_by_date: {}, cache_start: windowStart, cache_end: windowEnd },
+          source_id: 'other-client',
+        },
+      }));
+    });
+
+    await waitFor(() => expect(screen.queryByTestId(`events-count-${today}`)).not.toBeInTheDocument());
+    expect(vi.mocked(saveLocalCalendarEvents)).toHaveBeenCalledWith(today, []);
+  });
+
+  it('does not clear events for dates outside the cache window', async () => {
+    const oldDate = formatDate(addDays(new Date(), -60)); // outside the -28 window below
+    vi.mocked(getDays).mockResolvedValue([]);
+    vi.mocked(getEvents).mockResolvedValue({});
+
+    render(<CalendarView onTodayRefReady={mockOnTodayRefReady} />);
+    await waitFor(() => expect(screen.getByTestId(`day-card-${formatDate(new Date())}`)).toBeInTheDocument());
+    vi.mocked(saveLocalCalendarEvents).mockClear();
+
+    const windowStart = formatDate(addDays(new Date(), -28));
+    const windowEnd = formatDate(addDays(new Date(), 56));
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+        detail: {
+          type: 'calendar.refreshed',
+          payload: { events_by_date: {}, cache_start: windowStart, cache_end: windowEnd },
+          source_id: 'other-client',
+        },
+      }));
+    });
+
+    // In-window dates get cleared...
+    expect(vi.mocked(saveLocalCalendarEvents)).toHaveBeenCalledWith(windowStart, []);
+    // ...but the out-of-window date is never touched
+    expect(vi.mocked(saveLocalCalendarEvents)).not.toHaveBeenCalledWith(oldDate, []);
+  });
+
+  it('keeps days appended by infinite scroll when the initial fetch resolves later', async () => {
+    // CalendarView keys day cards by LOCAL dates; the file-level formatDate is
+    // UTC-based and drifts one day ahead in evening runs, pushing today+13
+    // past the displayed range. Use local dates for this test's assertions.
+    const formatLocalDate = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    let ioCallback: IntersectionObserverCallback | null = null;
+    class MockIntersectionObserver {
+      constructor(cb: IntersectionObserverCallback) {
+        ioCallback = cb;
+      }
+      observe = vi.fn();
+      disconnect = vi.fn();
+      unobserve = vi.fn();
+    }
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+
+    // Capture one resolver per getDays call so we control resolution order
+    const dayResolvers: Array<(v: unknown) => void> = [];
+    vi.mocked(getDays).mockImplementation(
+      () => new Promise(resolve => { dayResolvers.push(resolve); }) as never
+    );
+    vi.mocked(getEvents).mockResolvedValue({});
+
+    render(<CalendarView onTodayRefReady={() => {}} />);
+
+    const today = formatLocalDate(new Date());
+    await waitFor(() => expect(screen.getByTestId(`day-card-${today}`)).toBeInTheDocument());
+
+    // Infinite scroll fires while the init fetch (dayResolvers[0]) is still pending
+    await act(async () => {
+      ioCallback?.([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+    });
+    const week2Day = formatLocalDate(addDays(new Date(), 7));
+    await waitFor(() => expect(screen.getByTestId(`day-card-${week2Day}`)).toBeInTheDocument());
+
+    // Resolve loadNextWeek's own API call (second), then the init fetch (first)
+    await act(async () => { dayResolvers[1]?.([]); });
+    await act(async () => { dayResolvers[0]?.([]); });
+
+    // Week 1 and week 2 cards must both still be displayed
+    expect(screen.getByTestId(`day-card-${today}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`day-card-${week2Day}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`day-card-${formatLocalDate(addDays(new Date(), 13))}`)).toBeInTheDocument();
+
+    // Restore the setup.ts IntersectionObserver so the stub doesn't leak into later tests
+    vi.unstubAllGlobals();
   });
 });

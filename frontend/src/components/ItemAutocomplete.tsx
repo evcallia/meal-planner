@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { toTitleCase } from '../utils/titleCase';
+import type { ItemDefaultEntry } from '../hooks/useGroceryList';
 
 interface ItemAutocompleteProps {
   value: string;
   onChange: (value: string) => void;
   onSelect: (itemName: string) => void;
-  items: Map<string, string | null>;
+  items: Map<string, ItemDefaultEntry>;
   currentListItemNames: Set<string>;
   onDelete: (itemName: string) => void;
   placeholder?: string;

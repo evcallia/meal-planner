@@ -121,7 +121,12 @@ body {
 }
 
 .keyboard-open #root > div {
-  height: 100% !important;
+  /* Visual viewport height (set by useKeyboardOpen): the app shell must end
+     ABOVE the keyboard, otherwise the bottom ~keyboard-height of <main> sits
+     behind it and the last items can never be scrolled into view.
+     min-height must be neutralized or the div's min-h-screen wins. */
+  height: var(--vvh, 100%) !important;
+  min-height: 0 !important;
   overflow: hidden !important;
 }
 
@@ -188,4 +193,17 @@ body {
   .drag-handle:active {
     cursor: grabbing;
   }
+}
+
+/* Edit-accent scope: recolors the focus ring of text boxes to the user's
+   chosen edit-highlight color. --edit-accent is set inline on the grocery
+   and pantry roots; the rule outranks Tailwind's focus:ring-blue-500
+   utilities by specificity, so individual inputs don't need changes. */
+.edit-accent-scope input:focus,
+.edit-accent-scope textarea:focus,
+.edit-accent-scope select:focus {
+  --tw-ring-color: var(--edit-accent);
+  /* Also covers inputs that highlight via border instead of ring
+     (e.g. focus:border-blue-500 underline inputs) */
+  border-color: var(--edit-accent);
 }

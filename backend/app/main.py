@@ -70,19 +70,22 @@ STATIC_DIR = Path(__file__).parent.parent / "static"
 
 
 def cleanup_old_data():
-    """Delete meal notes and cached calendar events older than 30 days."""
+    """Delete old meal notes (configurable retention) and stale cached calendar events."""
     db = SessionLocal()
     try:
-        cutoff = date.today() - timedelta(days=30)
+        notes_cutoff = date.today() - timedelta(days=settings.meal_history_retention_days)
+        events_cutoff = date.today() - timedelta(days=30)
 
-        # Clean up old meal notes
-        notes_deleted = db.execute(delete(MealNote).where(MealNote.date < cutoff))
-
-        # Clean up old cached calendar events
-        events_deleted = db.execute(delete(CachedCalendarEvent).where(CachedCalendarEvent.event_date < cutoff))
+        notes_deleted = db.execute(delete(MealNote).where(MealNote.date < notes_cutoff))
+        events_deleted = db.execute(
+            delete(CachedCalendarEvent).where(CachedCalendarEvent.event_date < events_cutoff)
+        )
 
         db.commit()
-        print(f"Cleaned up data older than {cutoff}: {notes_deleted.rowcount} meal notes, {events_deleted.rowcount} cached events")
+        print(
+            f"Cleaned up {notes_deleted.rowcount} meal notes older than {notes_cutoff} "
+            f"and {events_deleted.rowcount} cached events older than {events_cutoff}"
+        )
     finally:
         db.close()
 
@@ -169,11 +172,20 @@ def run_migrations():
                 CREATE TABLE item_defaults (
                     id UUID PRIMARY KEY,
                     item_name TEXT UNIQUE NOT NULL,
-                    store_id UUID REFERENCES stores(id) ON DELETE SET NULL
+                    store_id UUID REFERENCES stores(id) ON DELETE SET NULL,
+                    section_name TEXT
                 )
             """))
             conn.commit()
         print("Migration complete: created item_defaults table")
+    else:
+        item_default_columns = [col["name"] for col in inspector.get_columns("item_defaults")]
+        if "section_name" not in item_default_columns:
+            print("Adding section_name column to item_defaults...")
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE item_defaults ADD COLUMN section_name TEXT"))
+                conn.commit()
+            print("Migration complete: added section_name column")
 
     # Drop the broken functional index if it exists (replaced with simple unique constraint)
     try:

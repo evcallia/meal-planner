@@ -150,6 +150,7 @@ interface CalendarViewProps {
   showHolidays?: boolean;
   holidayColor?: string;
   calendarColor?: string;
+  editHighlightColor?: string;
 }
 
 // Track which date ranges have finished loading events
@@ -157,7 +158,7 @@ type EventsLoadState = 'loading' | 'loaded' | 'error';
 
 let _liveDaysDispatch: React.Dispatch<React.SetStateAction<DayData[]>> | null = null;
 
-export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false, showAllEvents = false, showHolidays = true, holidayColor = 'red', calendarColor = 'amber' }: CalendarViewProps) {
+export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false, showAllEvents = false, showHolidays = true, holidayColor = 'red', calendarColor = 'amber', editHighlightColor = 'emerald' }: CalendarViewProps) {
   // days = what's displayed in the UI
   const [days, _setDays] = useState<DayData[]>([]);
   _liveDaysDispatch = _setDays;
@@ -304,8 +305,12 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
         const eventsMap = await getEvents(startStr, endStr, true, showHolidaysRef.current);
         logDuration('calendar.events.request', requestStart, { start: startStr, end: endStr });
 
-        for (const [date, events] of Object.entries(eventsMap)) {
-          saveLocalCalendarEvents(date, events);
+        // Write every date in the requested range — dates absent from the
+        // response have zero events; writing [] clears stale entries left by
+        // upstream deletions/moves.
+        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+          const dateStr = formatDate(d);
+          saveLocalCalendarEvents(dateStr, eventsMap[dateStr] ?? []);
         }
 
         applyEvents(eventsMap);
@@ -401,15 +406,24 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             end: fullEndStr,
           });
 
-          // Split: display range gets rendered, rest goes to cache only
-          const displayData = allData.filter(d => d.date >= startStr && d.date <= endStr);
+          // Split: display range gets rendered, rest goes to cache only.
+          // Read display bounds from the refs at resolution time and MERGE into
+          // existing days — loadNextWeek may have appended more days while this
+          // fetch was in flight (replacing would wipe them).
+          const displayStartStr = formatDate(displayStartRef.current);
+          const displayEndStr = formatDate(displayEndRef.current);
+          const displayData = allData.filter(d => d.date >= displayStartStr && d.date <= displayEndStr);
           const renderStart = perfNow();
           setDays(prev => {
-            const prevEventsMap = new Map(prev.map(d => [d.date, d.events]));
-            return displayData.map(d => ({
-              ...d,
-              events: d.events.length > 0 ? d.events : (prevEventsMap.get(d.date) ?? []),
-            }));
+            const merged = new Map(prev.map(d => [d.date, d]));
+            for (const d of displayData) {
+              const existing = merged.get(d.date);
+              merged.set(d.date, {
+                ...d,
+                events: d.events.length > 0 ? d.events : (existing?.events ?? []),
+              });
+            }
+            return Array.from(merged.values()).sort((a, b) => a.date.localeCompare(b.date));
           });
           enqueueRenderLog('calendar.days.render', renderStart, { count: displayData.length });
 
@@ -527,23 +541,40 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
         }));
       }
       if (detail.type === 'calendar.refreshed') {
-        const payload = detail.payload as { events_by_date?: Record<string, CalendarEvent[]> };
+        const payload = detail.payload as {
+          events_by_date?: Record<string, CalendarEvent[]>;
+          cache_start?: string;
+          cache_end?: string;
+        };
         const eventsByDate = payload?.events_by_date;
         if (!eventsByDate) return;
+        const { cache_start: cacheStart, cache_end: cacheEnd } = payload;
+        const inWindow = (date: string) =>
+          cacheStart !== undefined && cacheEnd !== undefined && date >= cacheStart && date <= cacheEnd;
         // Save all events to IndexedDB for offline access
         for (const [date, events] of Object.entries(eventsByDate)) {
           saveLocalCalendarEvents(date, events);
         }
+        // Dates inside the refreshed window but absent from the payload now
+        // have zero events — clear their stale IDB entries.
+        if (cacheStart && cacheEnd) {
+          for (let d = new Date(cacheStart + 'T12:00:00'); formatDate(d) <= cacheEnd; d.setDate(d.getDate() + 1)) {
+            const dateStr = formatDate(d);
+            if (!(dateStr in eventsByDate)) {
+              saveLocalCalendarEvents(dateStr, []);
+            }
+          }
+        }
         // Update display with client-side filtering based on showAllEvents
         setDays(prev => prev.map(day => {
-          const dayEvents = eventsByDate[day.date];
+          const dayEvents = eventsByDate[day.date] ?? (inWindow(day.date) ? [] : undefined);
           if (dayEvents !== undefined) {
             const filtered = showAllEventsRef.current
               ? dayEvents
               : dayEvents.filter(event => !hiddenEventKeysRef.current.has(getEventHiddenKey(event)));
-            return { ...day, events: filtered };
+            return { ...day, events: [...filtered].sort(compareEvents) };
           }
-          // If not in the refreshed data, keep existing events
+          // Not in the refreshed data and outside the window: keep existing events
           return day;
         }));
       }
@@ -1504,6 +1535,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             onDeleteMeal={(lineIndex) => handleDeleteMeal(day.date, lineIndex)}
             holidayColor={holidayColor}
             calendarColor={calendarColor}
+            editHighlightColor={editHighlightColor}
           />
         </div>
       ))}

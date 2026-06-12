@@ -129,6 +129,7 @@ export interface LocalCalendarDay {
 export interface LocalItemDefault {
   item_name: string;
   store_id: string | null;
+  section_name?: string | null;
 }
 
 class MealPlannerDB extends Dexie {
@@ -542,7 +543,7 @@ export async function clearAllLocalData(): Promise<void> {
   ]);
 }
 
-// Item defaults (item_name → store_id mapping for auto-populate)
+// Item defaults (item_name → store/section mapping for auto-populate)
 export async function saveLocalItemDefaults(defaults: LocalItemDefault[]) {
   await db.itemDefaults.clear();
   if (defaults.length > 0) {
@@ -554,8 +555,18 @@ export async function getLocalItemDefaults(): Promise<LocalItemDefault[]> {
   return db.itemDefaults.toArray();
 }
 
-export async function putLocalItemDefault(itemName: string, storeId: string | null) {
-  await db.itemDefaults.put({ item_name: itemName, store_id: storeId });
+// Partial update: only fields explicitly provided are changed; the other
+// field is preserved from the existing row (read-modify-write).
+export async function putLocalItemDefault(
+  itemName: string,
+  fields: { storeId?: string | null; sectionName?: string | null },
+) {
+  const existing = await db.itemDefaults.get(itemName);
+  await db.itemDefaults.put({
+    item_name: itemName,
+    store_id: fields.storeId !== undefined ? fields.storeId : existing?.store_id ?? null,
+    section_name: fields.sectionName !== undefined ? fields.sectionName : existing?.section_name ?? null,
+  });
 }
 
 export async function deleteLocalItemDefault(itemName: string) {
