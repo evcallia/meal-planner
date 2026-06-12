@@ -672,6 +672,8 @@ export function GroceryListView({ compactView: _compactView, editHighlightColor 
                 <div className="flex gap-2 mb-2 relative z-20">
                   <div className="relative flex-1 min-w-0" ref={sectionDropdownRef}>
                     <label className="block text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-0.5 ml-1">Section</label>
+                    {/* Inner wrapper so the clear X centers on the input, not input+label */}
+                    <div className="relative">
                     <input
                       data-testid="quick-add-section"
                       type="text"
@@ -699,6 +701,7 @@ export function GroceryListView({ compactView: _compactView, editHighlightColor 
                         </svg>
                       </button>
                     )}
+                    </div>
                     {showSectionDropdown && filteredSections.length > 0 && (
                       <div className="absolute z-30 left-0 right-0 mt-1 glass-menu rounded-lg max-h-40 overflow-y-auto shadow-lg">
                         {filteredSections.map(s => (
