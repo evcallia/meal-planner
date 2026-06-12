@@ -59,6 +59,12 @@ describe('DayCard auto-save', () => {
     return screen.getByTestId('rich-text-editor')
   }
 
+  it('highlights the card with the edit color while editing', () => {
+    renderAndEdit()
+    const card = document.querySelector('[data-day-date="2024-02-15"]')
+    expect(card?.className).toContain('ring-emerald')
+  })
+
   it('auto-saves 1.5s after typing stops', () => {
     const editor = renderAndEdit()
 

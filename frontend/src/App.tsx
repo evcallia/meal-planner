@@ -286,6 +286,7 @@ function MealsPage({
           showHolidays={settings.showHolidays}
           holidayColor={settings.holidayColor}
           calendarColor={settings.calendarColor}
+          editHighlightColor={settings.editHighlightColor}
         />
       </main>
 
@@ -325,7 +326,7 @@ function GroceryPage({
     <>
       <PageHeader title="Grocery" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
-        <GroceryListView compactView={settings.compactView} />
+        <GroceryListView compactView={settings.compactView} editHighlightColor={settings.editHighlightColor} />
       </main>
     </>
   );
@@ -334,7 +335,7 @@ function GroceryPage({
 function PantryPage({
   user,
   status,
-  settings: _settings,
+  settings,
   onShowSettings,
   onLogout,
   updateAvailable,
@@ -350,7 +351,7 @@ function PantryPage({
     <>
       <PageHeader title="Pantry" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
-        <PantryPanel />
+        <PantryPanel editHighlightColor={settings.editHighlightColor} />
       </main>
     </>
   );

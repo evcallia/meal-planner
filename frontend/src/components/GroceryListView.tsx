@@ -9,15 +9,17 @@ import { StoreFilterBar } from './StoreFilterBar';
 import { ItemAutocomplete } from './ItemAutocomplete';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
+import { getEditHighlight } from '../utils/editHighlightColors';
 import { toTitleCase } from '../utils/titleCase';
 
 export const NONE_STORE_ID = '__none__';
 
 interface GroceryListViewProps {
   compactView?: boolean;
+  editHighlightColor?: string;
 }
 
-export function GroceryListView({ compactView: _compactView }: GroceryListViewProps) {
+export function GroceryListView({ compactView: _compactView, editHighlightColor = 'emerald' }: GroceryListViewProps) {
   const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, createSection, moveItem, batchUpdateStoreId, itemDefaultsMap, removeItemDefault } = useGroceryList();
   const { stores, createStore, renameStore, removeStore, reorderStores } = useStores({
     grocerySections: sections,
@@ -944,6 +946,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 currentListItemNames={currentListItemNames}
                 onDeleteItemDefault={removeItemDefault}
                 allSections={sections}
+                editHighlightColor={editHighlightColor}
                 onChangeSection={handleChangeItemSection}
               />
             </div>
@@ -973,6 +976,7 @@ export function GroceryListView({ compactView: _compactView }: GroceryListViewPr
                 commitEditingRef={commitEditingRef}
                 sectionName={sections.find(s => s.id === item.section_id)?.name ?? ''}
                 allSections={sections}
+                editHighlightColor={editHighlightColor}
                 onChangeSection={handleChangeItemSection}
               />
             ))}
@@ -1015,6 +1019,7 @@ interface SectionCardProps {
   currentListItemNames: Set<string>;
   onDeleteItemDefault: (itemName: string) => void;
   allSections: { id: string; name: string }[];
+  editHighlightColor: string;
   onChangeSection: (itemId: string, targetSectionName: string) => void;
 }
 
@@ -1049,6 +1054,7 @@ function SectionCard({
   currentListItemNames,
   onDeleteItemDefault,
   allSections,
+  editHighlightColor,
   onChangeSection,
 }: SectionCardProps) {
   const uncheckedItems = section.items.filter(i => !i.checked);
@@ -1172,6 +1178,7 @@ function SectionCard({
                   commitEditingRef={commitEditingRef}
                   sectionName={section.name}
                   allSections={allSections}
+                  editHighlightColor={editHighlightColor}
                   onChangeSection={onChangeSection}
                 />
               </div>
@@ -1318,10 +1325,11 @@ interface GroceryItemRowProps {
   commitEditingRef: React.MutableRefObject<(() => void) | null>;
   sectionName: string;
   allSections: { id: string; name: string }[];
+  editHighlightColor: string;
   onChangeSection: (itemId: string, targetSectionName: string) => void;
 }
 
-function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging, stores, onStoreAssign: _onStoreAssign, onCreateStore, editingItemId, onEditingItemChange, commitEditingRef, sectionName, allSections, onChangeSection }: GroceryItemRowProps) {
+function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging, stores, onStoreAssign: _onStoreAssign, onCreateStore, editingItemId, onEditingItemChange, commitEditingRef, sectionName, allSections, onChangeSection, editHighlightColor }: GroceryItemRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
   const isEditing = editingItemId === item.id;
@@ -1407,7 +1415,7 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
   if (isEditing) {
     const qtyNum = parseInt(editQuantity) || 0;
     return (
-      <div ref={editFormRef} className="px-4 py-1.5 bg-blue-50 dark:bg-blue-900/20 space-y-1.5">
+      <div ref={editFormRef} className={`px-4 py-1.5 space-y-1.5 ${getEditHighlight(editHighlightColor).form}`}>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 flex-shrink-0">
             <button

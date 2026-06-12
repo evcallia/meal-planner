@@ -150,6 +150,7 @@ interface CalendarViewProps {
   showHolidays?: boolean;
   holidayColor?: string;
   calendarColor?: string;
+  editHighlightColor?: string;
 }
 
 // Track which date ranges have finished loading events
@@ -157,7 +158,7 @@ type EventsLoadState = 'loading' | 'loaded' | 'error';
 
 let _liveDaysDispatch: React.Dispatch<React.SetStateAction<DayData[]>> | null = null;
 
-export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false, showAllEvents = false, showHolidays = true, holidayColor = 'red', calendarColor = 'amber' }: CalendarViewProps) {
+export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compactView = false, showAllEvents = false, showHolidays = true, holidayColor = 'red', calendarColor = 'amber', editHighlightColor = 'emerald' }: CalendarViewProps) {
   // days = what's displayed in the UI
   const [days, _setDays] = useState<DayData[]>([]);
   _liveDaysDispatch = _setDays;
@@ -1534,6 +1535,7 @@ export function CalendarView({ onTodayRefReady, showItemizedColumn = true, compa
             onDeleteMeal={(lineIndex) => handleDeleteMeal(day.date, lineIndex)}
             holidayColor={holidayColor}
             calendarColor={calendarColor}
+            editHighlightColor={editHighlightColor}
           />
         </div>
       ))}
