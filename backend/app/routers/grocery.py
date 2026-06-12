@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user
@@ -24,6 +24,21 @@ from app.schemas import (
 from app.realtime import broadcast_event
 
 router = APIRouter(prefix="/api/grocery", tags=["grocery"])
+
+
+def _upsert_section_default(db: Session, item_name: str, section_name: str) -> None:
+    """Remember the section an item was placed in (leaves store_id untouched)."""
+    normalized_name = item_name.strip().lower()
+    default = db.query(ItemDefault).filter(
+        ItemDefault.item_name == normalized_name
+    ).first()
+    if default:
+        default.section_name = section_name
+    else:
+        db.add(ItemDefault(item_name=normalized_name, section_name=section_name))
+        # Session has autoflush=False — flush so repeated upserts for the same
+        # item name (e.g. during a merge) see this row instead of double-inserting
+        db.flush()
 
 
 @router.get("", response_model=list[GrocerySectionSchema])
@@ -48,7 +63,9 @@ async def list_item_defaults(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    return db.query(ItemDefault).filter(ItemDefault.store_id.isnot(None)).all()
+    return db.query(ItemDefault).filter(
+        or_(ItemDefault.store_id.isnot(None), ItemDefault.section_name.isnot(None))
+    ).all()
 
 
 @router.delete("/item-defaults/{item_name}", status_code=204)
@@ -65,6 +82,7 @@ async def delete_item_default(
 
 class ItemDefaultUpsert(BaseModel):
     store_id: str | None = None
+    section_name: str | None = None
 
 
 @router.put("/item-defaults/{item_name}", status_code=204)
@@ -74,14 +92,16 @@ async def upsert_item_default(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    store_id = UUID(payload.store_id) if payload.store_id else None
     existing = db.query(ItemDefault).filter(
         func.lower(ItemDefault.item_name) == item_name.lower()
     ).first()
-    if existing:
-        existing.store_id = store_id
-    else:
-        db.add(ItemDefault(item_name=item_name.lower(), store_id=store_id))
+    if not existing:
+        existing = ItemDefault(item_name=item_name.lower())
+        db.add(existing)
+    if 'store_id' in payload.model_fields_set:
+        existing.store_id = UUID(payload.store_id) if payload.store_id else None
+    if 'section_name' in payload.model_fields_set:
+        existing.section_name = payload.section_name
     db.commit()
 
 
@@ -119,6 +139,8 @@ async def replace_grocery(
                 store_id=store_id,
             )
             db.add(grocery_item)
+            # Remember the section this item was placed in
+            _upsert_section_default(db, item.name, section.name)
         db.flush()
         sections.append(section)
 
@@ -342,6 +364,8 @@ async def add_grocery_item(
         store_id=store_id,
     )
     db.add(item)
+    # Remember the section this item was placed in
+    _upsert_section_default(db, payload.name, section.name)
     db.commit()
     db.refresh(item)
     await broadcast_event("grocery.updated", {
@@ -384,6 +408,10 @@ async def move_grocery_item(
     ).order_by(GroceryItem.position).all()
     for i, ti in enumerate(target_items):
         ti.position = i
+
+    # Remember the destination section for cross-section moves
+    if old_section_id != payload.to_section_id:
+        _upsert_section_default(db, item.name, target.name)
 
     db.commit()
     db.refresh(item)

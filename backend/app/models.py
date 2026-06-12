@@ -182,6 +182,7 @@ class ItemDefault(Base):
     store_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("stores.id", ondelete="SET NULL"), nullable=True
     )
+    section_name: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     store: Mapped["Store | None"] = relationship("Store")
 

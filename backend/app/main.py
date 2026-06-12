@@ -172,11 +172,20 @@ def run_migrations():
                 CREATE TABLE item_defaults (
                     id UUID PRIMARY KEY,
                     item_name TEXT UNIQUE NOT NULL,
-                    store_id UUID REFERENCES stores(id) ON DELETE SET NULL
+                    store_id UUID REFERENCES stores(id) ON DELETE SET NULL,
+                    section_name TEXT
                 )
             """))
             conn.commit()
         print("Migration complete: created item_defaults table")
+    else:
+        item_default_columns = [col["name"] for col in inspector.get_columns("item_defaults")]
+        if "section_name" not in item_default_columns:
+            print("Adding section_name column to item_defaults...")
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE item_defaults ADD COLUMN section_name TEXT"))
+                conn.commit()
+            print("Migration complete: added section_name column")
 
     # Drop the broken functional index if it exists (replaced with simple unique constraint)
     try:
