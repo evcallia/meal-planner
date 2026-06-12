@@ -36,6 +36,20 @@ class TestItemizedAlignment:
         note = put_notes(authenticated_client, "Tacos\nPizza night")
         assert items_map(note) == {0: False, 1: True}
 
+    def test_typo_fix_keeps_state(self, authenticated_client):
+        note = put_notes(authenticated_client, "Tacs\nPizza")
+        assert items_map(note) == {0: False, 1: False}
+        set_itemized(authenticated_client, 0)
+        note = put_notes(authenticated_client, "Tacos\nPizza")
+        assert items_map(note) == {0: True, 1: False}
+
+    def test_rewriting_line_to_different_meal_resets_state(self, authenticated_client):
+        note = put_notes(authenticated_client, "Tacos\nPizza")
+        assert items_map(note) == {0: False, 1: False}
+        set_itemized(authenticated_client, 0)
+        note = put_notes(authenticated_client, "Tandoori\nPizza")
+        assert items_map(note) == {0: False, 1: False}
+
     def test_inserting_line_above_shifts_state(self, authenticated_client):
         note = put_notes(authenticated_client, "Tacos\nPizza")
         assert items_map(note) == {0: False, 1: False}

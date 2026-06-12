@@ -50,13 +50,20 @@ def _normalize_line(line: str) -> str:
     return re.sub(r"<[^>]*>", "", line).strip().lower()
 
 
+# Minimum text similarity for an edited line to keep its itemized state.
+# A typo fix ("tacs" -> "tacos", 0.89) keeps the checkbox; a meal swap
+# ("tacos" -> "tandoori", 0.46) resets it.
+ITEMIZED_CARRY_SIMILARITY = 0.6
+
+
 def _carry_itemized_state(
     old_lines: list[str], new_lines: list[str], old_itemized: dict[int, bool]
 ) -> list[bool]:
     """Map itemized state from old line positions to new line positions.
 
     Sequence alignment handles unchanged lines, insertions, deletions, and
-    in-place edits (positional pairing inside `replace` blocks). A second
+    in-place edits (positional pairing inside `replace` blocks, kept only when
+    the edited text is similar enough to the original). A second
     content-matching pass over the leftovers handles moved/reordered lines.
     In-place edits are paired positionally within `replace` blocks; simultaneously editing and reordering two adjacent lines may swap their states.
     """
@@ -75,6 +82,13 @@ def _carry_itemized_state(
                 matched_new.add(j1 + k)
         elif tag == "replace":
             for k in range(min(i2 - i1, j2 - j1)):
+                similarity = difflib.SequenceMatcher(
+                    a=old_norm[i1 + k], b=new_norm[j1 + k], autojunk=False
+                ).ratio()
+                if similarity < ITEMIZED_CARRY_SIMILARITY:
+                    # The line was rewritten into something else, not edited —
+                    # leave both sides for the content-match pass / reset
+                    continue
                 result[j1 + k] = old_itemized.get(i1 + k, False)
                 matched_old.add(i1 + k)
                 matched_new.add(j1 + k)
