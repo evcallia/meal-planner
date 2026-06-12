@@ -65,12 +65,15 @@ Key details:
 - **IndexedDB persistence**: State sync `useEffect` in each hook persists to IDB whenever state changes, keeping offline cache current after SSE deltas
 - All entities referenced by server-assigned ID in SSE payloads — never match on mutable fields like names
 
-## Item Defaults (Store Auto-Populate)
-- `item_defaults` table: `item_name` (PK, lowercase), `store_id` (FK → stores, nullable)
-- `GET /api/grocery/item-defaults` returns all defaults with non-null store_id
+## Item Defaults (Store + Section Auto-Populate)
+- `item_defaults` table: `item_name` (PK, lowercase), `store_id` (FK → stores, nullable), `section_name` (Text, nullable — by NAME since section IDs are unstable across replace ops)
+- `GET /api/grocery/item-defaults` returns defaults with non-null store_id OR section_name
 - `DELETE /api/grocery/item-defaults/{item_name}` — idempotent (204), case-insensitive via `func.lower()`
-- `PUT /api/grocery/item-defaults/{item_name}` — upserts item default (used by undo restore)
-- `ItemDefaultSchema` in schemas.py: `item_name`, `store_id`
+- `PUT /api/grocery/item-defaults/{item_name}` — PARTIAL upsert via `model_fields_set` (`store_id` and/or `section_name`); used by undo restore
+- `ItemDefaultSchema` in schemas.py: `item_name`, `store_id`, `section_name`
+- **Server writes section defaults** on item add (POST /items), cross-section move (PATCH /items/{id}/move), and list replace (PUT /api/grocery — merge/paste path); store defaults written on PATCH store_id as before
+- **Quick-add autofill**: exact item-name match fills store AND section (section combobox only overwritten when a remembered name exists). Per-section inline add fills store only — never moves the item
+- `itemDefaultsMap` values are `{ storeId, sectionName }` (per-field merge: current-list values win; IDB fills gaps). `putLocalItemDefault(name, { storeId?, sectionName? })` is a partial read-modify-write
 - Frontend caches in IDB `itemDefaults` store (version 8), synced on app load via `fetchAllData`
 - `useGroceryList` owns `idbDefaults` state and `itemDefaultsMap` (useMemo merging IDB defaults + current list items)
 - `ItemAutocomplete` component: filtered dropdown of previously-used items, title-cased display, X delete button for items not on current list. Used in both quick-add form and per-section inline add
