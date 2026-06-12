@@ -189,3 +189,13 @@ body {
     cursor: grabbing;
   }
 }
+
+/* Edit-accent scope: recolors the focus ring of text boxes to the user's
+   chosen edit-highlight color. --edit-accent is set inline on the grocery
+   and pantry roots; the rule outranks Tailwind's focus:ring-blue-500
+   utilities by specificity, so individual inputs don't need changes. */
+.edit-accent-scope input:focus,
+.edit-accent-scope textarea:focus,
+.edit-accent-scope select:focus {
+  --tw-ring-color: var(--edit-accent);
+}

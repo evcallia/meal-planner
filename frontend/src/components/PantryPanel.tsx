@@ -162,7 +162,10 @@ export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightC
   }
 
   return (
-    <div>
+    <div
+      className="edit-accent-scope"
+      style={{ '--edit-accent': getEditHighlight(editHighlightColor).accent } as React.CSSProperties}
+    >
       {/* Sticky header: action bar */}
       <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
       {/* Action bar */}

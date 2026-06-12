@@ -533,7 +533,10 @@ export function GroceryListView({ compactView: _compactView, editHighlightColor 
   );
 
   return (
-    <div>
+    <div
+      className="edit-accent-scope"
+      style={{ '--edit-accent': getEditHighlight(editHighlightColor).accent } as React.CSSProperties}
+    >
       {/* Sticky header: action bar + store chips */}
       <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3 space-y-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
       {/* Action bar: add items + sort + kebab + chevron */}
