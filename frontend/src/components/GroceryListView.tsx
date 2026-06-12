@@ -8,6 +8,7 @@ import { StoreAutocomplete } from './StoreAutocomplete';
 import { StoreFilterBar } from './StoreFilterBar';
 import { ItemAutocomplete } from './ItemAutocomplete';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
+import { exitEditAnchored } from '../utils/exitEditAnchored';
 import { toTitleCase } from '../utils/titleCase';
 
 export const NONE_STORE_ID = '__none__';
@@ -1237,6 +1238,7 @@ function SectionCombobox({ sections, value, onChange }: {
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const sectionInputRef = useRef<HTMLInputElement>(null);
 
   const matches = useMemo(() => {
     const sorted = [...sections].sort((a, b) => a.name.localeCompare(b.name));
@@ -1259,6 +1261,7 @@ function SectionCombobox({ sections, value, onChange }: {
   return (
     <div ref={containerRef} className="relative">
       <input
+        ref={sectionInputRef}
         type="text"
         value={value}
         placeholder="Section"
@@ -1267,10 +1270,11 @@ function SectionCombobox({ sections, value, onChange }: {
         onBlur={() => setOpen(false)}
         className="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 pl-2 pr-7 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
       />
-      {value.trim() && !open && (
+      {value.trim() && (
         <button
           type="button"
-          onClick={() => { onChange(''); setOpen(false); }}
+          onMouseDown={e => e.preventDefault()}
+          onClick={() => { onChange(''); setOpen(true); sectionInputRef.current?.focus(); }}
           aria-label="Clear section"
           className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
         >
@@ -1338,6 +1342,11 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
 
   const commitEditRef = useRef<(() => void) | null>(null) as React.MutableRefObject<(() => void) | null>;
 
+  const exitEditMode = useCallback(() => {
+    const anchor = (editFormRef.current?.closest('[data-drag-index]') ?? editFormRef.current) as HTMLElement | null;
+    exitEditAnchored(anchor, () => onEditingItemChange(null));
+  }, [onEditingItemChange]);
+
   const startEditing = useCallback(() => {
     if (item.checked) return;
     setEditName(item.name);
@@ -1350,7 +1359,7 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
   const commitEdit = useCallback(() => {
     const trimmedName = editName.trim();
     if (!trimmedName) {
-      onEditingItemChange(null);
+      exitEditMode();
       return;
     }
 
@@ -1369,16 +1378,16 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
     if (targetSection.toLowerCase() !== sectionName.toLowerCase()) {
       onChangeSection(item.id, targetSection);
     }
-    onEditingItemChange(null);
-  }, [editName, editQuantity, editStoreId, editSectionName, sectionName, item.id, item.name, item.quantity, item.store_id, onEdit, onChangeSection, onEditingItemChange]);
+    exitEditMode();
+  }, [editName, editQuantity, editStoreId, editSectionName, sectionName, item.id, item.name, item.quantity, item.store_id, onEdit, onChangeSection, exitEditMode]);
 
   const cancelEdit = useCallback(() => {
-    onEditingItemChange(null);
+    exitEditMode();
     setEditName(item.name);
     setEditQuantity(item.quantity ?? '');
     setEditStoreId(item.store_id);
     setEditSectionName(sectionName);
-  }, [item.name, item.quantity, item.store_id, sectionName, onEditingItemChange]);
+  }, [item.name, item.quantity, item.store_id, sectionName, exitEditMode]);
 
   // Expose commitEdit so parent can call it before switching to another item
   commitEditRef.current = commitEdit;

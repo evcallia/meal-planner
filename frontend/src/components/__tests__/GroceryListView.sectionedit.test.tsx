@@ -154,7 +154,7 @@ describe('GroceryListView - edit form section change', () => {
     });
   });
 
-  it('clear button empties the section box', () => {
+  it('clear button empties the section box and focuses it', () => {
     render(<GroceryListView />);
     openEditForm();
 
@@ -162,6 +162,15 @@ describe('GroceryListView - edit form section change', () => {
     expect(sectionInput).toHaveValue('Produce');
     fireEvent.click(screen.getByRole('button', { name: /clear section/i }));
     expect(sectionInput).toHaveValue('');
+    expect(document.activeElement).toBe(sectionInput);
+  });
+
+  it('clear button stays visible while the section input is focused', () => {
+    render(<GroceryListView />);
+    openEditForm();
+
+    fireEvent.focus(screen.getByPlaceholderText('Section'));
+    expect(screen.getByRole('button', { name: /clear section/i })).toBeInTheDocument();
   });
 
   it('closes the section dropdown when the input loses focus', () => {

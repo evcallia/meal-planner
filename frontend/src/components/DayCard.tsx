@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { DayData } from '../types';
 import { MealItem } from './MealItem';
 import { decodeHtmlEntities } from '../utils/html';
+import { exitEditAnchored } from '../utils/exitEditAnchored';
 import { RichTextEditor } from './RichTextEditor';
 import { useDragReorder } from '../hooks/useDragReorder';
 
@@ -237,7 +238,9 @@ export function DayCard({
         setTimeout(() => setCollapseHeight(null), 300);
       }
     } else {
-      setIsEditing(false);
+      // Keep the card visually stationary while the editor collapses back to
+      // the display layout (and avoid the iOS focused-element-removed jump).
+      exitEditAnchored(dayCardRef.current, () => setIsEditing(false));
     }
   };
 

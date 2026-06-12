@@ -3,6 +3,7 @@ import { usePantry } from '../hooks/usePantry';
 import { PantrySection } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
+import { exitEditAnchored } from '../utils/exitEditAnchored';
 
 export function PantryPanel() {
   const { sections, loading, addSection, deleteSection, addItem, updateItem, adjustQuantity, removeItem, clearAll, reorderSections, reorderItems, renameSection, moveItem } = usePantry();
@@ -570,18 +571,23 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
     setIsEditing(true);
   }, [item.name]);
 
+  const exitEditMode = useCallback(() => {
+    const anchor = (editFormRef.current?.closest('[data-drag-index]') ?? editFormRef.current) as HTMLElement | null;
+    exitEditAnchored(anchor, () => setIsEditing(false));
+  }, []);
+
   const commitEdit = useCallback(() => {
     const trimmedName = editName.trim();
     if (trimmedName && trimmedName !== item.name) {
       onUpdate(item.id, { name: trimmedName });
     }
-    setIsEditing(false);
-  }, [editName, item.id, item.name, onUpdate]);
+    exitEditMode();
+  }, [editName, item.id, item.name, onUpdate, exitEditMode]);
 
   const cancelEdit = useCallback(() => {
-    setIsEditing(false);
+    exitEditMode();
     setEditName(item.name);
-  }, [item.name]);
+  }, [item.name, exitEditMode]);
 
   useEffect(() => {
     if (isEditing && nameInputRef.current) {

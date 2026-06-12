@@ -87,14 +87,25 @@ describe('StoreAutocomplete', () => {
     });
   });
 
-  it('clear button removes the store and closes the dropdown', () => {
+  it('clear button removes the store and focuses the input for retyping', () => {
     render(
       <StoreAutocomplete stores={stores} selectedStoreId="st1" onSelect={mockOnSelect} onCreate={mockOnCreate} />
     );
+    const input = screen.getByPlaceholderText('Assign store...') as HTMLInputElement;
     fireEvent.click(screen.getByRole('button', { name: /remove store/i }));
     expect(mockOnSelect).toHaveBeenCalledWith(null);
-    // Dropdown stays closed so the form's Save button isn't covered
-    expect(screen.queryByText("Trader Joe's")).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('');
+    // Options open so the user can pick a replacement right away
+    expect(screen.getByText("Trader Joe's")).toBeInTheDocument();
+  });
+
+  it('clear button stays visible while the input is focused', () => {
+    render(
+      <StoreAutocomplete stores={stores} selectedStoreId="st1" onSelect={mockOnSelect} onCreate={mockOnCreate} />
+    );
+    fireEvent.focus(screen.getByPlaceholderText('Assign store...'));
+    expect(screen.getByRole('button', { name: /remove store/i })).toBeInTheDocument();
   });
 
   it('closes the dropdown when the input loses focus', () => {
