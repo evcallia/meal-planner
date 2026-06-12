@@ -417,7 +417,8 @@ function PantrySectionCard({
                 if (e.key === 'Escape') { setEditNameValue(section.name); setIsEditingName(false); }
               }}
               onBlur={commitRename}
-              className="font-semibold text-sm bg-white dark:bg-gray-700 border border-blue-400 dark:border-blue-500 rounded px-1.5 py-0.5 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-0"
+              className="font-semibold text-sm bg-white dark:bg-gray-700 border rounded px-1.5 py-0.5 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 min-w-0"
+              style={{ borderColor: 'var(--edit-accent)' }}
             />
           ) : (
             <h3

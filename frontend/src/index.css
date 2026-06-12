@@ -198,4 +198,7 @@ body {
 .edit-accent-scope textarea:focus,
 .edit-accent-scope select:focus {
   --tw-ring-color: var(--edit-accent);
+  /* Also covers inputs that highlight via border instead of ring
+     (e.g. focus:border-blue-500 underline inputs) */
+  border-color: var(--edit-accent);
 }

@@ -27,11 +27,23 @@ export function useKeyboardOpen(): boolean {
       }
     };
 
+    // The keyboard can only be open while an editable element has focus.
+    // Gating on this prevents the stuck-open state iOS standalone causes by
+    // reporting a stale (shrunken) visualViewport height with no keyboard —
+    // which left the bottom nav hidden and the scroll lock active until the
+    // PWA was relaunched.
+    const hasEditableFocus = () => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+    };
+
     const check = () => {
       updateInitialHeight();
       const vvSmaller = window.innerHeight - vv.height > THRESHOLD;
       const viewportShrank = initialHeightRef.current - vv.height > THRESHOLD;
-      const open = vvSmaller || viewportShrank;
+      const open = (vvSmaller || viewportShrank) && hasEditableFocus();
 
       // Preserve scroll position when keyboard closes (main → window scroll)
       if (wasOpenRef.current && !open) {
@@ -68,11 +80,42 @@ export function useKeyboardOpen(): boolean {
       setIsOpen(open);
     };
 
+    // iOS bypasses the body overflow:hidden lock when it auto-scrolls the
+    // focused input into view, leaving the window panned by ~keyboard height
+    // with no way for the user to scroll it back (main is the scroll
+    // container while locked). Snap any stray document scroll back to 0.
+    const fixStrayWindowScroll = () => {
+      if (wasOpenRef.current && window.scrollY !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+
+    // Focus changes re-evaluate with a short delay: focusout fires before the
+    // keyboard close animation, and tapping between two inputs would
+    // otherwise flicker the layout closed and open again.
+    let recheckTimer: number | null = null;
+    const scheduleCheck = () => {
+      if (recheckTimer !== null) window.clearTimeout(recheckTimer);
+      recheckTimer = window.setTimeout(() => {
+        recheckTimer = null;
+        check();
+      }, 100);
+    };
+
     vv.addEventListener('resize', check);
+    vv.addEventListener('scroll', fixStrayWindowScroll);
     window.addEventListener('resize', updateInitialHeight);
+    window.addEventListener('scroll', fixStrayWindowScroll);
+    document.addEventListener('focusin', scheduleCheck);
+    document.addEventListener('focusout', scheduleCheck);
     return () => {
+      if (recheckTimer !== null) window.clearTimeout(recheckTimer);
       vv.removeEventListener('resize', check);
+      vv.removeEventListener('scroll', fixStrayWindowScroll);
       window.removeEventListener('resize', updateInitialHeight);
+      window.removeEventListener('scroll', fixStrayWindowScroll);
+      document.removeEventListener('focusin', scheduleCheck);
+      document.removeEventListener('focusout', scheduleCheck);
       document.documentElement.classList.remove('keyboard-open');
     };
   }, []);

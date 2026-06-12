@@ -8,6 +8,13 @@ export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, isEd
 
     let lastHeight = window.visualViewport?.height ?? window.innerHeight;
 
+    // While the user's finger is on the screen they are scrolling on purpose
+    // (e.g. checking something at the top of the list mid-edit) — never fight
+    // that with a corrective scroll.
+    let touchActive = false;
+    const onTouchStart = () => { touchActive = true; };
+    const onTouchEnd = () => { touchActive = false; };
+
     const scrollIntoView = () => {
       // Only scroll while the keyboard is actually covering the screen —
       // re-centering on keyboard dismiss would yank the page away from
@@ -22,6 +29,7 @@ export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, isEd
       if (!viewport) return;
       const growing = viewport.height > lastHeight;
       lastHeight = viewport.height;
+      if (touchActive) return;
       if (growing) {
         // Keyboard CLOSING. A smooth scroll here would race the edit form's
         // unmount when Save was tapped (the in-flight animation lands
@@ -39,10 +47,16 @@ export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, isEd
 
     const viewport = window.visualViewport;
     viewport?.addEventListener('resize', handleResize);
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchend', onTouchEnd, { passive: true });
+    document.addEventListener('touchcancel', onTouchEnd, { passive: true });
 
     return () => {
       window.clearTimeout(timer);
       viewport?.removeEventListener('resize', handleResize);
+      document.removeEventListener('touchstart', onTouchStart);
+      document.removeEventListener('touchend', onTouchEnd);
+      document.removeEventListener('touchcancel', onTouchEnd);
     };
   }, [isEditing, ref]);
 }
