@@ -2,7 +2,9 @@ services:
   db:
     image: postgres:16-alpine
     ports:
-      - "5432:5432"
+      # Loopback only — the app reaches the db over the internal network;
+      # this mapping exists solely for local psql access from the host.
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-mealplanner}
       POSTGRES_USER: ${POSTGRES_USER:-mealplanner}

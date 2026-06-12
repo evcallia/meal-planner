@@ -102,9 +102,46 @@ class TestSettings:
             oidc_issuer="https://auth.example.com",
             secret_key="proper-secure-key-here",
             secure_cookies=True,
+            postgres_password="a-real-password",
         )
         # Should not raise
         settings.validate_security()
+
+    def test_validate_security_non_local_requires_oidc(self):
+        """Non-local deploys without OIDC must fail (dev-login would be exposed)."""
+        settings = Settings(
+            frontend_url="https://myapp.example.com",
+            oidc_issuer="",
+            secret_key="proper-secure-key-here",
+            secure_cookies=True,
+            postgres_password="a-real-password",
+        )
+        with pytest.raises(ValueError, match="OIDC_ISSUER must be configured"):
+            settings.validate_security()
+
+    def test_validate_security_tunnel_allows_no_oidc(self):
+        """Tunnel testing mode still permits dev-login (no OIDC) deployments."""
+        settings = Settings(
+            frontend_url="https://abc123.ngrok.io",
+            oidc_issuer="",
+            secret_key="change-me-in-production",
+            secure_cookies=False,
+            allow_tunnel=True,
+        )
+        # Should not raise
+        settings.validate_security()
+
+    def test_validate_security_default_db_password(self):
+        """Non-local deploys with the default postgres password must fail."""
+        settings = Settings(
+            frontend_url="https://myapp.example.com",
+            oidc_issuer="https://auth.example.com",
+            secret_key="proper-secure-key-here",
+            secure_cookies=True,
+            postgres_password="changeme",
+        )
+        with pytest.raises(ValueError, match="POSTGRES_PASSWORD must be set"):
+            settings.validate_security()
 
     def test_apple_calendar_names_default(self):
         """Test apple_calendar_names defaults to empty string."""
