@@ -87,14 +87,37 @@ describe('StoreAutocomplete', () => {
     });
   });
 
-  it('clear button clears input and opens dropdown without calling onSelect', () => {
+  it('clear button removes the store and closes the dropdown', () => {
     render(
       <StoreAutocomplete stores={stores} selectedStoreId="st1" onSelect={mockOnSelect} onCreate={mockOnCreate} />
     );
     fireEvent.click(screen.getByRole('button', { name: /remove store/i }));
-    expect(mockOnSelect).not.toHaveBeenCalled();
-    // Dropdown should be open with all stores visible
-    expect(screen.getByText("Trader Joe's")).toBeInTheDocument();
+    expect(mockOnSelect).toHaveBeenCalledWith(null);
+    // Dropdown stays closed so the form's Save button isn't covered
+    expect(screen.queryByText("Trader Joe's")).not.toBeInTheDocument();
+  });
+
+  it('closes the dropdown when the input loses focus', () => {
+    render(
+      <StoreAutocomplete stores={stores} selectedStoreId={null} onSelect={mockOnSelect} onCreate={mockOnCreate} />
+    );
+    const input = screen.getByPlaceholderText('Assign store...');
+    fireEvent.focus(input);
+    expect(screen.getByText('Costco')).toBeInTheDocument();
+    fireEvent.blur(input);
+    expect(screen.queryByText('Costco')).not.toBeInTheDocument();
+  });
+
+  it('still selects a store via mousedown+click without blur closing first', () => {
+    render(
+      <StoreAutocomplete stores={stores} selectedStoreId={null} onSelect={mockOnSelect} onCreate={mockOnCreate} />
+    );
+    const input = screen.getByPlaceholderText('Assign store...');
+    fireEvent.focus(input);
+    const option = screen.getByText('Costco');
+    fireEvent.mouseDown(option); // preventDefault keeps focus on the input
+    fireEvent.click(option);
+    expect(mockOnSelect).toHaveBeenCalledWith('st1');
   });
 
   it('clear button appears when store is selected', () => {

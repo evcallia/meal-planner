@@ -137,6 +137,45 @@ describe('GroceryListView - edit form section change', () => {
     expect(mockCreateSection).not.toHaveBeenCalled();
   });
 
+  it('moves the item to Default when the section box is cleared and saved', async () => {
+    mockCreateSection.mockResolvedValue({ id: 'sec-default', name: 'Default', position: 2, items: [] });
+    render(<GroceryListView />);
+    openEditForm();
+
+    const sectionInput = screen.getByPlaceholderText('Section');
+    fireEvent.change(sectionInput, { target: { value: '' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(mockCreateSection).toHaveBeenCalledWith('Default');
+    });
+    await waitFor(() => {
+      expect(mockMoveItem).toHaveBeenCalledWith('sec-produce', 0, 'sec-default', 0);
+    });
+  });
+
+  it('clear button empties the section box', () => {
+    render(<GroceryListView />);
+    openEditForm();
+
+    const sectionInput = screen.getByPlaceholderText('Section');
+    expect(sectionInput).toHaveValue('Produce');
+    fireEvent.click(screen.getByRole('button', { name: /clear section/i }));
+    expect(sectionInput).toHaveValue('');
+  });
+
+  it('closes the section dropdown when the input loses focus', () => {
+    render(<GroceryListView />);
+    openEditForm();
+
+    const sectionInput = screen.getByPlaceholderText('Section');
+    fireEvent.focus(sectionInput);
+    // Dropdown filters by the current value ('Produce'), so that option shows
+    expect(screen.getAllByText('Produce').some(el => el.tagName === 'BUTTON')).toBe(true);
+    fireEvent.blur(sectionInput);
+    expect(screen.queryAllByText('Produce').some(el => el.tagName === 'BUTTON')).toBe(false);
+  });
+
   it('shows matching sections in the combobox dropdown', () => {
     render(<GroceryListView />);
     openEditForm();

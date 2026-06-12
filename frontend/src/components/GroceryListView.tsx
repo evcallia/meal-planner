@@ -1264,8 +1264,21 @@ function SectionCombobox({ sections, value, onChange }: {
         placeholder="Section"
         onChange={e => { onChange(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
-        className="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        onBlur={() => setOpen(false)}
+        className="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 pl-2 pr-7 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
       />
+      {value.trim() && !open && (
+        <button
+          type="button"
+          onClick={() => { onChange(''); setOpen(false); }}
+          aria-label="Clear section"
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      )}
       {open && matches.length > 0 && (
         <div className="absolute left-0 right-0 top-full mt-1 glass-menu rounded-lg shadow-lg z-20 max-h-40 overflow-y-auto">
           {matches.map(s => (
@@ -1351,9 +1364,10 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
     if (Object.keys(updates).length > 0) {
       onEdit(item.id, updates);
     }
-    const trimmedSection = editSectionName.trim();
-    if (trimmedSection && trimmedSection.toLowerCase() !== sectionName.toLowerCase()) {
-      onChangeSection(item.id, trimmedSection);
+    // Empty section box falls back to the same default category quick-add uses
+    const targetSection = editSectionName.trim() || 'Default';
+    if (targetSection.toLowerCase() !== sectionName.toLowerCase()) {
+      onChangeSection(item.id, targetSection);
     }
     onEditingItemChange(null);
   }, [editName, editQuantity, editStoreId, editSectionName, sectionName, item.id, item.name, item.quantity, item.store_id, onEdit, onChangeSection, onEditingItemChange]);
