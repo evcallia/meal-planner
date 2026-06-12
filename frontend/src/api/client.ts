@@ -31,6 +31,11 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
       },
       credentials: 'include',
       signal: controller.signal,
+      // Don't follow redirects: an auth proxy (Cloudflare Access) answers
+      // expired sessions with a 302 to its login origin, and following it
+      // dies as an unclassifiable cross-origin TypeError. With 'manual' the
+      // redirect surfaces as an opaqueredirect response we can detect.
+      redirect: 'manual',
     });
   } catch (error) {
     clearTimeout(timeoutId);
@@ -49,11 +54,15 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   //   - 401 from any path except GET /api/auth/me
   //   - 403 + HTML body (CF challenge denial)
   //   - 2xx + HTML body, excluding 204 (CF interstitial proxied as success)
+  //   - any redirect: API endpoints never redirect, so this is an auth proxy
+  //     (Cloudflare Access login) intercepting the request
   const is401Protected = response.status === 401 && path !== '/auth/me';
   const is403Html = response.status === 403 && isHtml;
   const is2xxHtml = response.ok && response.status !== 204 && isHtml;
+  const isRedirect = response.type === 'opaqueredirect'
+    || (response.status >= 300 && response.status < 400);
 
-  if (is401Protected || is403Html || is2xxHtml) {
+  if (is401Protected || is403Html || is2xxHtml || isRedirect) {
     window.dispatchEvent(new CustomEvent('auth-required'));
     throw new AuthError();
   }

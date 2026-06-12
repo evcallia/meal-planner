@@ -101,6 +101,31 @@ describe('API client', () => {
       expect(calls).toContain('auth-required');
     });
 
+    it('throws AuthError on an opaque redirect (Cloudflare Access login intercept)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 0,
+        type: 'opaqueredirect',
+        headers: { get: () => null },
+      });
+
+      await expect(getDays('2024-01-01', '2024-01-07')).rejects.toBeInstanceOf(AuthError);
+      const calls = dispatchSpy.mock.calls.map(c => (c[0] as Event).type);
+      expect(calls).toContain('auth-required');
+    });
+
+    it('throws AuthError on a visible 302 redirect', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 302,
+        headers: { get: () => null },
+      });
+
+      await expect(getDays('2024-01-01', '2024-01-07')).rejects.toBeInstanceOf(AuthError);
+      const calls = dispatchSpy.mock.calls.map(c => (c[0] as Event).type);
+      expect(calls).toContain('auth-required');
+    });
+
     it('does NOT throw AuthError on 401 from /api/auth/me (legitimate logged-out case)', async () => {
       mockFetch.mockResolvedValue({
         ok: false,

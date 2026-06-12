@@ -28,7 +28,8 @@ Key details:
 - `fetchAPI` handles 204 No Content responses by returning `undefined` without parsing JSON body
 
 ## PWA Re-Auth Flow
-- Detection in `fetchAPI`: 401 from any path except `/auth/me`, 403 + HTML body, or 2xx + HTML body (CF interstitial) → dispatch `'auth-required'` window event + throw `AuthError`. `healthFetch` in `useOnlineStatus` also dispatches on HTML from `/api/health`
+- Detection in `fetchAPI`: 401 from any path except `/auth/me`, 403 + HTML body, 2xx + HTML body (CF interstitial), or ANY redirect (`opaqueredirect`/3xx) → dispatch `'auth-required'` window event + throw `AuthError`. `healthFetch` in `useOnlineStatus` also dispatches on HTML or redirect from `/api/health`
+- **`redirect: 'manual'` on all API fetches**: Cloudflare Access answers expired sessions with a 302 to `cloudflareaccess.com`; following it fails as a cross-origin TypeError indistinguishable from being offline. Manual mode surfaces it as a detectable `opaqueredirect`. API endpoints never legitimately redirect (OIDC redirects are full-page navigations, not fetches)
 - `useSync` and `useRealtime` each have a module-level `_authRequired` flag set by the `'auth-required'` listener — sync drains and SSE reconnects pause until full-page navigation resets the modules
 - `useSync` sets `status = 'auth-required'` on the event; queued changes are untouched and sync resumes after the post-login reload
 - `ReAuthModal` (non-dismissable, shows pending count) renders in App.tsx when `status === 'auth-required'`; Sign in button does full-window `window.location.href = getLoginUrl()`

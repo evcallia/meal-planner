@@ -152,4 +152,23 @@ describe('useOnlineStatus', () => {
     // and that auth-required fires).
     dispatchSpy.mockRestore();
   });
+
+  it('dispatches auth-required when /api/health is answered with a redirect (Cloudflare Access)', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 0,
+      type: 'opaqueredirect',
+      headers: { get: () => null },
+    });
+
+    renderHook(() => useOnlineStatus());
+
+    await waitFor(() => {
+      const types = dispatchSpy.mock.calls.map(c => (c[0] as Event).type);
+      expect(types).toContain('auth-required');
+    });
+    dispatchSpy.mockRestore();
+  });
 })
