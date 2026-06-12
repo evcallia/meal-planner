@@ -591,6 +591,11 @@ describe('CalendarView', () => {
   });
 
   it('keeps days appended by infinite scroll when the initial fetch resolves later', async () => {
+    // CalendarView keys day cards by LOCAL dates; the file-level formatDate is
+    // UTC-based and drifts one day ahead in evening runs, pushing today+13
+    // past the displayed range. Use local dates for this test's assertions.
+    const formatLocalDate = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     let ioCallback: IntersectionObserverCallback | null = null;
     class MockIntersectionObserver {
       constructor(cb: IntersectionObserverCallback) {
@@ -611,14 +616,14 @@ describe('CalendarView', () => {
 
     render(<CalendarView onTodayRefReady={() => {}} />);
 
-    const today = formatDate(new Date());
+    const today = formatLocalDate(new Date());
     await waitFor(() => expect(screen.getByTestId(`day-card-${today}`)).toBeInTheDocument());
 
     // Infinite scroll fires while the init fetch (dayResolvers[0]) is still pending
     await act(async () => {
       ioCallback?.([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
     });
-    const week2Day = formatDate(addDays(new Date(), 7));
+    const week2Day = formatLocalDate(addDays(new Date(), 7));
     await waitFor(() => expect(screen.getByTestId(`day-card-${week2Day}`)).toBeInTheDocument());
 
     // Resolve loadNextWeek's own API call (second), then the init fetch (first)
@@ -628,7 +633,7 @@ describe('CalendarView', () => {
     // Week 1 and week 2 cards must both still be displayed
     expect(screen.getByTestId(`day-card-${today}`)).toBeInTheDocument();
     expect(screen.getByTestId(`day-card-${week2Day}`)).toBeInTheDocument();
-    expect(screen.getByTestId(`day-card-${formatDate(addDays(new Date(), 13))}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`day-card-${formatLocalDate(addDays(new Date(), 13))}`)).toBeInTheDocument();
 
     // Restore the setup.ts IntersectionObserver so the stub doesn't leak into later tests
     vi.unstubAllGlobals();
