@@ -121,7 +121,12 @@ body {
 }
 
 .keyboard-open #root > div {
-  height: 100% !important;
+  /* Visual viewport height (set by useKeyboardOpen): the app shell must end
+     ABOVE the keyboard, otherwise the bottom ~keyboard-height of <main> sits
+     behind it and the last items can never be scrolled into view.
+     min-height must be neutralized or the div's min-h-screen wins. */
+  height: var(--vvh, 100%) !important;
+  min-height: 0 !important;
   overflow: hidden !important;
 }
 

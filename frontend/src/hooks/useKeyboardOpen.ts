@@ -45,6 +45,14 @@ export function useKeyboardOpen(): boolean {
       const viewportShrank = initialHeightRef.current - vv.height > THRESHOLD;
       const open = (vvSmaller || viewportShrank) && hasEditableFocus();
 
+      // Size the app shell to the visible area (above the keyboard) so the
+      // <main> scroll container can bring the bottom of the list into view.
+      if (open) {
+        document.documentElement.style.setProperty('--vvh', `${Math.round(vv.height)}px`);
+      } else {
+        document.documentElement.style.removeProperty('--vvh');
+      }
+
       // Preserve scroll position when keyboard closes (main → window scroll)
       if (wasOpenRef.current && !open) {
         const mainEl = document.querySelector('main');
