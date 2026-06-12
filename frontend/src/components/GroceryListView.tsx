@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import { useGroceryList } from '../hooks/useGroceryList';
+import { useGroceryList, ItemDefaultEntry } from '../hooks/useGroceryList';
 import { useStores } from '../hooks/useStores';
 import { parseGroceryText } from '../utils/groceryParser';
 import { GrocerySection, Store } from '../types';
@@ -437,15 +437,13 @@ export function GroceryListView({ compactView: _compactView, editHighlightColor 
     const qtyMatch = newItemName.trim().match(/^\((\d+)\)\s+(.+)$/);
     const name = qtyMatch ? qtyMatch[2] : newItemName.trim();
     const qty = qtyMatch ? qtyMatch[1] : undefined;
-    // Auto-populate store: check current list items first, then item defaults cache
+    // Auto-populate store from item defaults (merged IDB + current list items).
+    // Never touch the target section — the user picked it explicitly.
     const nameLower = name.toLowerCase();
-    const match = sections.flatMap(s => s.items).find(
-      i => i.name.toLowerCase() === nameLower && i.store_id
-    );
-    await addItem(sectionId, name, qty, match?.store_id ?? itemDefaultsMap.get(nameLower) ?? null);
+    await addItem(sectionId, name, qty, itemDefaultsMap.get(nameLower)?.storeId ?? null);
     setNewItemName('');
     setAddingToSection(null);
-  }, [newItemName, sections, addItem]);
+  }, [newItemName, itemDefaultsMap, addItem]);
 
   const handleQuickAdd = useCallback(async () => {
     const trimmedName = quickAddItemName.trim();
@@ -469,6 +467,20 @@ export function GroceryListView({ compactView: _compactView, editHighlightColor 
     setQuickAddStoreId(null);
     requestAnimationFrame(() => quickAddItemRef.current?.focus());
   }, [quickAddItemName, quickAddSection, quickAddQuantity, quickAddStoreId, sections, addItem, mergeList]);
+
+  // Autofill store + section when the typed name exactly matches a known item
+  // (current list items or remembered item defaults). Unmatched names clear the
+  // store but leave the section untouched.
+  const applyQuickAddDefaults = useCallback((name: string) => {
+    const trimmed = name.trim().toLowerCase();
+    if (!trimmed) {
+      setQuickAddStoreId(null);
+      return;
+    }
+    const defaults = itemDefaultsMap.get(trimmed);
+    setQuickAddStoreId(defaults?.storeId ?? null);
+    if (defaults?.sectionName) setQuickAddSection(defaults.sectionName);
+  }, [itemDefaultsMap]);
 
   const resetQuickAdd = useCallback(() => {
     setQuickAddSection('');
@@ -627,23 +639,11 @@ export function GroceryListView({ compactView: _compactView, editHighlightColor 
                     testId="quick-add-item"
                     onChange={val => {
                       setQuickAddItemName(val);
-                      const trimmed = val.trim().toLowerCase();
-                      if (trimmed) {
-                        const match = sections.flatMap(s => s.items).find(
-                          i => i.name.toLowerCase() === trimmed && i.store_id
-                        );
-                        setQuickAddStoreId(match?.store_id ?? itemDefaultsMap.get(trimmed) ?? null);
-                      } else {
-                        setQuickAddStoreId(null);
-                      }
+                      applyQuickAddDefaults(val);
                     }}
                     onSelect={displayName => {
                       setQuickAddItemName(displayName);
-                      const trimmed = displayName.trim().toLowerCase();
-                      const match = sections.flatMap(s => s.items).find(
-                        i => i.name.toLowerCase() === trimmed && i.store_id
-                      );
-                      setQuickAddStoreId(match?.store_id ?? itemDefaultsMap.get(trimmed) ?? null);
+                      applyQuickAddDefaults(displayName);
                     }}
                     items={itemDefaultsMap}
                     currentListItemNames={currentListItemNames}
@@ -1018,7 +1018,7 @@ interface SectionCardProps {
   editingItemId: string | null;
   onEditingItemChange: (id: string | null) => void;
   commitEditingRef: React.MutableRefObject<(() => void) | null>;
-  itemDefaultsMap: Map<string, string | null>;
+  itemDefaultsMap: Map<string, ItemDefaultEntry>;
   currentListItemNames: Set<string>;
   onDeleteItemDefault: (itemName: string) => void;
   allSections: { id: string; name: string }[];

@@ -536,7 +536,7 @@ function AppContent() {
       }).catch(() => { /* best-effort */ });
 
       getItemDefaults().then(async (defaults) => {
-        await saveLocalItemDefaults(defaults.map(d => ({ item_name: d.item_name, store_id: d.store_id })));
+        await saveLocalItemDefaults(defaults.map(d => ({ item_name: d.item_name, store_id: d.store_id, section_name: d.section_name })));
       }).catch(() => { /* best-effort */ });
 
       if (!hasPantryChanges) {

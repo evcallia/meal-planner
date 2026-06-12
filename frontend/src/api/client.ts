@@ -303,6 +303,7 @@ export async function getGroceryList(): Promise<GrocerySection[]> {
 export interface ItemDefault {
   item_name: string;
   store_id: string | null;
+  section_name: string | null;
 }
 
 export async function getItemDefaults(): Promise<ItemDefault[]> {
@@ -315,10 +316,18 @@ export async function deleteItemDefault(itemName: string): Promise<void> {
   });
 }
 
-export async function putItemDefault(itemName: string, storeId: string | null): Promise<void> {
+export async function putItemDefault(
+  itemName: string,
+  fields: { store_id?: string | null; section_name?: string | null },
+): Promise<void> {
+  // Partial update: only include keys that were explicitly provided so the
+  // server preserves the other field.
+  const body: Record<string, string | null> = {};
+  if (fields.store_id !== undefined) body.store_id = fields.store_id;
+  if (fields.section_name !== undefined) body.section_name = fields.section_name;
   await fetchAPI(`/grocery/item-defaults/${encodeURIComponent(itemName)}`, {
     method: 'PUT',
-    body: JSON.stringify({ store_id: storeId }),
+    body: JSON.stringify(body),
   });
 }
 

@@ -17,6 +17,7 @@ const mockBatchUpdateStoreId = vi.fn();
 
 let mockSections: any[] = [];
 let mockLoading = false;
+let mockItemDefaultsMap = new Map<string, { storeId: string | null; sectionName: string | null }>();
 
 vi.mock('../../hooks/useGroceryList', () => ({
   useGroceryList: () => ({
@@ -36,7 +37,7 @@ vi.mock('../../hooks/useGroceryList', () => ({
     createSection: vi.fn(),
     deleteSection: vi.fn(),
     batchUpdateStoreId: mockBatchUpdateStoreId,
-    itemDefaultsMap: new Map(),
+    itemDefaultsMap: mockItemDefaultsMap,
     removeItemDefault: vi.fn(),
   }),
 }));
@@ -84,6 +85,7 @@ describe('GroceryListView', () => {
     vi.clearAllMocks();
     mockSections = [];
     mockLoading = false;
+    mockItemDefaultsMap = new Map();
   });
 
   it('shows loading spinner when loading', () => {
@@ -239,6 +241,55 @@ describe('GroceryListView', () => {
       expect(mockMergeList).toHaveBeenCalledWith([
         { name: 'Bakery', items: [{ name: 'Sourdough', quantity: null, store_id: null }] },
       ]);
+    });
+  });
+
+  it('quick-add autofills section and store from item defaults', async () => {
+    mockSections = sampleSections;
+    mockItemDefaultsMap = new Map([['milk', { storeId: 'st1', sectionName: 'Dairy' }]]);
+    render(<GroceryListView />);
+    fireEvent.click(screen.getByText('Add items'));
+
+    const itemInput = screen.getByTestId('quick-add-item');
+    fireEvent.change(itemInput, { target: { value: 'Milk' } });
+
+    // Section combobox autofilled with the remembered section
+    expect(screen.getByTestId('quick-add-section')).toHaveValue('Dairy');
+
+    fireEvent.click(screen.getByTestId('quick-add-submit'));
+    await waitFor(() => {
+      // 'Dairy' doesn't exist yet → mergeList; store autofilled from defaults
+      expect(mockMergeList).toHaveBeenCalledWith([
+        { name: 'Dairy', items: [{ name: 'Milk', quantity: null, store_id: 'st1' }] },
+      ]);
+    });
+  });
+
+  it('quick-add does not autofill section for unknown items', () => {
+    mockSections = sampleSections;
+    mockItemDefaultsMap = new Map([['milk', { storeId: 'st1', sectionName: 'Dairy' }]]);
+    render(<GroceryListView />);
+    fireEvent.click(screen.getByText('Add items'));
+
+    const itemInput = screen.getByTestId('quick-add-item');
+    fireEvent.change(itemInput, { target: { value: 'Anchovies' } });
+
+    expect(screen.getByTestId('quick-add-section')).toHaveValue('');
+  });
+
+  it('inline per-section add keeps the target section despite a remembered different section', async () => {
+    mockSections = sampleSections;
+    mockItemDefaultsMap = new Map([['milk', { storeId: 'st1', sectionName: 'Dairy' }]]);
+    render(<GroceryListView />);
+
+    fireEvent.click(screen.getByText('+ Add item'));
+    const input = screen.getByPlaceholderText('Item name...');
+    fireEvent.change(input, { target: { value: 'Milk' } });
+    fireEvent.click(screen.getByText('Add'));
+
+    await waitFor(() => {
+      // Added to the section the user chose (s1 Produce), store autofilled
+      expect(mockAddItem).toHaveBeenCalledWith('s1', 'Milk', undefined, 'st1');
     });
   });
 

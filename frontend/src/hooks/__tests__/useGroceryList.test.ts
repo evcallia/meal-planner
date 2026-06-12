@@ -58,7 +58,7 @@ import {
   moveGroceryItem as moveGroceryItemAPI,
   replaceGroceryList as replaceGroceryListAPI,
 } from '../../api/client';
-import { getLocalGrocerySections, getLocalGroceryItems, queueChange } from '../../db';
+import { getLocalGrocerySections, getLocalGroceryItems, queueChange, getLocalItemDefaults, putLocalItemDefault } from '../../db';
 import { useOnlineStatus } from '../useOnlineStatus';
 
 const mockGetGroceryList = vi.mocked(getGroceryList);
@@ -76,6 +76,8 @@ const mockGetLocalSections = vi.mocked(getLocalGrocerySections);
 const mockGetLocalItems = vi.mocked(getLocalGroceryItems);
 const mockUseOnlineStatus = vi.mocked(useOnlineStatus);
 const mockQueueChange = vi.mocked(queueChange);
+const mockGetLocalItemDefaults = vi.mocked(getLocalItemDefaults);
+const mockPutLocalItemDefault = vi.mocked(putLocalItemDefault);
 
 const sampleSections: GrocerySection[] = [
   {
@@ -200,6 +202,53 @@ describe('useGroceryList', () => {
       const bananas = section.items.find(i => i.id === 'i1')!;
       expect(bananas.quantity).toBe('5');
     });
+  });
+
+  it('addItem warms the local item default with store and section', async () => {
+    const { result } = renderHook(() => useGroceryList());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    mockAddAPI.mockResolvedValue({
+      id: 'server-1', section_id: 's1', name: 'Grapes', quantity: null,
+      checked: false, position: 2, store_id: 'st1', updated_at: '2026-01-02T00:00:00Z',
+    });
+
+    await act(async () => {
+      await result.current.addItem('s1', 'grapes');
+    });
+
+    await waitFor(() => {
+      expect(mockPutLocalItemDefault).toHaveBeenCalledWith('grapes', { storeId: 'st1', sectionName: 'Produce' });
+    });
+  });
+
+  it('itemDefaultsMap merges per-field: list section wins, IDB store retained when list store missing', async () => {
+    mockGetLocalItemDefaults.mockResolvedValue([
+      { item_name: 'milk', store_id: 'st-idb', section_name: 'Fridge' },
+      { item_name: 'cheese', store_id: 'st-idb', section_name: 'Fridge' },
+      { item_name: 'flour', store_id: 'st-idb', section_name: 'Baking' },
+    ]);
+    mockGetGroceryList.mockResolvedValue([
+      {
+        id: 's1', name: 'Dairy', position: 0,
+        items: [
+          { id: 'i1', section_id: 's1', name: 'Milk', quantity: null, checked: false, position: 0, store_id: null, updated_at: '2026-01-01T00:00:00Z' },
+          { id: 'i2', section_id: 's1', name: 'Cheese', quantity: null, checked: false, position: 1, store_id: 'st-list', updated_at: '2026-01-01T00:00:00Z' },
+        ],
+      },
+    ]);
+
+    const { result } = renderHook(() => useGroceryList());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await waitFor(() => {
+      // List item with no store: IDB store retained, list section wins
+      expect(result.current.itemDefaultsMap.get('milk')).toEqual({ storeId: 'st-idb', sectionName: 'Dairy' });
+    });
+    // List item with a store: list store and section both win
+    expect(result.current.itemDefaultsMap.get('cheese')).toEqual({ storeId: 'st-list', sectionName: 'Dairy' });
+    // IDB-only entry passes through untouched
+    expect(result.current.itemDefaultsMap.get('flour')).toEqual({ storeId: 'st-idb', sectionName: 'Baking' });
   });
 
   it('deleteItem removes item optimistically', async () => {
