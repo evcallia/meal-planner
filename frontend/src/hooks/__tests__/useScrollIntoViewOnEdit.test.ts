@@ -81,7 +81,7 @@ describe('useScrollIntoViewOnEdit', () => {
     vi.unstubAllGlobals();
   });
 
-  it('does not re-scroll while the keyboard is closing (viewport growing)', () => {
+  it('uses an instant nearest scroll while the keyboard is closing (viewport growing)', () => {
     const resizeListeners: EventListener[] = [];
     const viewport = {
       height: window.innerHeight - 300, // keyboard fully open at mount
@@ -94,16 +94,19 @@ describe('useScrollIntoViewOnEdit', () => {
       initialProps: { editing: true },
     });
 
-    // Keyboard begins closing: viewport grows but is still >150px covered.
-    // Pre-fix this started a smooth scroll that raced the edit-form unmount.
+    // Keyboard begins closing: viewport grows. Pre-fix a smooth scroll here
+    // raced the edit-form unmount; now it must be an instant 'nearest' scroll
+    // (keeps a still-open form visible without an animation that can race).
     viewport.height = window.innerHeight - 200;
     resizeListeners.forEach(fn => fn(new Event('resize')));
-    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
 
-    // Keyboard re-opens / shrinks again: scrolling resumes
+    // Keyboard re-opens / shrinks again: smooth centering resumes
     viewport.height = window.innerHeight - 300;
     resizeListeners.forEach(fn => fn(new Event('resize')));
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'center', behavior: 'smooth' });
     vi.unstubAllGlobals();
   });
 });

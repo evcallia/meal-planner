@@ -22,10 +22,15 @@ export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, isEd
       if (!viewport) return;
       const growing = viewport.height > lastHeight;
       lastHeight = viewport.height;
-      // A growing viewport means the keyboard is CLOSING (Save/done tapped).
-      // Starting a smooth scroll here races the edit form's unmount and the
-      // in-flight animation lands somewhere arbitrary — skip it.
-      if (growing) return;
+      if (growing) {
+        // Keyboard CLOSING. A smooth scroll here would race the edit form's
+        // unmount when Save was tapped (the in-flight animation lands
+        // arbitrarily), but doing nothing lets iOS's scroll restoration carry
+        // a still-open form off-screen. Instant + 'nearest' is safe: it can't
+        // race (no animation) and it's a no-op when the row is already visible.
+        ref.current?.scrollIntoView({ block: 'nearest' });
+        return;
+      }
       scrollIntoView();
     };
 
