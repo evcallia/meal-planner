@@ -37,6 +37,17 @@ Key details:
 - **Queue discard rule**: failed changes are retried with a per-change `attempts` counter (`PendingChange.attempts`, incremented on each sync failure); discarded only after `MAX_SYNC_ATTEMPTS` (20) failures. `AuthError` failures pause sync without incrementing. There is no absolute-age discard
 - Service worker `NetworkFirst` for `/api/*` has a `cacheWillUpdate` plugin (vite.config.ts) rejecting HTML and non-ok responses so CF challenge pages never enter `api-cache`
 
+## Lists / Tracker (private, shareable recency tracker)
+- A 4th tab ("Lists") rebuilding the lastGLANCE concept: track *when you last did* a task. Each task has an optional `target_interval_days`; freshness is `elapsed / target`, color-coded green→amber→red and overdue tasks sort to the top automatically (`utils/recency.ts`)
+- **Privacy is a deliberate departure from the app's shared-global model**: tracker entities are per-user. A `TrackerList` has an `owner_sub`; it's private until shared. `TrackerShare(list_id, sub)` grants access. Access rule: `owner_sub == me OR a share row for me`. Owner-only ops: delete list, add/remove shares. Shared users can collaborate on tasks/logs
+- Models (`models.py`): `TrackerList` (owner_sub, name, icon, color, position) → `TrackerTask` (target_interval_days, notes, position, archived) → `TrackerLog` (done_at — backdatable, note). Stats (`last_done_at`, `total_count`, `avg_interval_days`) are computed from logs server-side in `_task_dict`, not stored
+- **Per-user SSE**: tracker events broadcast via `broadcast_to_user(sub, ...)` to the list's audience (owner + shares) only — never the global `broadcast_event`. Full-list payloads use `_broadcast_list` which recomputes `is_owner` *per recipient* (a shared user must not receive the owner's perspective). Event type `tracker.updated`; actions: `list-added/updated/deleted/reordered/shared`, `task-added/updated/deleted/logged`, `tasks-reordered`
+- `users` table + `record_user()` (called on OIDC callback + dev-login) is a directory so owners can resolve a collaborator's email → sub when sharing. `GET /api/users` powers the share picker. **Sharing by email requires the target to have signed in at least once** (else 404)
+- `Base.metadata.create_all` creates the new tables on startup; no manual migration needed. Endpoints in `routers/tracker.py` (`/api/tracker`) and `routers/users.py`
+- Frontend: `useTracker` hook (mirrors grocery's optimistic+offline+undo machinery), `ListsView.tsx` (cards, task rows with a "Done" button, task-detail/history modal, share modal), IDB v9 (`trackerLists`, `trackerTasks` — logs are fetched on demand, not cached), `tracker-*` ChangeTypes in `useSync.ts`. Undo/redo covers mark-done, delete task, delete list (snapshots logs at delete time so undo restores history)
+- Tab/page has its own `<UndoProvider id="lists">`. No inactive-tab cache warmer (lists are privacy-scoped); instead App.tsx invalidates the tracker session flag on any `tracker.updated` received off-tab so the next Lists visit refetches
+- Server datetimes are naive UTC; `parseServerDate()` in `utils/recency.ts` appends `Z` so JS doesn't misread them as local time
+
 ## Server-Side User Settings
 - `user_settings` table: `sub` (PK, from OIDC), `settings` (JSON), `updated_at` (DateTime)
 - `GET /api/settings` returns `{ settings, updated_at }` for the authenticated user; empty `{}` if no row

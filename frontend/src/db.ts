@@ -43,7 +43,18 @@ export type ChangeType =
   | 'store-delete'
   | 'store-reorder'
   | 'item-default-delete'
-  | 'item-default-put';
+  | 'item-default-put'
+  | 'tracker-list-create'
+  | 'tracker-list-update'
+  | 'tracker-list-delete'
+  | 'tracker-list-reorder'
+  | 'tracker-task-create'
+  | 'tracker-task-update'
+  | 'tracker-task-delete'
+  | 'tracker-task-reorder'
+  | 'tracker-log-add'
+  | 'tracker-log-delete'
+  | 'tracker-skip';
 
 export interface PendingChange {
   id?: number;
@@ -132,6 +143,45 @@ export interface LocalItemDefault {
   section_name?: string | null;
 }
 
+export interface LocalTrackerShareUser {
+  sub: string;
+  email: string | null;
+  name: string | null;
+}
+
+export interface LocalTrackerList {
+  id: string;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  position: number;
+  owner_sub: string;
+  owner_name: string | null;
+  is_owner: boolean;
+  shared_with: LocalTrackerShareUser[];
+}
+
+export interface LocalTrackerTask {
+  id: string;
+  list_id: string;
+  name: string;
+  target_interval_days: number | null;
+  notes: string | null;
+  position: number;
+  archived: boolean;
+  season_start_month: number | null;
+  season_end_month: number | null;
+  season_start_day: number | null;
+  season_end_day: number | null;
+  snooze_until: string | null;
+  last_done_at: string | null;
+  last_event_at: string | null;
+  last_done_by: string | null;
+  last_note: string | null;
+  total_count: number;
+  avg_interval_days: number | null;
+}
+
 class MealPlannerDB extends Dexie {
   mealNotes!: Table<LocalMealNote, string>;
   pendingChanges!: Table<PendingChange, number>;
@@ -145,6 +195,8 @@ class MealPlannerDB extends Dexie {
   groceryItems!: Table<LocalGroceryItem, string>;
   stores!: Table<LocalStore, string>;
   itemDefaults!: Table<LocalItemDefault, string>;
+  trackerLists!: Table<LocalTrackerList, string>;
+  trackerTasks!: Table<LocalTrackerTask, string>;
 
   constructor() {
     super('MealPlannerDB');
@@ -226,6 +278,22 @@ class MealPlannerDB extends Dexie {
       stores: 'id',
       itemDefaults: 'item_name',
     });
+    this.version(9).stores({
+      mealNotes: 'date',
+      pendingChanges: '++id, date, type',
+      pantryItems: 'id, section_id',
+      pantrySections: 'id',
+      mealIdeas: 'id',
+      tempIdMap: 'tempId',
+      calendarDays: 'date',
+      hiddenCalendarEvents: 'id',
+      grocerySections: 'id',
+      groceryItems: 'id, section_id',
+      stores: 'id',
+      itemDefaults: 'item_name',
+      trackerLists: 'id',
+      trackerTasks: 'id, list_id',
+    });
     // Ensure table properties are initialized for both runtime and tests.
     this.mealNotes = this.table('mealNotes');
     this.pendingChanges = this.table('pendingChanges');
@@ -239,6 +307,8 @@ class MealPlannerDB extends Dexie {
     this.groceryItems = this.table('groceryItems');
     this.stores = this.table('stores');
     this.itemDefaults = this.table('itemDefaults');
+    this.trackerLists = this.table('trackerLists');
+    this.trackerTasks = this.table('trackerTasks');
   }
 }
 
@@ -540,7 +610,48 @@ export async function clearAllLocalData(): Promise<void> {
     db.groceryItems.clear(),
     db.stores.clear(),
     db.itemDefaults.clear(),
+    db.trackerLists.clear(),
+    db.trackerTasks.clear(),
   ]);
+}
+
+// Tracker / Lists local storage
+export async function saveLocalTrackerLists(lists: LocalTrackerList[]) {
+  await db.trackerLists.clear();
+  if (lists.length > 0) await db.trackerLists.bulkPut(lists);
+}
+
+export async function getLocalTrackerLists(): Promise<LocalTrackerList[]> {
+  // NOTE: sort in JS, not via orderBy('position') — `position` isn't an indexed
+  // field (schema indexes only `id`), and Dexie throws on orderBy of a
+  // non-indexed key. Callers (fromLocal) sort by position anyway.
+  return db.trackerLists.toArray();
+}
+
+export async function saveLocalTrackerList(list: LocalTrackerList) {
+  await db.trackerLists.put(list);
+}
+
+export async function deleteLocalTrackerList(id: string) {
+  await db.trackerLists.delete(id);
+  await db.trackerTasks.where('list_id').equals(id).delete();
+}
+
+export async function saveLocalTrackerTasks(tasks: LocalTrackerTask[]) {
+  await db.trackerTasks.clear();
+  if (tasks.length > 0) await db.trackerTasks.bulkPut(tasks);
+}
+
+export async function getLocalTrackerTasks(): Promise<LocalTrackerTask[]> {
+  return db.trackerTasks.toArray();
+}
+
+export async function saveLocalTrackerTask(task: LocalTrackerTask) {
+  await db.trackerTasks.put(task);
+}
+
+export async function deleteLocalTrackerTask(id: string) {
+  await db.trackerTasks.delete(id);
 }
 
 // Item defaults (item_name → store/section mapping for auto-populate)

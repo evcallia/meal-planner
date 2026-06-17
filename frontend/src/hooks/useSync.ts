@@ -58,6 +58,17 @@ import {
   reorderStores as reorderStoresAPI,
   deleteItemDefault as deleteItemDefaultAPI,
   putItemDefault as putItemDefaultAPI,
+  createTrackerList as createTrackerListAPI,
+  updateTrackerList as updateTrackerListAPI,
+  deleteTrackerList as deleteTrackerListAPI,
+  reorderTrackerLists as reorderTrackerListsAPI,
+  createTrackerTask as createTrackerTaskAPI,
+  updateTrackerTask as updateTrackerTaskAPI,
+  deleteTrackerTask as deleteTrackerTaskAPI,
+  reorderTrackerTasks as reorderTrackerTasksAPI,
+  addTrackerLog as addTrackerLogAPI,
+  deleteTrackerLog as deleteTrackerLogAPI,
+  skipTrackerTask as skipTrackerTaskAPI,
 } from '../api/client';
 import { ConnectionStatus } from '../types';
 
@@ -558,6 +569,112 @@ export function useSync() {
             fields.section_name = payload.sectionName;
           }
           await putItemDefaultAPI(payload.itemName, fields);
+        } else if (change.type === 'tracker-list-create') {
+          const payload = change.payload as { tempId: string; name: string; icon?: string | null; color?: string | null };
+          const created = await createTrackerListAPI({ name: payload.name, icon: payload.icon, color: payload.color });
+          if (isTempId(payload.tempId)) await saveTempIdMapping(payload.tempId, created.id);
+        } else if (change.type === 'tracker-list-update') {
+          const payload = change.payload as { id: string; name?: string; icon?: string | null; color?: string | null };
+          let realId = payload.id;
+          if (isTempId(payload.id)) {
+            const mapped = await getTempIdMapping(payload.id);
+            if (mapped) realId = mapped;
+            else { if (change.id) await removePendingChange(change.id); setPendingCount(prev => prev - 1); continue; }
+          }
+          const updates: { name?: string; icon?: string | null; color?: string | null } = {};
+          if (payload.name !== undefined) updates.name = payload.name;
+          if (payload.icon !== undefined) updates.icon = payload.icon;
+          if (payload.color !== undefined) updates.color = payload.color;
+          await updateTrackerListAPI(realId, updates);
+        } else if (change.type === 'tracker-list-delete') {
+          const payload = change.payload as { id: string };
+          let realId = payload.id;
+          if (isTempId(payload.id)) {
+            const mapped = await getTempIdMapping(payload.id);
+            if (mapped) realId = mapped;
+            else { if (change.id) await removePendingChange(change.id); setPendingCount(prev => prev - 1); continue; }
+          }
+          await deleteTrackerListAPI(realId);
+        } else if (change.type === 'tracker-list-reorder') {
+          const payload = change.payload as { listIds: string[] };
+          const resolved = await Promise.all(payload.listIds.map(async id => isTempId(id) ? (await getTempIdMapping(id)) ?? id : id));
+          await reorderTrackerListsAPI(resolved);
+        } else if (change.type === 'tracker-task-create') {
+          const payload = change.payload as { tempId: string; listId: string; name: string; target_interval_days?: number | null; notes?: string | null };
+          let realListId = payload.listId;
+          if (isTempId(payload.listId)) {
+            const mapped = await getTempIdMapping(payload.listId);
+            if (mapped) realListId = mapped;
+            else { if (change.id) await removePendingChange(change.id); setPendingCount(prev => prev - 1); continue; }
+          }
+          const created = await createTrackerTaskAPI({ list_id: realListId, name: payload.name, target_interval_days: payload.target_interval_days, notes: payload.notes });
+          if (isTempId(payload.tempId)) await saveTempIdMapping(payload.tempId, created.id);
+        } else if (change.type === 'tracker-task-update') {
+          const payload = change.payload as { id: string; name?: string; target_interval_days?: number | null; notes?: string | null; archived?: boolean; season_start_month?: number | null; season_end_month?: number | null; season_start_day?: number | null; season_end_day?: number | null; snooze_until?: string | null };
+          let realId = payload.id;
+          if (isTempId(payload.id)) {
+            const mapped = await getTempIdMapping(payload.id);
+            if (mapped) realId = mapped;
+            else { if (change.id) await removePendingChange(change.id); setPendingCount(prev => prev - 1); continue; }
+          }
+          const updates: { name?: string; target_interval_days?: number | null; notes?: string | null; archived?: boolean; season_start_month?: number | null; season_end_month?: number | null; season_start_day?: number | null; season_end_day?: number | null; snooze_until?: string | null } = {};
+          if (payload.name !== undefined) updates.name = payload.name;
+          if (payload.target_interval_days !== undefined) updates.target_interval_days = payload.target_interval_days;
+          if (payload.notes !== undefined) updates.notes = payload.notes;
+          if (payload.archived !== undefined) updates.archived = payload.archived;
+          if (payload.season_start_month !== undefined) updates.season_start_month = payload.season_start_month;
+          if (payload.season_end_month !== undefined) updates.season_end_month = payload.season_end_month;
+          if (payload.season_start_day !== undefined) updates.season_start_day = payload.season_start_day;
+          if (payload.season_end_day !== undefined) updates.season_end_day = payload.season_end_day;
+          if (payload.snooze_until !== undefined) updates.snooze_until = payload.snooze_until;
+          await updateTrackerTaskAPI(realId, updates);
+        } else if (change.type === 'tracker-task-delete') {
+          const payload = change.payload as { id: string };
+          let realId = payload.id;
+          if (isTempId(payload.id)) {
+            const mapped = await getTempIdMapping(payload.id);
+            if (mapped) realId = mapped;
+            else { if (change.id) await removePendingChange(change.id); setPendingCount(prev => prev - 1); continue; }
+          }
+          await deleteTrackerTaskAPI(realId);
+        } else if (change.type === 'tracker-task-reorder') {
+          const payload = change.payload as { listId: string; taskIds: string[] };
+          let realListId = payload.listId;
+          if (isTempId(payload.listId)) {
+            const mapped = await getTempIdMapping(payload.listId);
+            if (mapped) realListId = mapped;
+            else { if (change.id) await removePendingChange(change.id); setPendingCount(prev => prev - 1); continue; }
+          }
+          const resolved = await Promise.all(payload.taskIds.map(async id => isTempId(id) ? (await getTempIdMapping(id)) ?? id : id));
+          await reorderTrackerTasksAPI(realListId, resolved);
+        } else if (change.type === 'tracker-log-add') {
+          const payload = change.payload as { tempLogId: string; taskId: string; done_at: string; note?: string | null; created_by_sub?: string | null };
+          let realTaskId = payload.taskId;
+          if (isTempId(payload.taskId)) {
+            const mapped = await getTempIdMapping(payload.taskId);
+            if (mapped) realTaskId = mapped;
+            else { if (change.id) await removePendingChange(change.id); setPendingCount(prev => prev - 1); continue; }
+          }
+          const created = await addTrackerLogAPI(realTaskId, { done_at: payload.done_at, note: payload.note, created_by_sub: payload.created_by_sub });
+          if (isTempId(payload.tempLogId)) await saveTempIdMapping(payload.tempLogId, created.id);
+        } else if (change.type === 'tracker-skip') {
+          const payload = change.payload as { id: string };
+          let realId = payload.id;
+          if (isTempId(payload.id)) {
+            const mapped = await getTempIdMapping(payload.id);
+            if (mapped) realId = mapped;
+            else { if (change.id) await removePendingChange(change.id); setPendingCount(prev => prev - 1); continue; }
+          }
+          await skipTrackerTaskAPI(realId);
+        } else if (change.type === 'tracker-log-delete') {
+          const payload = change.payload as { id: string };
+          let realId = payload.id;
+          if (isTempId(payload.id)) {
+            const mapped = await getTempIdMapping(payload.id);
+            if (mapped) realId = mapped;
+            else { if (change.id) await removePendingChange(change.id); setPendingCount(prev => prev - 1); continue; }
+          }
+          await deleteTrackerLogAPI(realId);
         }
         if (change.id) {
           await removePendingChange(change.id);
