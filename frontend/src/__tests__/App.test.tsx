@@ -37,11 +37,12 @@ vi.mock('../components/PantryPanel', () => ({
 }));
 
 vi.mock('../components/StatusBar', () => ({
-  StatusBar: vi.fn(({ status, pendingCount }) => (
-    <div data-testid="status-bar">
+  StatusChip: vi.fn(({ status }) => <div data-testid="status-chip">Status: {status}</div>),
+  StatusToast: vi.fn(({ status, pendingCount }) => (
+    <div data-testid="status-toast">
       Status: {status}, Pending: {pendingCount}
     </div>
-  ))
+  )),
 }));
 
 vi.mock('../components/SettingsModal', () => ({
@@ -215,7 +216,7 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
-      expect(screen.getByTestId('status-bar')).toBeInTheDocument();
+      expect(screen.getByTestId('status-toast')).toBeInTheDocument();
     });
   });
 

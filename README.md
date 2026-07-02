@@ -107,6 +107,12 @@ ALLOW_TUNNEL=true FRONTEND_URL=https://your-ngrok-url.ngrok-free.dev \
   uvicorn backend.app.main:app --reload --port 8000
 ```
 
+You can also setup the .env with necessary values and run
+```bash
+docker compose up -d --build # --build forces a fresh build
+ngrok http 8000. # serves the app over the ngrok tunnel which works with SSO
+```
+
 **Important:** You also need to add the ngrok callback URL to your OIDC provider's allowed redirect URIs.
 
 The `ALLOW_TUNNEL=true` flag:
@@ -299,26 +305,22 @@ Create a `.env` file based on the `.env.example` file
 
 You can find docker builds here https://hub.docker.com/repository/docker/evcallia/meal-planner/tags or build from source following the below instructions. 
 
-1. Build the image:
-   ```bash
-   docker build -t yourusername/meal-planner:latest .
-   ```
-
-2. Log in to Docker Hub:
+1. Log in to Docker Hub:
    ```bash
    docker login
    ```
 
-3. Push the image:
+2. Build and push the image (multiarch):
    ```bash
-   docker push yourusername/meal-planner:latest
+   docker buildx create --name multiarch --driver docker-container --bootstrap
+   docker buildx build --builder multiarch --platform linux/amd64,linux/arm64 -t evcallia/meal-planner:{TAG} --push .
    ```
 
 4. To use the pushed image, update `docker-compose.yml`:
    ```yaml
    services:
      app:
-       image: yourusername/meal-planner:latest
+       image: evcallia/meal-planner:{TAG}
        # Remove the 'build: .' line
    ```
 

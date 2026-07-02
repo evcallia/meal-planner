@@ -80,3 +80,64 @@ export interface GrocerySection {
   position: number;
   items: GroceryItem[];
 }
+
+// ----- Tracker / Lists -----
+
+export interface TrackerLog {
+  id: string;
+  task_id: string;
+  done_at: string;
+  kind?: string; // "done" | "skip"
+  note: string | null;
+  created_by_sub?: string | null;
+  created_by_name?: string | null;
+}
+
+export interface TrackerTask {
+  id: string;
+  list_id: string;
+  name: string;
+  target_interval_days: number | null;
+  notes: string | null;
+  position: number;
+  archived: boolean;
+  season_start_month: number | null;
+  season_end_month: number | null;
+  season_start_day: number | null;
+  season_end_day: number | null;
+  snooze_until: string | null;
+  last_done_at: string | null;
+  last_event_at: string | null;
+  last_done_by: string | null;
+  last_note: string | null;
+  total_count: number;
+  avg_interval_days: number | null;
+  // The most recent few completion/skip entries, embedded so history is viewable
+  // offline without an on-demand /logs fetch. Full history still loads on open.
+  recent_logs?: TrackerLog[];
+}
+
+export interface TrackerShareUser {
+  sub: string;
+  email: string | null;
+  name: string | null;
+}
+
+export interface TrackerList {
+  id: string;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  position: number;
+  owner_sub: string;
+  owner_name: string | null;
+  is_owner: boolean;
+  shared_with: TrackerShareUser[];
+  tasks: TrackerTask[];
+}
+
+export interface DirectoryUser {
+  sub: string;
+  email: string | null;
+  name: string | null;
+}

@@ -5,6 +5,7 @@ import {
   queueChange,
   getPendingChanges,
   removePendingChange,
+  removePendingChangesForTempId,
   markNoteSynced,
   clearPendingChanges,
   getLocalNotesForRange,
@@ -183,6 +184,29 @@ describe('db utilities', () => {
       await removePendingChange(id);
 
       expect(db.pendingChanges.delete).toHaveBeenCalledWith(id);
+    });
+  });
+
+  describe('removePendingChangesForTempId', () => {
+    it('drops queued changes referencing the temp id via id, tempId, or tempLogId', async () => {
+      const temp = 'temp-abc';
+      vi.mocked(db.pendingChanges.toArray).mockResolvedValue([
+        { id: 1, type: 'grocery-add', payload: { id: temp } },
+        { id: 2, type: 'tracker-task-create', payload: { tempId: temp, name: 'T' } },
+        { id: 3, type: 'tracker-log-add', payload: { tempLogId: temp, taskId: 'real' } },
+        { id: 4, type: 'tracker-log-add', payload: { tempLogId: 'other-temp', taskId: 'real' } },
+        { id: 5, type: 'grocery-add', payload: { id: 'unrelated' } },
+      ] as never);
+
+      await removePendingChangesForTempId(temp);
+
+      // Matches the entity's own temp id under any of the create/add field names…
+      expect(db.pendingChanges.delete).toHaveBeenCalledWith(1);
+      expect(db.pendingChanges.delete).toHaveBeenCalledWith(2);
+      expect(db.pendingChanges.delete).toHaveBeenCalledWith(3);
+      // …and leaves unrelated changes alone.
+      expect(db.pendingChanges.delete).not.toHaveBeenCalledWith(4);
+      expect(db.pendingChanges.delete).not.toHaveBeenCalledWith(5);
     });
   });
 

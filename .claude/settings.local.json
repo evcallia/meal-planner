@@ -1,0 +1,50 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(.venv/bin/python -m pytest --tb=short -q)",
+      "Bash(.venv/bin/python -m pytest tests/test_itemized_alignment.py -v)",
+      "Bash(.venv/bin/python -m pytest -q)",
+      "Bash(git -C /Users/evan.callia/projects/meal-planner show 993dd8e --stat)",
+      "Bash(git -C /Users/evan.callia/projects/meal-planner status)",
+      "Bash(git -C /Users/evan.callia/projects/meal-planner log --oneline -3)",
+      "Bash(git -C /Users/evan.callia/projects/meal-planner show 993dd8e)",
+      "Bash(git -C /Users/evan.callia/projects/meal-planner add backend/app/routers/days.py backend/tests/test_itemized_alignment.py)",
+      "Bash(git -C /Users/evan.callia/projects/meal-planner commit -m 'test: baseline assertions + blank-notes guard symmetry for itemized alignment *)",
+      "Bash(git *)",
+      "WebFetch(domain:vitest.dev)",
+      "Bash(.venv/bin/python -m pytest tests/test_calendar_api.py)",
+      "Bash(sed -n 336,350p frontend/src/components/CalendarView.tsx)",
+      "Bash(sed -n 435,452p frontend/src/components/CalendarView.tsx)",
+      "Bash(sed -n 845,875p frontend/src/components/CalendarView.tsx)",
+      "Bash(sed -n 930,960p frontend/src/components/CalendarView.tsx)",
+      "Bash(sed -n 635,645p frontend/src/components/CalendarView.tsx)",
+      "Bash(.venv/bin/python -m pytest tests/test_calendar_api.py -q)",
+      "Bash(PATH=/opt/homebrew/bin:__TRACKED_VAR__ npm run test:run -- src/components/__tests__/CalendarView.test.tsx)",
+      "Bash(.venv/bin/python -m pytest tests/ -q)",
+      "Bash(PATH=/opt/homebrew/bin:__TRACKED_VAR__ npm run test:run)",
+      "Bash(.venv/bin/python -m pytest tests/test_calendar_api.py::TestRefreshBroadcastMultidayEvents::test_refresh_broadcast_expands_multiday_events -v)",
+      "Bash(.venv/bin/python -m pytest tests/test_calendar_api.py -v)",
+      "Bash(.venv/bin/python -m pytest backend/tests/test_config.py -q)",
+      "Bash(.venv/bin/python -m pytest tests/test_config.py -q)",
+      "Bash(.venv/bin/python -m pytest tests/test_config.py -q -p no:cacheprovider --no-cov)",
+      "Bash(.venv/bin/python -m pytest tests/ -q -p no:cacheprovider)",
+      "Bash(docker compose *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8000/api/health)",
+      "Bash(sed -n '955,975p' frontend/src/components/GroceryListView.tsx)",
+      "Bash(sed -n '1155,1175p' frontend/src/components/GroceryListView.tsx)",
+      "Bash(sed -n '332,345p' frontend/src/components/PantryPanel.tsx)",
+      "Bash(sed -n '468,485p' frontend/src/components/PantryPanel.tsx)",
+      "Bash(sed -n '522,545p' frontend/src/components/GroceryListView.tsx)",
+      "Bash(sed -n '164,168p' frontend/src/components/PantryPanel.tsx)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/api/health)",
+      "Bash(APP_PORT=8001 docker compose up -d --build)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8001/api/health)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  }
+}

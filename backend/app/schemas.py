@@ -267,3 +267,148 @@ class UserSettingsResponse(BaseModel):
 class UserSettingsUpdate(BaseModel):
     settings: dict
     updated_at: datetime
+
+
+# ----- Tracker / Lists -----
+
+class TrackerLogSchema(BaseModel):
+    id: UUID
+    task_id: UUID
+    done_at: datetime
+    kind: str = "done"
+    note: str | None = None
+    created_by_sub: str | None = None
+    created_by_name: str | None = None
+
+
+class TrackerTaskSchema(BaseModel):
+    id: UUID
+    list_id: UUID
+    name: str
+    target_interval_days: int | None = None
+    notes: str | None = None
+    position: int
+    archived: bool
+    season_start_month: int | None = None
+    season_end_month: int | None = None
+    season_start_day: int | None = None
+    season_end_day: int | None = None
+    snooze_until: datetime | None = None
+    last_done_at: datetime | None = None
+    last_event_at: datetime | None = None
+    last_done_by: str | None = None
+    last_note: str | None = None
+    total_count: int
+    avg_interval_days: float | None = None
+    recent_logs: list[TrackerLogSchema] = []
+
+
+class TrackerShareUser(BaseModel):
+    sub: str
+    email: str | None = None
+    name: str | None = None
+
+
+class TrackerListSchema(BaseModel):
+    id: UUID
+    name: str
+    icon: str | None = None
+    color: str | None = None
+    position: int
+    owner_sub: str
+    owner_name: str | None = None
+    is_owner: bool
+    shared_with: list[TrackerShareUser]
+    tasks: list[TrackerTaskSchema]
+
+
+class TrackerListCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    icon: str | None = None
+    color: str | None = None
+
+
+class TrackerListUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    icon: str | None = None
+    color: str | None = None
+
+
+class TrackerReorderLists(BaseModel):
+    list_ids: list[UUID]
+
+
+class TrackerShareCreate(BaseModel):
+    # Identify the collaborator by email (preferred) or sub.
+    email: str | None = None
+    sub: str | None = None
+
+
+class TrackerTaskCreate(BaseModel):
+    list_id: UUID
+    name: str = Field(..., min_length=1)
+    target_interval_days: int | None = Field(default=None, ge=1)
+    notes: str | None = None
+    season_start_month: int | None = Field(default=None, ge=1, le=12)
+    season_end_month: int | None = Field(default=None, ge=1, le=12)
+    season_start_day: int | None = Field(default=None, ge=1, le=31)
+    season_end_day: int | None = Field(default=None, ge=1, le=31)
+
+
+class TrackerTaskUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    target_interval_days: int | None = Field(default=None, ge=1)
+    notes: str | None = None
+    archived: bool | None = None
+    season_start_month: int | None = Field(default=None, ge=1, le=12)
+    season_end_month: int | None = Field(default=None, ge=1, le=12)
+    season_start_day: int | None = Field(default=None, ge=1, le=31)
+    season_end_day: int | None = Field(default=None, ge=1, le=31)
+    snooze_until: datetime | None = None
+
+
+class TrackerReorderTasks(BaseModel):
+    task_ids: list[UUID]
+
+
+class TrackerLogCreate(BaseModel):
+    done_at: datetime | None = None
+    kind: str = "done"  # "done" | "skip"
+    note: str | None = None
+    created_by_sub: str | None = None  # attribute to a collaborator; defaults to current user
+
+
+class TrackerLogRestore(BaseModel):
+    done_at: datetime | None = None
+    kind: str = "done"
+    note: str | None = None
+    created_by_sub: str | None = None
+
+
+class TrackerTaskRestore(BaseModel):
+    name: str = Field(..., min_length=1)
+    target_interval_days: int | None = Field(default=None, ge=1)
+    notes: str | None = None
+    position: int = 0
+    season_start_month: int | None = Field(default=None, ge=1, le=12)
+    season_end_month: int | None = Field(default=None, ge=1, le=12)
+    season_start_day: int | None = Field(default=None, ge=1, le=31)
+    season_end_day: int | None = Field(default=None, ge=1, le=31)
+    logs: list[TrackerLogRestore] = []
+
+
+class TrackerListRestore(BaseModel):
+    """Recreate a deleted list with its tasks, logs and shares in one shot, so undo
+    restores it atomically (and other devices see one event, not a flickering rebuild)."""
+    name: str = Field(..., min_length=1)
+    icon: str | None = None
+    color: str | None = None
+    position: int | None = None
+    share_subs: list[str] = []
+    tasks: list[TrackerTaskRestore] = []
+
+
+class TrackerDirectoryUser(BaseModel):
+    sub: str
+    email: str | None = None
+    name: str | None = None

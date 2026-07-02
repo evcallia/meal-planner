@@ -84,6 +84,19 @@ const typeLabels: Record<ChangeType, string> = {
   'store-reorder': 'Reorder stores',
   'item-default-delete': 'Delete item default',
   'item-default-put': 'Restore item default',
+  'tracker-list-create': 'Create list',
+  'tracker-list-update': 'Update list',
+  'tracker-list-delete': 'Delete list',
+  'tracker-list-reorder': 'Reorder lists',
+  'tracker-list-leave': 'Leave list',
+  'tracker-list-rejoin': 'Rejoin list',
+  'tracker-task-create': 'Add task',
+  'tracker-task-update': 'Update task',
+  'tracker-task-delete': 'Delete task',
+  'tracker-task-reorder': 'Reorder tasks',
+  'tracker-log-add': 'Mark task done',
+  'tracker-log-delete': 'Remove completion',
+  'tracker-skip': 'Skip task cycle',
 };
 
 async function enrichPendingChanges(changes: PendingChange[]): Promise<EnrichedPendingChange[]> {

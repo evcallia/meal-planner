@@ -6,6 +6,31 @@ from app.config import get_settings
 
 settings = get_settings()
 
+
+def record_user(user_info: dict) -> None:
+    """Upsert a signed-in user into the directory so list owners can resolve a
+    collaborator's email → sub when sharing. Best-effort; never blocks auth."""
+    sub = user_info.get("sub")
+    if not sub:
+        return
+    # Imported lazily to avoid import cycles at module load.
+    from app.database import SessionLocal
+    from app.models import User
+
+    db = SessionLocal()
+    try:
+        row = db.query(User).filter(User.sub == sub).first()
+        if row:
+            row.email = user_info.get("email")
+            row.name = user_info.get("name")
+        else:
+            db.add(User(sub=sub, email=user_info.get("email"), name=user_info.get("name")))
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
 oauth = OAuth()
 
 # Configure OIDC provider
@@ -53,11 +78,13 @@ async def callback(request: Request):
         raise HTTPException(status_code=400, detail="Failed to get user info")
 
     # Store user in session
-    request.session["user"] = {
+    session_user = {
         "sub": user_info.get("sub"),
         "email": user_info.get("email"),
         "name": user_info.get("name") or user_info.get("preferred_username"),
     }
+    request.session["user"] = session_user
+    record_user(session_user)
 
     return RedirectResponse(url=settings.frontend_url)
 

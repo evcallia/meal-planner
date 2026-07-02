@@ -83,6 +83,7 @@ export function UndoProvider({ id, children }: { id: string; children: ReactNode
     } finally {
       isUndoRedoInProgress.current = false;
     }
+    window.dispatchEvent(new Event('undo-redo-applied'));
     resetInactivityTimer(id);
   }, [id]);
 

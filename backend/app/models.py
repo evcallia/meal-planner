@@ -210,3 +210,129 @@ class UserSettings(Base):
     sub: Mapped[str] = mapped_column(String(255), primary_key=True)
     settings: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class User(Base):
+    """Directory of users who have signed in. Lets list owners resolve a
+    collaborator's email → OIDC sub when sharing a list."""
+    __tablename__ = "users"
+
+    sub: Mapped[str] = mapped_column(String(255), primary_key=True)
+    email: Mapped[str | None] = mapped_column(Text, nullable=True)
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_seen: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class TrackerList(Base):
+    """A "Lists" container — a shareable, recency-tracked checklist (à la
+    lastGLANCE). Private to its owner unless shared via TrackerShare."""
+    __tablename__ = "tracker_lists"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    owner_sub: Mapped[str] = mapped_column(String(255), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    icon: Mapped[str | None] = mapped_column(Text, nullable=True)  # emoji
+    color: Mapped[str | None] = mapped_column(Text, nullable=True)  # color name
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    tasks: Mapped[list["TrackerTask"]] = relationship(
+        "TrackerTask", back_populates="list", cascade="all, delete-orphan"
+    )
+    shares: Mapped[list["TrackerShare"]] = relationship(
+        "TrackerShare", back_populates="list", cascade="all, delete-orphan"
+    )
+
+
+class TrackerShare(Base):
+    """Grants a non-owner user access to a TrackerList."""
+    __tablename__ = "tracker_shares"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    list_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tracker_lists.id", ondelete="CASCADE")
+    )
+    sub: Mapped[str] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Soft-delete marker: set when the member leaves. Null = active. Keeping the row
+    # lets the member undo a leave (rejoin) without the owner having to re-share.
+    left_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    list: Mapped["TrackerList"] = relationship("TrackerList", back_populates="shares")
+
+
+class TrackerListPosition(Base):
+    """Per-user ordering of tracker lists. Each user (owner or collaborator) keeps
+    their own position for a list, so one member reordering doesn't reshuffle the
+    list for everyone else. Falls back to TrackerList.position when no row exists."""
+    __tablename__ = "tracker_list_positions"
+
+    sub: Mapped[str] = mapped_column(String(255), primary_key=True)
+    list_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tracker_lists.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class TrackerTask(Base):
+    """A tracked task/chore within a list. Recency is derived from its logs."""
+    __tablename__ = "tracker_tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    list_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tracker_lists.id", ondelete="CASCADE")
+    )
+    name: Mapped[str] = mapped_column(Text)
+    target_interval_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Seasonal visibility as a recurring date range (month + day, wraps year-end).
+    # Null = all year.
+    season_start_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    season_end_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    season_start_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    season_end_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # "Skip this cycle": resets recency without logging a completion.
+    snooze_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    list: Mapped["TrackerList"] = relationship("TrackerList", back_populates="tasks")
+    logs: Mapped[list["TrackerLog"]] = relationship(
+        "TrackerLog", back_populates="task", cascade="all, delete-orphan"
+    )
+
+
+class TrackerLog(Base):
+    """A single completion entry for a task. `done_at` may be backdated."""
+    __tablename__ = "tracker_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tracker_tasks.id", ondelete="CASCADE")
+    )
+    done_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="done")  # "done" | "skip"
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_sub: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    task: Mapped["TrackerTask"] = relationship("TrackerTask", back_populates="logs")

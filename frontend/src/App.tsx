@@ -4,7 +4,8 @@ import { CalendarView, resetCalendarSessionLoaded, markCalendarSessionLoaded } f
 import { PantryPanel } from './components/PantryPanel';
 import { MealIdeasPanel } from './components/MealIdeasPanel';
 import { GroceryListView } from './components/GroceryListView';
-import { StatusBar } from './components/StatusBar';
+import { ListsView } from './components/ListsView';
+import { StatusChip, StatusToast } from './components/StatusBar';
 import { ReAuthModal } from './components/ReAuthModal';
 import { SettingsModal } from './components/SettingsModal';
 import { UpdateNotification } from './components/UpdateNotification';
@@ -13,18 +14,34 @@ import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
 import { useRealtime } from './hooks/useRealtime';
 import { useKeyboardOpen } from './hooks/useKeyboardOpen';
-import { getCurrentUser, getLoginUrl, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents, refreshCalendarCache } from './api/client';
-import { UserInfo, GrocerySection, GroceryItem, PantrySection, PantryItem, Store, MealIdea } from './types';
+import { getCurrentUser, getLoginUrl, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents, refreshCalendarCache, getTrackerLists } from './api/client';
+import { UserInfo, GrocerySection, GroceryItem, PantrySection, PantryItem, Store, MealIdea, ConnectionStatus, TrackerList, TrackerTask } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { resetGrocerySessionLoaded, markGrocerySessionLoaded } from './hooks/useGroceryList';
 import { resetPantrySessionLoaded, markPantrySessionLoaded } from './hooks/usePantry';
 import { resetStoresSessionLoaded, markStoresSessionLoaded } from './hooks/useStores';
 import { resetMealIdeasSessionLoaded, markMealIdeasSessionLoaded } from './hooks/useMealIdeas';
-import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea, saveLocalHiddenEvents, clearLocalHiddenEvents, saveLocalItemDefaults } from './db';
+import { resetTrackerSessionLoaded, markTrackerSessionLoaded } from './hooks/useTracker';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea, saveLocalHiddenEvents, clearLocalHiddenEvents, saveLocalItemDefaults, saveLocalTrackerLists, saveLocalTrackerTasks, saveLocalTrackerList, deleteLocalTrackerList, saveLocalTrackerTask, deleteLocalTrackerTask, getLocalTrackerLists, getLocalTrackerTasks } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
-type Page = 'meals' | 'pantry' | 'grocery';
+type Page = 'meals' | 'pantry' | 'grocery' | 'lists';
+
+// Map tracker objects to their IndexedDB shape (keeps recent_logs so offline
+// history is cached). Used by the background fetch + inactive-tab cache warmer.
+const trackerListToLocal = (l: TrackerList) => ({
+  id: l.id, name: l.name, icon: l.icon, color: l.color, position: l.position,
+  owner_sub: l.owner_sub, owner_name: l.owner_name, is_owner: l.is_owner, shared_with: l.shared_with,
+});
+const trackerTaskToLocal = (t: TrackerTask) => ({
+  id: t.id, list_id: t.list_id, name: t.name, target_interval_days: t.target_interval_days,
+  notes: t.notes, position: t.position, archived: t.archived,
+  season_start_month: t.season_start_month, season_end_month: t.season_end_month,
+  season_start_day: t.season_start_day, season_end_day: t.season_end_day, snooze_until: t.snooze_until,
+  last_done_at: t.last_done_at, last_event_at: t.last_event_at, last_done_by: t.last_done_by, last_note: t.last_note,
+  total_count: t.total_count, avg_interval_days: t.avg_interval_days, recent_logs: t.recent_logs,
+});
 
 // Throttle server-side iCal feed refreshes triggered on app focus/reconnect
 let lastCalendarFeedRefresh = 0;
@@ -37,6 +54,7 @@ function PageHeader({
   onLogout,
   onShowSettings,
   status,
+  pendingCount,
   updateAvailable,
 }: {
   title: string;
@@ -44,10 +62,12 @@ function PageHeader({
   onLogout: () => void;
   onShowSettings: () => void;
   status: string;
+  pendingCount: number;
   updateAvailable?: boolean;
 }) {
   const { canUndo, canRedo, undo, redo } = useUndo();
   const headerRef = useRef<HTMLElement>(null);
+  const showStatus = status !== 'online' && status !== 'auth-required';
 
   useEffect(() => {
     const el = headerRef.current;
@@ -60,10 +80,12 @@ function PageHeader({
   }, []);
 
   return (
-    <header ref={headerRef} className={`sticky z-10 mt-2 ${status !== 'online' ? 'top-10' : 'top-2'} max-w-lg mx-auto w-full px-4`}>
-      <div className="glass-nav rounded-2xl h-12 px-5 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h1>
-        <div className="flex items-center gap-3">
+    <header ref={headerRef} className="sticky z-10 mt-2 top-2 max-w-lg mx-auto w-full px-4">
+      <div className={`glass-nav rounded-2xl px-5 flex items-center justify-between ${showStatus ? 'py-1.5' : 'h-12'}`}>
+        <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100 truncate">{title}</h1>
+        <div className="flex flex-col items-end gap-0.5">
+          {showStatus && <StatusChip status={status as ConnectionStatus} pendingCount={pendingCount} />}
+          <div className="flex items-center gap-3">
           {/* Refresh button */}
           <button
             onClick={() => window.location.reload()}
@@ -118,6 +140,7 @@ function PageHeader({
           >
             Logout
           </button>
+          </div>
         </div>
       </div>
     </header>
@@ -127,8 +150,11 @@ function PageHeader({
 function BottomNav({ currentPage, onChange, groceryCount, hidden }: { currentPage: Page; onChange: (page: Page) => void; groceryCount: number; hidden?: boolean }) {
   if (hidden) return null;
   return (
-    <nav className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 glass-nav rounded-full px-6 safe-area-bottom">
-      <div className="flex gap-7">
+    <nav className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 safe-area-bottom">
+      {/* backdrop-filter lives on this inner (non-fixed) layer — on iOS a fixed
+          element that itself has backdrop-filter detaches and drifts during
+          momentum scroll. Keeping the fixed element filter-free keeps it locked. */}
+      <div className="glass-nav rounded-full px-6 flex gap-7">
         <button
           onClick={() => onChange('meals')}
           className={`flex flex-col items-center py-2 transition-colors ${
@@ -178,6 +204,20 @@ function BottomNav({ currentPage, onChange, groceryCount, hidden }: { currentPag
           </div>
           <span className="text-xs mt-0.5 font-medium">Grocery</span>
         </button>
+        <button
+          onClick={() => onChange('lists')}
+          className={`flex flex-col items-center py-2 transition-colors ${
+            currentPage === 'lists'
+              ? 'text-blue-600 dark:text-blue-400'
+              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+          }`}
+        >
+          {/* Checklist/tasks icon */}
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+          </svg>
+          <span className="text-xs mt-0.5 font-medium">Lists</span>
+        </button>
       </div>
     </nav>
   );
@@ -186,6 +226,7 @@ function BottomNav({ currentPage, onChange, groceryCount, hidden }: { currentPag
 function MealsPage({
   user,
   status,
+  pendingCount,
   settings,
   onShowSettings,
   onLogout,
@@ -193,6 +234,7 @@ function MealsPage({
 }: {
   user: UserInfo;
   status: string;
+  pendingCount: number;
   settings: ReturnType<typeof import('./hooks/useSettings').useSettings>['settings'];
   onShowSettings: () => void;
   onLogout: () => void;
@@ -271,7 +313,7 @@ function MealsPage({
 
   return (
     <>
-      <PageHeader title="Meals" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
+      <PageHeader title="Meals" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         {settings.showMealIdeas && (
           <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
@@ -310,6 +352,7 @@ function MealsPage({
 function GroceryPage({
   user,
   status,
+  pendingCount,
   settings,
   onShowSettings,
   onLogout,
@@ -317,6 +360,7 @@ function GroceryPage({
 }: {
   user: UserInfo;
   status: string;
+  pendingCount: number;
   settings: ReturnType<typeof import('./hooks/useSettings').useSettings>['settings'];
   onShowSettings: () => void;
   onLogout: () => void;
@@ -324,9 +368,36 @@ function GroceryPage({
 }) {
   return (
     <>
-      <PageHeader title="Grocery" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
+      <PageHeader title="Grocery" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         <GroceryListView compactView={settings.compactView} editHighlightColor={settings.editHighlightColor} />
+      </main>
+    </>
+  );
+}
+
+function ListsPage({
+  user,
+  status,
+  pendingCount,
+  settings,
+  onShowSettings,
+  onLogout,
+  updateAvailable,
+}: {
+  user: UserInfo;
+  status: string;
+  pendingCount: number;
+  settings: ReturnType<typeof import('./hooks/useSettings').useSettings>['settings'];
+  onShowSettings: () => void;
+  onLogout: () => void;
+  updateAvailable?: boolean;
+}) {
+  return (
+    <>
+      <PageHeader title="Lists" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} />
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
+        <ListsView user={user} editHighlightColor={settings.editHighlightColor} />
       </main>
     </>
   );
@@ -335,6 +406,7 @@ function GroceryPage({
 function PantryPage({
   user,
   status,
+  pendingCount,
   settings,
   onShowSettings,
   onLogout,
@@ -342,6 +414,7 @@ function PantryPage({
 }: {
   user: UserInfo;
   status: string;
+  pendingCount: number;
   settings: ReturnType<typeof import('./hooks/useSettings').useSettings>['settings'];
   onShowSettings: () => void;
   onLogout: () => void;
@@ -349,7 +422,7 @@ function PantryPage({
 }) {
   return (
     <>
-      <PageHeader title="Pantry" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} updateAvailable={updateAvailable} />
+      <PageHeader title="Pantry" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         <PantryPanel editHighlightColor={settings.editHighlightColor} />
       </main>
@@ -363,7 +436,7 @@ function AppContent() {
   const [showSettings, setShowSettings] = useState(false);
   const [currentPage, setCurrentPage] = useState<Page>(() => {
     const saved = sessionStorage.getItem('meal-planner-tab');
-    if (saved === 'meals' || saved === 'pantry' || saved === 'grocery') return saved;
+    if (saved === 'meals' || saved === 'pantry' || saved === 'grocery' || saved === 'lists') return saved;
     return 'meals';
   });
   const [groceryCount, setGroceryCount] = useState(() => {
@@ -516,6 +589,7 @@ function AppContent() {
       const hasGroceryChanges = pending.some(c => c.type.startsWith('grocery-'));
       const hasPantryChanges = pending.some(c => c.type.startsWith('pantry-'));
       const hasMealIdeaChanges = pending.some(c => c.type.startsWith('meal-idea-'));
+      const hasTrackerChanges = pending.some(c => c.type.startsWith('tracker-'));
 
       if (!hasGroceryChanges) {
         getGroceryList().then(async (data) => {
@@ -557,6 +631,14 @@ function AppContent() {
           for (const idea of ideas) await saveLocalMealIdea(idea);
           try { localStorage.setItem('meal-planner-meal-ideas', JSON.stringify(ideas)); } catch { /* full */ }
           markMealIdeasSessionLoaded();
+        }).catch(() => { /* best-effort */ });
+      }
+
+      if (!hasTrackerChanges) {
+        getTrackerLists().then(async (lists) => {
+          await saveLocalTrackerLists(lists.map(trackerListToLocal));
+          await saveLocalTrackerTasks(lists.flatMap(l => l.tasks.map(trackerTaskToLocal)));
+          markTrackerSessionLoaded();
         }).catch(() => { /* best-effort */ });
       }
 
@@ -619,6 +701,57 @@ function AppContent() {
 
       // Focus-refresh events are handled by each tab's own hook — skip here
       if (detail.source_id === '__focus_refresh__') return;
+
+      // Tracker/Lists: warm the IndexedDB cache from realtime events while we're on
+      // another tab, so lists + history stay current in the background and are ready
+      // to go offline with — same as grocery/pantry. (On the Lists tab, useTracker
+      // handles events itself.) Events are already per-user scoped by the server.
+      if (detail.type === 'tracker.updated') {
+        if (currentPageRef.current === 'lists') return;
+        try {
+          const pendingT = await getPendingChanges();
+          if (pendingT.some(c => c.type.startsWith('tracker-'))) { resetTrackerSessionLoaded(); return; }
+          const p = detail.payload as {
+            action?: string; list?: TrackerList; listId?: string; task?: TrackerTask; taskId?: string;
+            position?: number; tasks?: { id: string; position: number }[];
+          };
+          switch (p?.action) {
+            case 'list-added': case 'list-updated': case 'list-shared':
+              if (p.list) {
+                await saveLocalTrackerList(trackerListToLocal(p.list));
+                await saveLocalTrackerTasks(p.list.tasks.map(trackerTaskToLocal));
+              }
+              break;
+            case 'list-deleted':
+              if (p.listId) await deleteLocalTrackerList(p.listId);
+              break;
+            case 'list-reordered':
+              if (p.listId && p.position != null) {
+                const l = (await getLocalTrackerLists()).find(x => x.id === p.listId);
+                if (l) await saveLocalTrackerList({ ...l, position: p.position });
+              }
+              break;
+            case 'task-added': case 'task-updated': case 'task-logged':
+              if (p.task) await saveLocalTrackerTask(trackerTaskToLocal(p.task));
+              break;
+            case 'task-deleted':
+              if (p.taskId) await deleteLocalTrackerTask(p.taskId);
+              break;
+            case 'tasks-reordered':
+              if (p.tasks) {
+                const posMap = new Map(p.tasks.map(t => [t.id, t.position]));
+                for (const lt of await getLocalTrackerTasks()) {
+                  const pos = posMap.get(lt.id);
+                  if (pos !== undefined) await saveLocalTrackerTask({ ...lt, position: pos });
+                }
+              }
+              break;
+            default:
+              resetTrackerSessionLoaded(); // unknown/legacy → refetch on next visit
+          }
+        } catch { resetTrackerSessionLoaded(); }
+        return;
+      }
 
       // Skip if there are pending offline changes — don't overwrite local edits
       try {
@@ -956,6 +1089,7 @@ function AppContent() {
     resetPantrySessionLoaded();
     resetStoresSessionLoaded();
     resetMealIdeasSessionLoaded();
+    resetTrackerSessionLoaded();
     fetchAllData();
     // Calendar needs a synthetic event since CalendarView manages its own fetch
     window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
@@ -1066,8 +1200,8 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-transparent flex flex-col">
-      {/* Status Bar */}
-      <StatusBar status={status} pendingCount={pendingCount} />
+      {/* Transient connection toast (persistent state shown as a header chip) */}
+      <StatusToast status={status} pendingCount={pendingCount} />
       {status === 'auth-required' && <ReAuthModal pendingCount={pendingCount} />}
 
       {/* Page Content — each wrapped in its own UndoProvider for independent undo/redo */}
@@ -1076,6 +1210,7 @@ function AppContent() {
           <MealsPage
             user={user}
             status={status}
+            pendingCount={pendingCount}
             settings={settings}
             onShowSettings={() => setShowSettings(true)}
             onLogout={handleLogout}
@@ -1088,6 +1223,7 @@ function AppContent() {
           <PantryPage
             user={user}
             status={status}
+            pendingCount={pendingCount}
             settings={settings}
             onShowSettings={() => setShowSettings(true)}
             onLogout={handleLogout}
@@ -1100,6 +1236,20 @@ function AppContent() {
           <GroceryPage
             user={user}
             status={status}
+            pendingCount={pendingCount}
+            settings={settings}
+            onShowSettings={() => setShowSettings(true)}
+            onLogout={handleLogout}
+            updateAvailable={updateAvailable}
+          />
+        </UndoProvider>
+      )}
+      {currentPage === 'lists' && (
+        <UndoProvider id="lists">
+          <ListsPage
+            user={user}
+            status={status}
+            pendingCount={pendingCount}
             settings={settings}
             onShowSettings={() => setShowSettings(true)}
             onLogout={handleLogout}

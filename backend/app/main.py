@@ -19,7 +19,7 @@ from app.config import get_settings
 get_settings.cache_clear()
 from app.database import engine, Base, SessionLocal
 from app.models import MealNote, CachedCalendarEvent, PantrySection, PantryItem
-from app.routers import days, auth, pantry, meal_ideas, realtime, calendar, grocery, stores, settings as settings_router
+from app.routers import days, auth, pantry, meal_ideas, realtime, calendar, grocery, stores, settings as settings_router, tracker, users
 from app.ical_service import initialize_cache, shutdown_cache
 from app.realtime import broadcaster, shutdown_event
 
@@ -187,6 +187,16 @@ def run_migrations():
                 conn.commit()
             print("Migration complete: added section_name column")
 
+    # Soft-delete marker for tracker shares (lets a member undo a "leave")
+    if inspector.has_table("tracker_shares"):
+        ts_columns = [col["name"] for col in inspector.get_columns("tracker_shares")]
+        if "left_at" not in ts_columns:
+            print("Adding left_at column to tracker_shares...")
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE tracker_shares ADD COLUMN left_at TIMESTAMP"))
+                conn.commit()
+            print("Migration complete: added left_at column")
+
     # Drop the broken functional index if it exists (replaced with simple unique constraint)
     try:
         with engine.connect() as conn:
@@ -194,6 +204,34 @@ def run_migrations():
             conn.commit()
     except Exception:
         pass
+
+    # Add seasonal columns to tracker_tasks if missing
+    if inspector.has_table("tracker_tasks"):
+        tracker_columns = [col["name"] for col in inspector.get_columns("tracker_tasks")]
+        if "season_start_month" not in tracker_columns:
+            print("Adding seasonal columns to tracker_tasks...")
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE tracker_tasks ADD COLUMN season_start_month INTEGER"))
+                conn.execute(text("ALTER TABLE tracker_tasks ADD COLUMN season_end_month INTEGER"))
+                conn.commit()
+            print("Migration complete: added seasonal columns")
+        if "season_start_day" not in tracker_columns:
+            print("Adding season-day + snooze columns to tracker_tasks...")
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE tracker_tasks ADD COLUMN season_start_day INTEGER"))
+                conn.execute(text("ALTER TABLE tracker_tasks ADD COLUMN season_end_day INTEGER"))
+                conn.execute(text("ALTER TABLE tracker_tasks ADD COLUMN snooze_until TIMESTAMP"))
+                conn.commit()
+            print("Migration complete: added season-day + snooze columns")
+
+    if inspector.has_table("tracker_logs"):
+        log_columns = [col["name"] for col in inspector.get_columns("tracker_logs")]
+        if "kind" not in log_columns:
+            print("Adding kind column to tracker_logs...")
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE tracker_logs ADD COLUMN kind VARCHAR(16) DEFAULT 'done'"))
+                conn.commit()
+            print("Migration complete: added kind column")
 
     # Add store_id column to grocery_items if missing
     if inspector.has_table("grocery_items"):
@@ -267,6 +305,8 @@ app.include_router(calendar.router)
 app.include_router(stores.router)
 app.include_router(grocery.router)
 app.include_router(settings_router.router)
+app.include_router(tracker.router)
+app.include_router(users.router)
 
 
 # Health check
@@ -280,11 +320,14 @@ if not settings.oidc_issuer:
     @app.get("/api/auth/dev-login")
     async def dev_login(request: Request):
         """Set a fake session for local development."""
-        request.session["user"] = {
+        dev_user = {
             "sub": "dev-user",
             "email": "dev@localhost",
             "name": "Dev User",
         }
+        request.session["user"] = dev_user
+        from app.auth import record_user
+        record_user(dev_user)
         from fastapi.responses import RedirectResponse as RR
         return RR(url="/")
 

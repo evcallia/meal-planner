@@ -464,6 +464,133 @@ export async function reorderStores(storeIds: string[]): Promise<{ status: strin
   });
 }
 
+// Tracker / Lists API
+import type { TrackerList, TrackerTask, TrackerLog, DirectoryUser } from '../types';
+
+export async function getTrackerLists(): Promise<TrackerList[]> {
+  return fetchAPI<TrackerList[]>('/tracker');
+}
+
+export async function createTrackerList(payload: { name: string; icon?: string | null; color?: string | null }): Promise<TrackerList> {
+  return fetchAPI<TrackerList>('/tracker/lists', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface TrackerListRestorePayload {
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+  position?: number | null;
+  share_subs?: string[];
+  tasks?: {
+    name: string;
+    target_interval_days?: number | null;
+    notes?: string | null;
+    position?: number;
+    season_start_month?: number | null;
+    season_end_month?: number | null;
+    season_start_day?: number | null;
+    season_end_day?: number | null;
+    logs?: { done_at?: string | null; kind?: string; note?: string | null; created_by_sub?: string | null }[];
+  }[];
+}
+
+export async function restoreTrackerList(payload: TrackerListRestorePayload): Promise<TrackerList> {
+  return fetchAPI<TrackerList>('/tracker/lists/restore', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateTrackerList(listId: string, payload: { name?: string; icon?: string | null; color?: string | null }): Promise<TrackerList> {
+  return fetchAPI<TrackerList>(`/tracker/lists/${listId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteTrackerList(listId: string): Promise<void> {
+  await fetchAPI(`/tracker/lists/${listId}`, { method: 'DELETE' });
+}
+
+export async function reorderTrackerLists(listIds: string[]): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>('/tracker/reorder-lists', {
+    method: 'PATCH',
+    body: JSON.stringify({ list_ids: listIds }),
+  });
+}
+
+export async function addTrackerShare(listId: string, payload: { email?: string; sub?: string }): Promise<TrackerList> {
+  return fetchAPI<TrackerList>(`/tracker/lists/${listId}/shares`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function leaveTrackerList(listId: string): Promise<void> {
+  await fetchAPI(`/tracker/lists/${listId}/leave`, { method: 'POST' });
+}
+
+export async function rejoinTrackerList(listId: string): Promise<TrackerList> {
+  return fetchAPI<TrackerList>(`/tracker/lists/${listId}/rejoin`, { method: 'POST' });
+}
+
+export async function removeTrackerShare(listId: string, shareSub: string): Promise<TrackerList> {
+  return fetchAPI<TrackerList>(`/tracker/lists/${listId}/shares/${encodeURIComponent(shareSub)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function createTrackerTask(payload: { list_id: string; name: string; target_interval_days?: number | null; notes?: string | null; season_start_month?: number | null; season_end_month?: number | null; season_start_day?: number | null; season_end_day?: number | null }): Promise<TrackerTask> {
+  return fetchAPI<TrackerTask>('/tracker/tasks', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateTrackerTask(taskId: string, payload: { name?: string; target_interval_days?: number | null; notes?: string | null; archived?: boolean; season_start_month?: number | null; season_end_month?: number | null; season_start_day?: number | null; season_end_day?: number | null; snooze_until?: string | null }): Promise<TrackerTask> {
+  return fetchAPI<TrackerTask>(`/tracker/tasks/${taskId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function skipTrackerTask(taskId: string): Promise<TrackerTask> {
+  return fetchAPI<TrackerTask>(`/tracker/tasks/${taskId}/skip`, { method: 'POST' });
+}
+
+export async function deleteTrackerTask(taskId: string): Promise<void> {
+  await fetchAPI(`/tracker/tasks/${taskId}`, { method: 'DELETE' });
+}
+
+export async function reorderTrackerTasks(listId: string, taskIds: string[]): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/tracker/lists/${listId}/reorder-tasks`, {
+    method: 'PATCH',
+    body: JSON.stringify({ task_ids: taskIds }),
+  });
+}
+
+export async function getTrackerLogs(taskId: string): Promise<TrackerLog[]> {
+  return fetchAPI<TrackerLog[]>(`/tracker/tasks/${taskId}/logs`);
+}
+
+export async function addTrackerLog(taskId: string, payload: { done_at?: string; note?: string | null; created_by_sub?: string | null; kind?: string }): Promise<TrackerLog> {
+  return fetchAPI<TrackerLog>(`/tracker/tasks/${taskId}/logs`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteTrackerLog(logId: string): Promise<void> {
+  await fetchAPI(`/tracker/logs/${logId}`, { method: 'DELETE' });
+}
+
+export async function getUsers(): Promise<DirectoryUser[]> {
+  return fetchAPI<DirectoryUser[]>('/users');
+}
+
 export async function getSettings(): Promise<{ settings: Record<string, unknown>; updated_at: string | null }> {
   return fetchAPI<{ settings: Record<string, unknown>; updated_at: string | null }>('/settings');
 }
