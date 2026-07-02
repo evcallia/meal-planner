@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { isTempId, getTempIdMapping } from '../db';
 
 /**
@@ -57,6 +57,21 @@ export function useIdRemap() {
       map.set(id, newId);
     }
   }, []);
+
+  // Learn temp→real mappings made by `useSync` while draining the offline queue.
+  // useSync writes them to IndexedDB only, so without this the in-memory map (used
+  // by undo/redo optimistic state updates via `resolveId`) would still point at the
+  // dead temp id after a reconnect — the API call would resolve (via the IDB
+  // fallback) and reach the server, but the originating tab's optimistic update
+  // would no-op. `saveTempIdMapping` dispatches this event for every mapping.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { tempId?: string; realId?: string } | undefined;
+      if (detail?.tempId && detail.realId) remapId(detail.tempId, detail.realId);
+    };
+    window.addEventListener('temp-id-mapped', handler as EventListener);
+    return () => window.removeEventListener('temp-id-mapped', handler as EventListener);
+  }, [remapId]);
 
   return { resolveId, resolveIdAsync, remapId };
 }

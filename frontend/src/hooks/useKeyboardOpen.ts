@@ -110,12 +110,25 @@ export function useKeyboardOpen(): boolean {
       }, 100);
     };
 
+    // Safety net for the iOS-standalone stuck-open case: if the layout is locked
+    // (main is the scroll container) but nothing editable is focused, the keyboard
+    // is definitely closed — force it off. Without this, a missed visualViewport
+    // resize event leaves the whole page's scroll broken (window scroll dead, the
+    // bottom nav/FAB drift, meals infinite-scroll stops) until the app is relaunched.
+    const forceCloseIfNoFocus = () => {
+      if (document.documentElement.classList.contains('keyboard-open') && !hasEditableFocus()) {
+        check();
+      }
+    };
+
     vv.addEventListener('resize', check);
     vv.addEventListener('scroll', fixStrayWindowScroll);
     window.addEventListener('resize', updateInitialHeight);
     window.addEventListener('scroll', fixStrayWindowScroll);
     document.addEventListener('focusin', scheduleCheck);
     document.addEventListener('focusout', scheduleCheck);
+    document.addEventListener('pointerdown', forceCloseIfNoFocus, true);
+    document.addEventListener('visibilitychange', forceCloseIfNoFocus);
     return () => {
       if (recheckTimer !== null) window.clearTimeout(recheckTimer);
       vv.removeEventListener('resize', check);
@@ -124,6 +137,8 @@ export function useKeyboardOpen(): boolean {
       window.removeEventListener('scroll', fixStrayWindowScroll);
       document.removeEventListener('focusin', scheduleCheck);
       document.removeEventListener('focusout', scheduleCheck);
+      document.removeEventListener('pointerdown', forceCloseIfNoFocus, true);
+      document.removeEventListener('visibilitychange', forceCloseIfNoFocus);
       document.documentElement.classList.remove('keyboard-open');
     };
   }, []);

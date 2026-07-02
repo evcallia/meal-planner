@@ -16,6 +16,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - meal-planner-dev-backend
 
   app:
     build: .
@@ -46,6 +48,34 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - meal-planner-dev-backend   # reach the db sibling
+      - proxy                       # Traefik can reach the app
+      - external                    # outbound: OIDC discovery, Apple CalDAV
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.meal-planner-dev.rule=Host(`meal-planner-dev.evancallia.com`)"
+      - "traefik.http.routers.meal-planner-dev.entrypoints=websecure"
+      - "traefik.http.routers.meal-planner-dev.middlewares=secure-chain@file"
+      - "traefik.http.services.meal-planner-dev.loadbalancer.server.port=8000"
+      - "traefik.http.routers.meal-planner-dev.tls=true"
+      - "traefik.http.routers.meal-planner-dev.tls.certresolver=le-dns"
 
 volumes:
   postgres_data:
+
+networks:
+  meal-planner-dev-backend:
+    driver: bridge
+  proxy:
+    external: true
+    name: proxy
+  external:
+    external: true
+    name: external

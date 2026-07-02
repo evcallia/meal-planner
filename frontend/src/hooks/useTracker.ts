@@ -8,6 +8,8 @@ import {
   deleteTrackerList,
   addTrackerShare,
   removeTrackerShare,
+  leaveTrackerList,
+  rejoinTrackerList,
   createTrackerTask,
   updateTrackerTask,
   deleteTrackerTask,
@@ -59,6 +61,10 @@ let _liveTrackerDispatch: React.Dispatch<React.SetStateAction<TrackerList[]>> | 
 
 const byPosition = (a: { position: number }, b: { position: number }) => a.position - b.position;
 
+// Tracks a log's id (temp → real after the server responds) plus the in-flight
+// server round-trip, so a delete can wait for the add to land before removing it.
+type LogHolder = { id: string; pending?: Promise<void> };
+
 function toLocalList(list: TrackerList): LocalTrackerList {
   return {
     id: list.id,
@@ -93,6 +99,7 @@ function toLocalTask(task: TrackerTask): LocalTrackerTask {
     last_note: task.last_note,
     total_count: task.total_count,
     avg_interval_days: task.avg_interval_days,
+    recent_logs: task.recent_logs,
   };
 }
 
@@ -125,6 +132,12 @@ export function useTracker() {
   _liveTrackerDispatch = _setLists;
   const setLists = useCallback<typeof _setLists>((action) => _liveTrackerDispatch?.(action), []);
   const [loading, setLoading] = useState(true);
+  // Full history of the task open in the detail view. Owned here so log mutations
+  // and their undo/redo update it synchronously — no refetch, so no race, no 2s
+  // freeze, and no attribution flicker from swapping optimistic → server values.
+  // `null` = not loaded (offline/unsynced); the view falls back to recent_logs.
+  const [openHistory, setOpenHistory] = useState<TrackerLog[] | null>(null);
+  const openHistoryTaskRef = useRef<string | null>(null);
 
   const isOnline = useOnlineStatus();
   const isOnlineRef = useRef(isOnline);
@@ -168,8 +181,33 @@ export function useTracker() {
   }, [setLists]);
 
   const patchTask = useCallback((listId: string, taskId: string, fn: (t: TrackerTask) => TrackerTask) => {
-    setLists(prev => prev.map(l => l.id !== listId ? l : { ...l, tasks: l.tasks.map(t => t.id === taskId ? fn(t) : t) }));
-  }, [setLists]);
+    // Resolve through the remap chain so undo/redo closures holding a temp id still
+    // hit the synced real id now present in state (see 'temp-id-mapped' listener).
+    const lid = resolveId(listId), tid = resolveId(taskId);
+    setLists(prev => prev.map(l => l.id !== lid ? l : { ...l, tasks: l.tasks.map(t => t.id === tid ? fn(t) : t) }));
+  }, [setLists, resolveId]);
+
+  // Apply a delta to the open task's history, if it's loaded and matches (resolved).
+  const mutateOpenHistory = useCallback((taskId: string, fn: (logs: TrackerLog[]) => TrackerLog[]) => {
+    const open = openHistoryTaskRef.current;
+    if (!open || resolveId(open) !== resolveId(taskId)) return;
+    setOpenHistory(prev => (prev === null ? prev : fn(prev)));
+  }, [resolveId]);
+
+  const openTaskHistory = useCallback(async (taskId: string) => {
+    openHistoryTaskRef.current = taskId;
+    setOpenHistory(null);
+    if (isTempId(taskId) || !isOnlineRef.current) return; // offline/unsynced → recent_logs
+    try {
+      const fetched = await getTrackerLogs(taskId);
+      if (openHistoryTaskRef.current === taskId) setOpenHistory(fetched);
+    } catch { /* offline — the view falls back to recent_logs */ }
+  }, []);
+
+  const closeTaskHistory = useCallback(() => {
+    openHistoryTaskRef.current = null;
+    setOpenHistory(null);
+  }, []);
 
   // ----- loading -----
   const loadTracker = useCallback(async (skipApi = false) => {
@@ -187,18 +225,40 @@ export function useTracker() {
 
     if (!skipApi && isOnlineRef.current) {
       const pending = await getPendingChanges();
-      if (pending.some(c => c.type.startsWith('tracker-'))) { setLoading(false); return; }
+      const hasPendingTracker = pending.some(c => c.type.startsWith('tracker-'));
       try {
         const data = await getTrackerLists();
         if (token !== loadTokenRef.current || optimisticVersionRef.current !== fetchVersion) return;
-        if (!editingRef.current) setLists(data);
-        await saveLocalTrackerLists(data.map(toLocalList));
-        await saveLocalTrackerTasks(data.flatMap(l => l.tasks.map(toLocalTask)));
+        if (!hasPendingTracker && !editingRef.current) {
+          // No optimistic changes in flight — safe to fully replace. Preserve any
+          // cached recent_logs the payload omits (e.g. an older server build) so a
+          // fetch never wipes offline history back to empty.
+          const prevRecent = new Map<string, TrackerLog[]>();
+          for (const l of listsRef.current) for (const t of l.tasks) if (t.recent_logs !== undefined) prevRecent.set(t.id, t.recent_logs);
+          const merged = data.map(l => ({ ...l, tasks: l.tasks.map(t => ({ ...t, recent_logs: t.recent_logs ?? prevRecent.get(t.id) })) }));
+          setLists(merged);
+          await saveLocalTrackerLists(merged.map(toLocalList));
+          await saveLocalTrackerTasks(merged.flatMap(l => l.tasks.map(toLocalTask)));
+        } else {
+          // Optimistic changes are pending: don't clobber them, but still refresh
+          // each task's cached recent_logs so offline history stays available.
+          setLists(prev => prev.map(l => {
+            const fresh = data.find(d => d.id === resolveId(l.id));
+            if (!fresh) return l;
+            return {
+              ...l,
+              tasks: l.tasks.map(t => {
+                const ft = fresh.tasks.find(x => x.id === resolveId(t.id));
+                return ft ? { ...t, recent_logs: ft.recent_logs } : t;
+              }),
+            };
+          }));
+        }
         trackerSessionLoaded = true;
       } catch { /* keep cache */ }
     }
     setLoading(false);
-  }, [setLists]);
+  }, [setLists, resolveId]);
 
   const loadTrackerRef = useRef(loadTracker);
   loadTrackerRef.current = loadTracker;
@@ -214,6 +274,17 @@ export function useTracker() {
   useEffect(() => {
     loadTracker(trackerSessionLoaded);
   }, [loadTracker]);
+
+  // History (recent_logs) stays current via SSE: task-added/updated/logged events
+  // carry each task's recent_logs and are applied live, so while the Lists tab is
+  // open and online we always have the last-few ready to go offline with. SSE can't
+  // replay events missed while offline, so on reconnect we do one catch-up refetch
+  // (the list endpoint returns recent_logs) — no background scanner needed.
+  const wasOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    if (isOnline && !wasOnlineRef.current) loadTrackerRef.current();
+    wasOnlineRef.current = isOnline;
+  }, [isOnline]);
 
   // ----- realtime -----
   const applyRealtimeEvent = useCallback((payload: TrackerSSEPayload) => {
@@ -327,7 +398,8 @@ export function useTracker() {
   type ListUpdates = { name?: string; icon?: string | null; color?: string | null };
   const updateListCore = useCallback((listId: string, updates: ListUpdates) => {
     optimisticVersionRef.current++;
-    setLists(prev => prev.map(l => l.id === listId ? { ...l, ...updates } : l));
+    const lid = resolveId(listId);
+    setLists(prev => prev.map(l => l.id === lid ? { ...l, ...updates } : l));
     void (async () => {
       const realId = await resolveIdAsync(listId);
       if (isOnlineRef.current && !isTempId(realId)) {
@@ -339,7 +411,7 @@ export function useTracker() {
         await queueChange('tracker-list-update', '', { id: realId, ...updates });
       }
     })();
-  }, [setLists, resolveIdAsync, settleMutation]);
+  }, [setLists, resolveId, resolveIdAsync, settleMutation]);
 
   const updateList = useCallback((listId: string, updates: ListUpdates) => {
     const prevList = listsRef.current.find(l => l.id === listId);
@@ -356,7 +428,8 @@ export function useTracker() {
   const deleteListCore = useCallback(async (listId: string) => {
     optimisticVersionRef.current++;
     if (isOnlineRef.current) pendingMutationsRef.current++;
-    setLists(prev => prev.filter(l => l.id !== listId));
+    const lid = resolveId(listId);
+    setLists(prev => prev.filter(l => l.id !== lid));
     await deleteLocalTrackerList(listId);
     const realId = await resolveIdAsync(listId);
     if (isTempId(realId)) {
@@ -371,7 +444,7 @@ export function useTracker() {
     } else {
       await queueChange('tracker-list-delete', '', { id: realId });
     }
-  }, [setLists, resolveIdAsync, settleMutation]);
+  }, [setLists, resolveId, resolveIdAsync, settleMutation]);
 
   const deleteList = useCallback(async (listId: string) => {
     const list = listsRef.current.find(l => l.id === listId);
@@ -453,9 +526,10 @@ export function useTracker() {
 
   const reorderListsCore = useCallback(async (orderedIds: string[]) => {
     optimisticVersionRef.current++;
+    const ids = orderedIds.map(id => resolveId(id)); // undo may hold pre-sync temp ids
     setLists(prev => {
       const map = new Map(prev.map(l => [l.id, l]));
-      const reordered = orderedIds.map((id, i) => { const l = map.get(id); return l ? { ...l, position: i } : null; }).filter(Boolean) as TrackerList[];
+      const reordered = ids.map((id, i) => { const l = map.get(id); return l ? { ...l, position: i } : null; }).filter(Boolean) as TrackerList[];
       return reordered.length === prev.length ? reordered : prev;
     });
     const realIds = await Promise.all(orderedIds.map(id => resolveIdAsync(id)));
@@ -467,7 +541,7 @@ export function useTracker() {
     } else {
       await queueChange('tracker-list-reorder', '', { listIds: realIds });
     }
-  }, [setLists, resolveIdAsync, settleMutation]);
+  }, [setLists, resolveId, resolveIdAsync, settleMutation]);
 
   const reorderLists = useCallback(async (orderedIds: string[]) => {
     const prevOrder = listsRef.current.map(l => l.id);
@@ -493,6 +567,47 @@ export function useTracker() {
     upsertList(updated);
     return updated;
   }, [resolveIdAsync, upsertList]);
+
+  // A shared member removes their own access. Online only (needs the server); the
+  // list stays intact for its owner, who can re-share later. Undoable: the server
+  // soft-deletes the share, so undo re-activates it (rejoin). Shared lists always
+  // carry real ids, so listId is used directly.
+  const leaveList = useCallback(async (listId: string) => {
+    const snapshot = listsRef.current.find(l => l.id === listId);
+    if (!snapshot) return;
+    const index = listsRef.current.findIndex(l => l.id === listId);
+
+    const doLeave = async () => {
+      optimisticVersionRef.current++;
+      setLists(prev => prev.filter(l => l.id !== listId));
+      await deleteLocalTrackerList(listId);
+      if (isOnlineRef.current) {
+        try { await leaveTrackerList(listId); }
+        catch { await queueChange('tracker-list-leave', '', { id: listId }); }
+      } else {
+        await queueChange('tracker-list-leave', '', { id: listId });
+      }
+    };
+    const doRejoin = async () => {
+      optimisticVersionRef.current++;
+      setLists(prev => {
+        if (prev.some(l => l.id === listId)) return prev;
+        const next = [...prev];
+        next.splice(Math.min(index, next.length), 0, snapshot);
+        return next;
+      });
+      await saveLocalTrackerList(toLocalList(snapshot));
+      if (isOnlineRef.current) {
+        try { upsertList(await rejoinTrackerList(listId)); }
+        catch { await queueChange('tracker-list-rejoin', '', { id: listId }); }
+      } else {
+        await queueChange('tracker-list-rejoin', '', { id: listId });
+      }
+    };
+
+    await doLeave();
+    pushAction({ type: 'tracker-list-leave', undo: doRejoin, redo: doLeave });
+  }, [setLists, pushAction, upsertList]);
 
   // ----- tasks CRUD -----
   const createTask = useCallback((listId: string, name: string, targetIntervalDays: number | null = null, notes: string | null = null): string => {
@@ -572,11 +687,12 @@ export function useTracker() {
 
   const restoreTask = useCallback(async (listId: string, snap: { task: TrackerTask; logs: TrackerLog[] }, index: number) => {
     const tempId = generateTempId();
-    const restored: TrackerTask = { ...snap.task, id: tempId, list_id: listId };
+    const lid = resolveId(listId); // undo closure may hold a since-synced temp list id
+    const restored: TrackerTask = { ...snap.task, id: tempId, list_id: lid };
     optimisticVersionRef.current++;
     if (isOnlineRef.current) pendingMutationsRef.current++;
     setLists(prev => prev.map(l => {
-      if (l.id !== listId) return l;
+      if (l.id !== lid) return l;
       const tasks = [...l.tasks];
       tasks.splice(Math.min(index, tasks.length), 0, restored);
       return { ...l, tasks };
@@ -595,20 +711,21 @@ export function useTracker() {
         }
         const stats = computeStats(snap.logs.map(l => l.done_at));
         const finalTask = { ...created, ...stats };
-        setLists(prev => prev.map(l => l.id !== listId ? l : { ...l, tasks: l.tasks.map(t => t.id === tempId ? finalTask : t) }));
+        setLists(prev => prev.map(l => l.id !== lid ? l : { ...l, tasks: l.tasks.map(t => t.id === tempId ? finalTask : t) }));
         await deleteLocalTrackerTask(tempId);
         await saveLocalTrackerTask(toLocalTask(finalTask));
       } catch { /* resync */ }
       finally { settleMutation(); }
     } else {
-      await queueChange('tracker-task-create', '', { tempId, listId, name: snap.task.name, target_interval_days: snap.task.target_interval_days, notes: snap.task.notes });
+      await queueChange('tracker-task-create', '', { tempId, listId: lid, name: snap.task.name, target_interval_days: snap.task.target_interval_days, notes: snap.task.notes });
     }
-  }, [setLists, remapId, resolveIdAsync, settleMutation]);
+  }, [setLists, remapId, resolveId, resolveIdAsync, settleMutation]);
 
   const deleteTaskCore = useCallback(async (listId: string, taskId: string) => {
     optimisticVersionRef.current++;
     if (isOnlineRef.current) pendingMutationsRef.current++;
-    setLists(prev => prev.map(l => l.id !== listId ? l : { ...l, tasks: l.tasks.filter(t => t.id !== taskId) }));
+    const lid = resolveId(listId), tid = resolveId(taskId);
+    setLists(prev => prev.map(l => l.id !== lid ? l : { ...l, tasks: l.tasks.filter(t => t.id !== tid) }));
     await deleteLocalTrackerTask(taskId);
     const realId = await resolveIdAsync(taskId);
     if (isTempId(realId)) {
@@ -623,7 +740,7 @@ export function useTracker() {
     } else {
       await queueChange('tracker-task-delete', '', { id: realId });
     }
-  }, [setLists, resolveIdAsync, settleMutation]);
+  }, [setLists, resolveId, resolveIdAsync, settleMutation]);
 
   const deleteTask = useCallback(async (listId: string, taskId: string) => {
     const list = listsRef.current.find(l => l.id === listId);
@@ -647,10 +764,12 @@ export function useTracker() {
 
   const reorderTasks = useCallback(async (listId: string, orderedIds: string[]) => {
     optimisticVersionRef.current++;
+    const lid = resolveId(listId);
+    const ids = orderedIds.map(id => resolveId(id));
     setLists(prev => prev.map(l => {
-      if (l.id !== listId) return l;
+      if (l.id !== lid) return l;
       const map = new Map(l.tasks.map(t => [t.id, t]));
-      const reordered = orderedIds.map((id, i) => { const t = map.get(id); return t ? { ...t, position: i } : null; }).filter(Boolean) as TrackerTask[];
+      const reordered = ids.map((id, i) => { const t = map.get(id); return t ? { ...t, position: i } : null; }).filter(Boolean) as TrackerTask[];
       return reordered.length === l.tasks.length ? { ...l, tasks: reordered } : l;
     }));
     const realListId = await resolveIdAsync(listId);
@@ -663,10 +782,12 @@ export function useTracker() {
     } else {
       await queueChange('tracker-task-reorder', '', { listId: realListId, taskIds: realIds });
     }
-  }, [setLists, resolveIdAsync, settleMutation]);
+  }, [setLists, resolveId, resolveIdAsync, settleMutation]);
 
   // ----- completion logs -----
   const removeLogById = useCallback(async (logId: string, taskId: string) => {
+    // Drop it from the open detail view's history immediately (match temp or real id).
+    mutateOpenHistory(taskId, logs => logs.filter(l => l.id !== logId && resolveId(l.id) !== resolveId(logId)));
     let id = resolveId(logId);
     if (isTempId(id)) { const mapped = await getTempIdMapping(id); if (mapped) id = mapped; }
     if (isTempId(id)) {
@@ -679,20 +800,25 @@ export function useTracker() {
     } else {
       await queueChange('tracker-log-delete', '', { id });
     }
-    void taskId;
-  }, [resolveId]);
+  }, [resolveId, mutateOpenHistory]);
 
   // Append one completion. `holder.id` is set to a fresh temp id here and then
   // upgraded to the real log id once the server responds — so a later undo
   // always targets the correct (latest) log, even after redo.
-  const addLogOnce = useCallback((listId: string, taskId: string, doneAt: string, note: string | null, createdBySub: string | null, createdByName: string | null, kind: 'done' | 'skip', holder: { id: string }) => {
+  const addLogOnce = useCallback((listId: string, taskId: string, doneAt: string, note: string | null, createdBySub: string | null, createdByName: string | null, kind: 'done' | 'skip', holder: LogHolder) => {
     const tempLogId = generateTempId();
     holder.id = tempLogId;
+    const newLog: TrackerLog = { id: tempLogId, task_id: resolveId(taskId), done_at: doneAt, kind, note, created_by_sub: createdBySub, created_by_name: createdByName };
     optimisticVersionRef.current++;
     if (isOnlineRef.current) pendingMutationsRef.current++;
     patchTask(listId, taskId, t => {
+      // Keep the cached recent-logs list in step so the detail view shows this
+      // entry even offline (and after the modal is closed and reopened).
+      const recent_logs = [newLog, ...(t.recent_logs ?? [])]
+        .sort((a, b) => parseServerDate(b.done_at) - parseServerDate(a.done_at))
+        .slice(0, 5);
       const newEvent = !t.last_event_at || Date.parse(doneAt) > Date.parse(t.last_event_at) ? doneAt : t.last_event_at;
-      if (kind === 'skip') return { ...t, last_event_at: newEvent };
+      if (kind === 'skip') return { ...t, last_event_at: newEvent, recent_logs };
       const newLast = !t.last_done_at || Date.parse(doneAt) > Date.parse(t.last_done_at) ? doneAt : t.last_done_at;
       const isLatest = newLast === doneAt;
       return {
@@ -700,16 +826,23 @@ export function useTracker() {
         last_done_at: newLast,
         last_event_at: newEvent,
         total_count: t.total_count + 1,
+        recent_logs,
         ...(isLatest ? { last_note: note, last_done_by: createdByName ?? t.last_done_by } : {}),
       };
     });
-    void (async () => {
+    // Reflect it in the open detail view's full history immediately (no refetch).
+    mutateOpenHistory(taskId, logs => [newLog, ...logs].sort((a, b) => parseServerDate(b.done_at) - parseServerDate(a.done_at)));
+    // Track the in-flight server round-trip on the holder so a later undo/redo that
+    // deletes this log waits for the real id first (otherwise it can't delete a log
+    // whose POST is still landing, and the log survives as a duplicate).
+    const run = (async () => {
       const realTaskId = await resolveIdAsync(taskId);
       if (isOnlineRef.current && !isTempId(realTaskId)) {
         try {
           const created = await addTrackerLog(realTaskId, { done_at: doneAt, note, created_by_sub: createdBySub, kind });
           holder.id = created.id;
           await saveTempIdMapping(tempLogId, created.id);
+          mutateOpenHistory(taskId, logs => logs.map(l => l.id === tempLogId ? { ...l, id: created.id } : l));
         } catch {
           await queueChange('tracker-log-add', '', { tempLogId, taskId: realTaskId, done_at: doneAt, note, created_by_sub: createdBySub, kind });
         } finally { settleMutation(); }
@@ -718,29 +851,32 @@ export function useTracker() {
         await queueChange('tracker-log-add', '', { tempLogId, taskId: realTaskId, done_at: doneAt, note, created_by_sub: createdBySub, kind });
       }
     })();
-  }, [patchTask, resolveIdAsync, settleMutation]);
+    holder.pending = run;
+    return run;
+  }, [patchTask, resolveId, resolveIdAsync, settleMutation, mutateOpenHistory]);
 
-  type LogStats = { last_done_at: string | null; last_event_at: string | null; total_count: number; avg_interval_days: number | null; last_note: string | null; last_done_by: string | null };
+  type LogStats = { last_done_at: string | null; last_event_at: string | null; total_count: number; avg_interval_days: number | null; last_note: string | null; last_done_by: string | null; recent_logs?: TrackerLog[] };
   const snapshotStats = (listId: string, taskId: string): LogStats => {
     const t = listsRef.current.find(l => l.id === listId)?.tasks.find(x => x.id === taskId);
     return t
-      ? { last_done_at: t.last_done_at, last_event_at: t.last_event_at, total_count: t.total_count, avg_interval_days: t.avg_interval_days, last_note: t.last_note, last_done_by: t.last_done_by }
-      : { last_done_at: null, last_event_at: null, total_count: 0, avg_interval_days: null, last_note: null, last_done_by: null };
+      ? { last_done_at: t.last_done_at, last_event_at: t.last_event_at, total_count: t.total_count, avg_interval_days: t.avg_interval_days, last_note: t.last_note, last_done_by: t.last_done_by, recent_logs: t.recent_logs ?? [] }
+      : { last_done_at: null, last_event_at: null, total_count: 0, avg_interval_days: null, last_note: null, last_done_by: null, recent_logs: [] };
   };
 
   /** Add a completion. Undoable (undo deletes the log). Returns a holder tracking the log id. */
   const addLog = useCallback((listId: string, taskId: string, doneAt: string, note: string | null = null, who?: { sub: string | null; name: string | null }) => {
-    const holder = { id: '' };
+    const holder: LogHolder = { id: '' };
     const prevStats = snapshotStats(listId, taskId);
-    addLogOnce(listId, taskId, doneAt, note, who?.sub ?? null, who?.name ?? null, 'done', holder);
+    void addLogOnce(listId, taskId, doneAt, note, who?.sub ?? null, who?.name ?? null, 'done', holder);
     pushAction({
       type: 'tracker-log-add',
       undo: async () => {
         optimisticVersionRef.current++;
         patchTask(listId, taskId, t => ({ ...t, ...prevStats }));
+        await holder.pending; // wait for the add to land so we delete the real log
         await removeLogById(holder.id, taskId);
       },
-      redo: async () => { addLogOnce(listId, taskId, doneAt, note, who?.sub ?? null, who?.name ?? null, 'done', holder); },
+      redo: async () => { void addLogOnce(listId, taskId, doneAt, note, who?.sub ?? null, who?.name ?? null, 'done', holder); },
     });
     return holder;
   }, [addLogOnce, patchTask, pushAction, removeLogById]);
@@ -754,16 +890,19 @@ export function useTracker() {
    *  Returns a holder tracking the log id + the timestamp, so callers can show it optimistically. */
   const skipTask = useCallback((listId: string, taskId: string) => {
     const iso = new Date().toISOString();
-    const holder = { id: '' };
-    const prevEvent = listsRef.current.find(l => l.id === listId)?.tasks.find(t => t.id === taskId)?.last_event_at ?? null;
-    addLogOnce(listId, taskId, iso, null, null, null, 'skip', holder);
+    const holder: LogHolder = { id: '' };
+    const prevTask = listsRef.current.find(l => l.id === listId)?.tasks.find(t => t.id === taskId);
+    const prevEvent = prevTask?.last_event_at ?? null;
+    const prevRecent = prevTask?.recent_logs ?? [];
+    void addLogOnce(listId, taskId, iso, null, null, null, 'skip', holder);
     pushAction({
       type: 'tracker-skip',
       undo: async () => {
-        patchTask(listId, taskId, t => ({ ...t, last_event_at: prevEvent }));
+        patchTask(listId, taskId, t => ({ ...t, last_event_at: prevEvent, recent_logs: prevRecent }));
+        await holder.pending; // wait for the skip to land so we delete the real log
         await removeLogById(holder.id, taskId);
       },
-      redo: async () => { addLogOnce(listId, taskId, iso, null, null, null, 'skip', holder); },
+      redo: async () => { void addLogOnce(listId, taskId, iso, null, null, null, 'skip', holder); },
     });
     return { holder, doneAt: iso };
   }, [addLogOnce, patchTask, pushAction, removeLogById]);
@@ -771,7 +910,7 @@ export function useTracker() {
   /** Remove a completion/skip, applying recomputed stats. Undoable (undo re-adds the log). */
   const removeLog = useCallback(async (listId: string, taskId: string, log: TrackerLog, recomputed: LogStats) => {
     const prev = snapshotStats(listId, taskId);
-    const holder = { id: log.id };
+    const holder: LogHolder = { id: log.id };
     optimisticVersionRef.current++;
     patchTask(listId, taskId, t => ({ ...t, ...recomputed }));
     await removeLogById(holder.id, taskId);
@@ -779,12 +918,17 @@ export function useTracker() {
       type: 'tracker-log-delete',
       undo: async () => {
         optimisticVersionRef.current++;
-        patchTask(listId, taskId, t => ({ ...t, ...prev }));
-        addLogOnce(listId, taskId, log.done_at, log.note ?? null, log.created_by_sub ?? null, log.created_by_name ?? null, log.kind === 'skip' ? 'skip' : 'done', holder);
+        // Re-add first (increments count from the post-delete value, re-inserts into
+        // recent_logs + open history), THEN restore prev as the authoritative stats
+        // (correct total/avg/last_done_by) — order avoids a double-count and an
+        // attribution flip. Not awaited, so undo stays instant.
+        void addLogOnce(listId, taskId, log.done_at, log.note ?? null, log.created_by_sub ?? null, log.created_by_name ?? null, log.kind === 'skip' ? 'skip' : 'done', holder);
+        patchTask(listId, taskId, t => ({ ...t, ...prev, recent_logs: t.recent_logs }));
       },
       redo: async () => {
         optimisticVersionRef.current++;
         patchTask(listId, taskId, t => ({ ...t, ...recomputed }));
+        await holder.pending; // wait for the (re-added) log to land before deleting it
         await removeLogById(holder.id, taskId);
       },
     });
@@ -796,12 +940,19 @@ export function useTracker() {
     patchTask(listId, taskId, t => ({ ...t, ...stats }));
   }, [patchTask]);
 
+  /** Refresh the cached recent-logs snapshot from a full server fetch, so the
+   *  detail view's history is available offline later. Pure local cache update. */
+  const cacheRecentLogs = useCallback((listId: string, taskId: string, recent: TrackerLog[]) => {
+    patchTask(listId, taskId, t => ({ ...t, recent_logs: recent }));
+  }, [patchTask]);
+
   return {
     lists, loading,
     createList, updateList, deleteList, reorderLists,
-    shareList, unshareList,
+    shareList, unshareList, leaveList,
     createTask, updateTask, deleteTask, reorderTasks,
-    markDone, addLog, removeLog, applyTaskStats, skipTask,
+    markDone, addLog, removeLog, applyTaskStats, cacheRecentLogs, skipTask,
+    openHistory, openTaskHistory, closeTaskHistory,
     setEditing,
   };
 }

@@ -1,4 +1,5 @@
 import Dexie, { Table } from 'dexie';
+import type { TrackerLog } from './types';
 
 export interface LocalMealNote {
   date: string;
@@ -48,6 +49,8 @@ export type ChangeType =
   | 'tracker-list-update'
   | 'tracker-list-delete'
   | 'tracker-list-reorder'
+  | 'tracker-list-leave'
+  | 'tracker-list-rejoin'
   | 'tracker-task-create'
   | 'tracker-task-update'
   | 'tracker-task-delete'
@@ -180,6 +183,7 @@ export interface LocalTrackerTask {
   last_note: string | null;
   total_count: number;
   avg_interval_days: number | null;
+  recent_logs?: TrackerLog[]; // cached last-few entries for offline history
 }
 
 class MealPlannerDB extends Dexie {
@@ -377,7 +381,12 @@ export async function removePendingChangesForTempId(tempId: string) {
   const all = await db.pendingChanges.toArray();
   for (const change of all) {
     const payload = change.payload as Record<string, unknown> | undefined;
-    if (payload && payload.id === tempId && change.id) {
+    if (!payload || !change.id) continue;
+    // A queued create/add stores its new entity's temp id under different keys
+    // depending on the change type: `id` (grocery/pantry items), `tempId` (list /
+    // task / store creates), or `tempLogId` (tracker log adds). Match any of them
+    // so undoing an offline create-then-delete fully drops the queued change.
+    if (payload.id === tempId || payload.tempId === tempId || payload.tempLogId === tempId) {
       await db.pendingChanges.delete(change.id);
     }
   }
@@ -466,6 +475,12 @@ export async function clearLocalMealIdeas() {
 // Temp ID mapping (for syncing offline-created items)
 export async function saveTempIdMapping(tempId: string, realId: string) {
   await db.tempIdMap.put({ tempId, realId });
+  // Announce so in-memory id-remap maps (e.g. useTracker's undo/redo resolver) can
+  // learn mappings made by useSync while draining the offline queue. Without this,
+  // undo closures resolve a now-dead temp id and their optimistic UI update no-ops.
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('temp-id-mapped', { detail: { tempId, realId } }));
+  }
 }
 
 export async function getTempIdMapping(tempId: string): Promise<string | undefined> {

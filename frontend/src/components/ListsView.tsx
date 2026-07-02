@@ -1,8 +1,10 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTracker, computeStats } from '../hooks/useTracker';
 import { useUndo } from '../contexts/UndoContext';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { TrackerList, TrackerTask, TrackerLog, DirectoryUser, UserInfo } from '../types';
-import { getTrackerLogs, getUsers } from '../api/client';
+import { getUsers } from '../api/client';
 import { isTempId } from '../db';
 import { recency, RECENCY_CLASSES, formatAgo, formatTarget, parseServerDate, progressPercent, inSeason, seasonLabel, computeStreak, MONTH_ABBR } from '../utils/recency';
 import { getEditHighlight } from '../utils/editHighlightColors';
@@ -26,13 +28,19 @@ function colorBar(color: string | null): string {
 }
 
 const ACTIVE_KEY = 'meal-planner-lists-active';
+// System "Due Soon" tab: aggregates due/overdue tasks from every list. Can't be
+// removed/left, but its position among the tabs is user-arrangeable (localStorage).
+const DUE_SOON_ID = '__due_soon__';
+const DUE_SOON_POS_KEY = 'meal-planner-due-soon-pos';
+
+const isDue = (t: TrackerTask): boolean => {
+  if (!inSeason(t.season_start_month, t.season_start_day, t.season_end_month, t.season_end_day)) return false;
+  const r = taskRecency(t);
+  return r.level === 'due' || r.level === 'over';
+};
 
 function dueCount(list: TrackerList): number {
-  return list.tasks.filter(t => {
-    if (!inSeason(t.season_start_month, t.season_start_day, t.season_end_month, t.season_end_day)) return false;
-    const r = taskRecency(t);
-    return r.level === 'due' || r.level === 'over';
-  }).length;
+  return list.tasks.filter(isDue).length;
 }
 
 interface ListsViewProps {
@@ -52,6 +60,7 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
   const [activeIndex, setActiveIndex] = useState(0);
   const [dir, setDir] = useState<'left' | 'right'>('right');
   const restoredRef = useRef(false);
+  const pendingActivateRef = useRef<string | null>(null);
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -75,35 +84,67 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
     return () => clearInterval(id);
   }, []);
 
-  // One-time restore of the last-viewed list once lists load.
-  useEffect(() => {
-    if (restoredRef.current || lists.length === 0) return;
-    restoredRef.current = true;
-    const saved = localStorage.getItem(ACTIVE_KEY);
-    const i = saved ? lists.findIndex(l => l.id === saved) : -1;
-    if (i >= 0) setActiveIndex(i);
+  // Tasks due/overdue across every list, most urgent first — the Due Soon tab.
+  const dueSoonTasks = useMemo(() => {
+    const res: TrackerTask[] = [];
+    for (const l of lists) for (const t of l.tasks) if (isDue(t)) res.push(t);
+    res.sort((a, b) => taskRecency(b).urgency - taskRecency(a).urgency);
+    return res;
   }, [lists]);
 
-  // Clamp when the list count shrinks (e.g. a list was deleted).
-  useEffect(() => {
-    if (activeIndex > Math.max(0, lists.length - 1)) setActiveIndex(Math.max(0, lists.length - 1));
-  }, [lists.length, activeIndex]);
+  const [dueSoonPos, setDueSoonPos] = useState<number>(() => {
+    const v = Number(localStorage.getItem(DUE_SOON_POS_KEY));
+    return Number.isFinite(v) && v >= 0 ? v : 0;
+  });
+  const setDueSoonPosPersist = (pos: number) => {
+    setDueSoonPos(pos);
+    try { localStorage.setItem(DUE_SOON_POS_KEY, String(pos)); } catch { /* ignore */ }
+  };
 
-  // Persist the active list id for restore across reloads.
-  useEffect(() => {
-    const l = lists[activeIndex];
-    if (l) { try { localStorage.setItem(ACTIVE_KEY, l.id); } catch { /* ignore */ } }
-  }, [activeIndex, lists]);
+  const dueSoonTab = useMemo<TrackerList>(() => ({
+    id: DUE_SOON_ID, name: 'Due Soon', icon: null, color: 'rose', position: 0,
+    owner_sub: user.sub, owner_name: null, is_owner: true, shared_with: [], tasks: dueSoonTasks,
+  }), [dueSoonTasks, user.sub]);
 
-  const activeList = lists[activeIndex] ?? null;
+  // Combined tab order: real lists (server position) with the Due Soon tab inserted
+  // at its saved slot. Empty until there's at least one real list.
+  const tabs = useMemo(() => {
+    if (lists.length === 0) return [] as TrackerList[];
+    const arr = [...lists];
+    arr.splice(Math.min(Math.max(dueSoonPos, 0), arr.length), 0, dueSoonTab);
+    return arr;
+  }, [lists, dueSoonTab, dueSoonPos]);
+
+  const activeList = tabs[activeIndex] ?? null;
+  const isDueSoonActive = activeList?.id === DUE_SOON_ID;
 
   const goTo = (i: number) => { setDir(i >= activeIndex ? 'right' : 'left'); setActiveIndex(i); setNewListOpen(false); };
   const cycle = (delta: number) => {
-    if (lists.length < 2) return;
-    const n = lists.length;
+    if (tabs.length < 2) return;
+    const n = tabs.length;
     setDir(delta > 0 ? 'right' : 'left');
     setActiveIndex((activeIndex + delta + n) % n);
   };
+
+  // One-time restore of the last-viewed tab once tabs load.
+  useEffect(() => {
+    if (restoredRef.current || tabs.length === 0) return;
+    restoredRef.current = true;
+    const saved = localStorage.getItem(ACTIVE_KEY);
+    const i = saved ? tabs.findIndex(l => l.id === saved) : -1;
+    if (i >= 0) setActiveIndex(i);
+  }, [tabs]);
+
+  // Clamp when the tab count shrinks (e.g. a list was deleted).
+  useEffect(() => {
+    if (activeIndex > Math.max(0, tabs.length - 1)) setActiveIndex(Math.max(0, tabs.length - 1));
+  }, [tabs.length, activeIndex]);
+
+  // Persist the active tab id for restore across reloads.
+  useEffect(() => {
+    const l = tabs[activeIndex];
+    if (l) { try { localStorage.setItem(ACTIVE_KEY, l.id); } catch { /* ignore */ } }
+  }, [activeIndex, tabs]);
 
   // ----- drag-to-reorder list tabs -----
   const hitTest = (x: number, y: number) => {
@@ -151,10 +192,14 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
     setDragId(null); setDragOrder(null);
     justDraggedRef.current = true;
     setTimeout(() => { justDraggedRef.current = false; }, 60);
-    if (order && order.some((x, i) => x !== lists[i]?.id)) {
-      // Keep showing the list we were viewing, not whatever slid into its slot.
-      const activeId = lists[activeIndex]?.id;
-      tracker.reorderLists(order);
+    if (order && order.some((x, i) => x !== tabs[i]?.id)) {
+      // Keep showing the tab we were viewing, not whatever slid into its slot.
+      const activeId = tabs[activeIndex]?.id;
+      // Save the Due Soon tab's new slot; reorder the real lists among themselves.
+      const dsIdx = order.indexOf(DUE_SOON_ID);
+      if (dsIdx >= 0) setDueSoonPosPersist(dsIdx);
+      const realIds = order.filter(id => id !== DUE_SOON_ID);
+      if (realIds.some((x, i) => x !== lists[i]?.id)) tracker.reorderLists(realIds);
       const newIdx = activeId ? order.indexOf(activeId) : -1;
       if (newIdx >= 0) setActiveIndex(newIdx);
     }
@@ -162,7 +207,7 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
   const beginDrag = (id: string) => {
     draggingRef.current = true;
     dragIdRef.current = id;
-    const order = lists.map(l => l.id);
+    const order = tabs.map(l => l.id);
     dragOrderRef.current = order;
     setDragId(id);
     setDragOrder(order);
@@ -218,7 +263,7 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
       window.removeEventListener('touchstart', onStart);
       window.removeEventListener('touchend', onEnd);
     };
-  }, [activeIndex, lists.length, detail, shareFor, newListOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeIndex, tabs.length, detail, shareFor, newListOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Desktop: arrow keys cycle lists (ignored while typing or in a modal).
   useEffect(() => {
@@ -231,26 +276,33 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [activeIndex, lists.length, detail, shareFor, newListOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeIndex, tabs.length, detail, shareFor, newListOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep the active tab scrolled into view when cycling (swipe/arrows/dots).
   useEffect(() => {
-    const l = lists[activeIndex];
+    const l = tabs[activeIndex];
     if (!l || !tabStripRef.current) return;
     const el = tabStripRef.current.querySelector(`[data-tab-id="${l.id}"]`) as HTMLElement | null;
     el?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-  }, [activeIndex, lists]);
+  }, [activeIndex, tabs]);
 
   const handleCreateList = () => {
     const name = newListName.trim();
     if (!name) return;
-    createList(name, null, newListColor);
+    const id = createList(name, null, newListColor);
     setNewListName('');
     setNewListColor(LIST_COLORS[0].name);
     setNewListOpen(false);
     setDir('right');
-    setActiveIndex(lists.length); // newly created list is appended at the end
+    pendingActivateRef.current = id; // jump to it once it appears in the tabs
   };
+
+  // Activate a just-created list once it shows up among the tabs.
+  useEffect(() => {
+    if (!pendingActivateRef.current) return;
+    const i = tabs.findIndex(l => l.id === pendingActivateRef.current);
+    if (i >= 0) { setActiveIndex(i); pendingActivateRef.current = null; }
+  }, [tabs]);
 
   const searchResults = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -273,12 +325,12 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
   return (
     <div className="edit-accent-scope" style={{ '--edit-accent': getEditHighlight(editHighlightColor).accent } as React.CSSProperties}>
       {/* Tab strip */}
-      {lists.length > 0 && (
+      {tabs.length > 0 && (
         <div className="sticky z-[9] glass rounded-2xl mt-4 mb-3 p-2" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
           <div className="flex items-center gap-1.5">
             <div ref={tabStripRef} className="flex items-center gap-1.5 overflow-x-auto no-scrollbar flex-1 min-w-0">
-              {(dragOrder ? (dragOrder.map(id => lists.find(l => l.id === id)).filter(Boolean) as TrackerList[]) : lists).map((l) => {
-                const i = lists.indexOf(l);
+              {(dragOrder ? (dragOrder.map(id => tabs.find(l => l.id === id)).filter(Boolean) as TrackerList[]) : tabs).map((l) => {
+                const i = tabs.indexOf(l);
                 const due = dueCount(l);
                 const act = i === activeIndex && !newListOpen && !searchResults;
                 return (
@@ -383,20 +435,29 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
         </div>
       )}
 
-      {/* Active list (swipe anywhere to cycle) */}
+      {/* Active tab (swipe anywhere to cycle) */}
       {!newListOpen && !searchResults && activeList && (
         <div>
           <div key={activeIndex} className={dir === 'right' ? 'lists-slide-right' : 'lists-slide-left'}>
-            <ListPanel
-              list={activeList}
-              tracker={tracker}
-              onOpenTask={(taskId) => setDetail({ listId: activeList.id, taskId })}
-              onShare={() => setShareFor(activeList.id)}
-            />
+            {isDueSoonActive ? (
+              <DueSoonPanel
+                tasks={dueSoonTasks}
+                lists={lists}
+                tracker={tracker}
+                onOpenTask={(listId, taskId) => setDetail({ listId, taskId })}
+              />
+            ) : (
+              <ListPanel
+                list={activeList}
+                tracker={tracker}
+                onOpenTask={(taskId) => setDetail({ listId: activeList.id, taskId })}
+                onShare={() => setShareFor(activeList.id)}
+              />
+            )}
           </div>
-          {lists.length > 1 && (
+          {tabs.length > 1 && (
             <div className="flex justify-center gap-1.5 mt-3">
-              {lists.map((l, i) => (
+              {tabs.map((l, i) => (
                 <button key={l.id} onClick={() => goTo(i)} aria-label={`Go to ${l.name}`}
                   className={`h-1.5 rounded-full transition-all ${i === activeIndex ? 'w-5 bg-blue-500' : 'w-1.5 bg-gray-300 dark:bg-gray-600'}`} />
               ))}
@@ -422,6 +483,38 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
   );
 }
 
+// ----- Due Soon (system) panel: aggregates due/overdue tasks from every list -----
+
+function DueSoonPanel({ tasks, lists, tracker, onOpenTask }: {
+  tasks: TrackerTask[];
+  lists: TrackerList[];
+  tracker: ReturnType<typeof useTracker>;
+  onOpenTask: (listId: string, taskId: string) => void;
+}) {
+  const listName = (id: string) => lists.find(l => l.id === id)?.name ?? '';
+  return (
+    <div className="glass rounded-2xl p-3">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="w-3 h-3 shrink-0 rounded-full bg-rose-500" />
+        <h2 className="flex-1 min-w-0 text-lg font-bold text-gray-900 dark:text-gray-100 truncate">Due Soon</h2>
+        {tasks.length > 0 && <span className="text-[11px] text-gray-400 dark:text-gray-500">{tasks.length}</span>}
+      </div>
+      {tasks.length === 0 ? (
+        <p className="text-sm text-gray-400 dark:text-gray-500 py-6 text-center">Nothing due right now — you're all caught up. 🎉</p>
+      ) : (
+        <div className="space-y-1.5">
+          {tasks.map(task => (
+            <div key={task.id}>
+              <div className="text-[10px] uppercase tracking-wide text-gray-400 px-1">{listName(task.list_id)}</div>
+              <TaskRow listId={task.list_id} task={task} tracker={tracker} onOpen={() => onOpenTask(task.list_id, task.id)} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ----- Active list panel -----
 
 function ListPanel({ list, tracker, onOpenTask, onShare }: {
@@ -437,7 +530,9 @@ function ListPanel({ list, tracker, onOpenTask, onShare }: {
   const [taskName, setTaskName] = useState('');
   const [taskTarget, setTaskTarget] = useState('');
   const [showOut, setShowOut] = useState(false);
+  const [colorOpen, setColorOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const colorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -445,6 +540,13 @@ function ListPanel({ list, tracker, onOpenTask, onShare }: {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!colorOpen) return;
+    const handler = (e: MouseEvent) => { if (colorRef.current && !colorRef.current.contains(e.target as Node)) setColorOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [colorOpen]);
 
   const sortedTasks = useMemo(() => {
     return [...list.tasks].map(t => ({ t, r: taskRecency(t) }))
@@ -474,7 +576,26 @@ function ListPanel({ list, tracker, onOpenTask, onShare }: {
     <div className="glass rounded-2xl p-3">
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
-        <span className={`w-3 h-3 shrink-0 rounded-full ${colorBar(list.color)}`} />
+        <div className="relative shrink-0" ref={colorRef}>
+          <button
+            onClick={() => setColorOpen(o => !o)}
+            aria-label="Change list color"
+            title="Change color"
+            className={`w-3.5 h-3.5 rounded-full ${colorBar(list.color)} ring-offset-1 dark:ring-offset-gray-900 hover:ring-2 hover:ring-gray-400 ${colorOpen ? 'ring-2 ring-gray-400' : ''}`}
+          />
+          {colorOpen && (
+            <div className="absolute left-0 top-6 z-20 glass-menu rounded-xl p-2 shadow-lg flex items-center gap-2">
+              {LIST_COLORS.map(c => (
+                <button
+                  key={c.name}
+                  onClick={() => { tracker.updateList(list.id, { color: c.name }); setColorOpen(false); }}
+                  aria-label={c.name}
+                  className={`w-5 h-5 rounded-full ${c.bar} transition-transform ${list.color === c.name ? 'ring-2 ring-offset-1 ring-gray-400 dark:ring-offset-gray-900 scale-110' : 'hover:scale-110'}`}
+                />
+              ))}
+            </div>
+          )}
+        </div>
         {renaming ? (
           <input
             autoFocus value={renameValue}
@@ -484,7 +605,11 @@ function ListPanel({ list, tracker, onOpenTask, onShare }: {
             className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-lg font-bold"
           />
         ) : (
-          <h2 className="flex-1 min-w-0 text-lg font-bold text-gray-900 dark:text-gray-100 truncate">
+          <h2
+            onClick={() => { setRenameValue(list.name); setRenaming(true); }}
+            title="Rename list"
+            className="flex-1 min-w-0 text-lg font-bold text-gray-900 dark:text-gray-100 truncate cursor-text hover:text-gray-600 dark:hover:text-gray-300"
+          >
             {list.name}
             {!list.is_owner && <span className="ml-2 text-[10px] align-middle uppercase tracking-wide text-blue-500 dark:text-blue-400">shared</span>}
           </h2>
@@ -508,9 +633,10 @@ function ListPanel({ list, tracker, onOpenTask, onShare }: {
           {menuOpen && (
             <div className="absolute right-0 top-9 z-20 glass-menu rounded-xl py-1 w-44 shadow-lg">
               <button onClick={() => { setMenuOpen(false); setAddOpen(true); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">Add task</button>
-              <button onClick={() => { setMenuOpen(false); setRenameValue(list.name); setRenaming(true); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">Rename list</button>
-              {list.is_owner && (
+              {list.is_owner ? (
                 <button onClick={() => { setMenuOpen(false); tracker.deleteList(list.id); }} className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">Delete list</button>
+              ) : (
+                <button onClick={() => { setMenuOpen(false); tracker.leaveList(list.id); }} className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">Leave list</button>
               )}
             </div>
           )}
@@ -657,8 +783,11 @@ function TaskRow({ listId, task, tracker, onOpen, dimmed }: {
           >
             {justDone ? '✓ Done' : 'Done'}
           </button>
-          {menuOpen && (
-            <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4" onClick={() => setMenuOpen(false)}>
+          {menuOpen && createPortal(
+            // Portal to <body>: the row lives inside a .glass panel whose
+            // backdrop-filter creates a stacking context, which would otherwise
+            // trap this overlay beneath the sticky list-tabs strip.
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setMenuOpen(false)}>
               <div className="glass-menu w-full max-w-xs rounded-2xl p-4 shadow-xl" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between mb-2 gap-2">
                   <div className="font-semibold text-gray-900 dark:text-gray-100 truncate">{task.name}</div>
@@ -673,7 +802,8 @@ function TaskRow({ listId, task, tracker, onOpen, dimmed }: {
                   className="mt-3 w-full text-center text-sm font-medium text-gray-700 dark:text-gray-200 px-3 py-2 rounded-xl bg-gray-100/70 dark:bg-gray-700/60 hover:bg-gray-200 dark:hover:bg-gray-600"
                 >Skip this cycle</button>
               </div>
-            </div>
+            </div>,
+            document.body
           )}
         </div>
       </div>
@@ -891,9 +1021,17 @@ function TaskDetailModal({ list, task, tracker, user, onClose }: {
   onClose: () => void;
 }) {
   const listId = list.id;
+  const isOnline = useOnlineStatus();
   const { canUndo, canRedo, undo, redo } = useUndo();
-  const [logs, setLogs] = useState<TrackerLog[]>([]);
-  const [loadingLogs, setLoadingLogs] = useState(true);
+  // History is owned by the hook (tracker.openHistory) so log mutations and their
+  // undo/redo update it synchronously — no refetch, so no race, freeze, or
+  // attribution flicker. Falls back to the task's cached recent_logs when the full
+  // history isn't loaded (offline / unsynced). openHistory === null → no full list,
+  // so we must not recompute task stats from the partial recent_logs.
+  const { openHistory, openTaskHistory, closeTaskHistory } = tracker;
+  const hasFullHistory = openHistory !== null;
+  const logs = useMemo(() => openHistory ?? (task.recent_logs ?? []), [openHistory, task.recent_logs]);
+  const loadingLogs = openHistory === null && isOnline && !isTempId(task.id) && logs.length === 0;
   const [editName, setEditName] = useState(task.name);
   const [editTarget, setEditTarget] = useState(task.target_interval_days ? String(task.target_interval_days) : '');
   const [editNotes, setEditNotes] = useState(task.notes ?? '');
@@ -916,33 +1054,32 @@ function TaskDetailModal({ list, task, tracker, user, onClose }: {
   const doneLogs = useMemo(() => logs.filter(l => l.kind !== 'skip'), [logs]);
   const streak = useMemo(() => computeStreak(doneLogs.map(l => l.done_at), task.target_interval_days), [doneLogs, task.target_interval_days]);
 
-  const reloadLogs = useCallback(async () => {
-    if (isTempId(task.id)) { setLogs([]); setLoadingLogs(false); return; }
-    try {
-      const fetched = await getTrackerLogs(task.id);
-      setLogs(fetched);
-    } catch { /* offline / unsynced */ }
-    finally { setLoadingLogs(false); }
-  }, [task.id]);
+  // Load the full history when the task opens; clear it on close.
+  useEffect(() => {
+    void openTaskHistory(task.id);
+    return () => closeTaskHistory();
+  }, [task.id, openTaskHistory, closeTaskHistory]);
 
-  useEffect(() => { void reloadLogs(); }, [reloadLogs]);
-
-  // Refetch history when this task's completions change elsewhere — a mark-done
-  // on another device, or an undo/redo applied while the modal is open.
+  // Refetch when this task's completions change on another device.
   useEffect(() => {
     const onRealtime = (event: Event) => {
       const detail = (event as CustomEvent).detail as { type?: string; payload?: { action?: string; task?: { id?: string } } } | undefined;
       if (detail?.type !== 'tracker.updated') return;
-      if (detail.payload?.action === 'task-logged' && detail.payload.task?.id === task.id) void reloadLogs();
+      if (detail.payload?.action === 'task-logged' && detail.payload.task?.id === task.id) void openTaskHistory(task.id);
     };
-    const onUndoRedo = () => { void reloadLogs(); };
     window.addEventListener('meal-planner-realtime', onRealtime as EventListener);
-    window.addEventListener('undo-redo-applied', onUndoRedo);
-    return () => {
-      window.removeEventListener('meal-planner-realtime', onRealtime as EventListener);
-      window.removeEventListener('undo-redo-applied', onUndoRedo);
-    };
-  }, [reloadLogs, task.id]);
+    return () => window.removeEventListener('meal-planner-realtime', onRealtime as EventListener);
+  }, [task.id, openTaskHistory]);
+
+  // Once the full history is loaded, keep the cached recent_logs and derived
+  // avg/total aligned with it (recomputing from the partial recent_logs would be wrong).
+  useEffect(() => {
+    if (!openHistory) return;
+    tracker.cacheRecentLogs(listId, task.id, openHistory.slice(0, 5));
+    const stats = computeStats(openHistory.filter(l => l.kind !== 'skip').map(l => l.done_at));
+    tracker.applyTaskStats(listId, task.id, stats);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openHistory]);
 
   // Keep the editable fields in sync when the task changes underneath us (e.g. a
   // collaborator edits the note/target on another device) — but never overwrite
@@ -951,28 +1088,17 @@ function TaskDetailModal({ list, task, tracker, user, onClose }: {
   useEffect(() => { if (focusedFieldRef.current !== 'target') setEditTarget(task.target_interval_days != null ? String(task.target_interval_days) : ''); }, [task.target_interval_days]);
   useEffect(() => { if (focusedFieldRef.current !== 'notes') setEditNotes(task.notes ?? ''); }, [task.notes]);
 
-  const recompute = (next: TrackerLog[]) => {
-    const stats = computeStats(next.filter(l => l.kind !== 'skip').map(l => l.done_at));
-    tracker.applyTaskStats(listId, task.id, stats);
-  };
-
   const handleMarkDone = (rawIso: string) => {
     const iso = Date.parse(rawIso) > Date.now() ? new Date().toISOString() : rawIso; // never future
     const note = noteInput.trim() || null;
     const whoName = firstName(members.find(m => m.sub === whoSub)?.name ?? null);
-    const holder = tracker.addLog(listId, task.id, iso, note, { sub: whoSub, name: whoName });
-    const optimistic: TrackerLog = { id: holder.id, task_id: task.id, done_at: iso, note, created_by_sub: whoSub, created_by_name: whoName };
-    const next = [optimistic, ...logs].sort((a, b) => parseServerDate(b.done_at) - parseServerDate(a.done_at));
-    setLogs(next);
-    recompute(next);
+    // addLog updates the task stats, recent_logs, and the open history synchronously.
+    tracker.addLog(listId, task.id, iso, note, { sub: whoSub, name: whoName });
     setNoteInput('');
   };
 
   const handleSkip = () => {
-    const { holder, doneAt } = tracker.skipTask(listId, task.id);
-    const whoName = firstName(user.name) ?? null;
-    const optimistic: TrackerLog = { id: holder.id, task_id: task.id, done_at: doneAt, kind: 'skip', note: null, created_by_sub: user.sub, created_by_name: whoName };
-    setLogs(prev => [optimistic, ...prev].sort((a, b) => parseServerDate(b.done_at) - parseServerDate(a.done_at)));
+    tracker.skipTask(listId, task.id);
   };
 
   const commitSeason = (sm: number | null, sd: number | null, em: number | null, ed: number | null) => {
@@ -981,18 +1107,30 @@ function TaskDetailModal({ list, task, tracker, user, onClose }: {
 
   const handleDeleteLog = (log: TrackerLog) => {
     const next = logs.filter(l => l.id !== log.id);
-    setLogs(next);
     const remainingDone = next.filter(l => l.kind !== 'skip');
-    const stats = computeStats(remainingDone.map(l => l.done_at));
     const allTimes = next.map(l => parseServerDate(l.done_at)).filter(n => !Number.isNaN(n)).sort((a, b) => b - a);
     const lastEvent = allTimes.length ? new Date(allTimes[0]).toISOString() : null;
     const latestDone = remainingDone[0]; // logs are kept sorted newest-first
-    tracker.removeLog(listId, task.id, log, {
-      ...stats,
+    const common = {
       last_event_at: lastEvent,
       last_note: latestDone?.note ?? null,
       last_done_by: firstName(latestDone?.created_by_name) ?? null,
-    });
+      recent_logs: next.slice(0, 5),
+    };
+    if (hasFullHistory) {
+      // Full history present → recompute total/avg accurately.
+      const stats = computeStats(remainingDone.map(l => l.done_at));
+      tracker.removeLog(listId, task.id, log, { ...stats, ...common });
+    } else {
+      // Partial (offline) → adjust the count by one; keep the cached avg/last_done_at.
+      const wasDone = log.kind !== 'skip';
+      tracker.removeLog(listId, task.id, log, {
+        last_done_at: task.last_done_at,
+        total_count: Math.max(0, task.total_count - (wasDone ? 1 : 0)),
+        avg_interval_days: task.avg_interval_days,
+        ...common,
+      });
+    }
   };
 
   const commitEdits = () => {
@@ -1006,9 +1144,12 @@ function TaskDetailModal({ list, task, tracker, user, onClose }: {
     if (Object.keys(updates).length > 0) tracker.updateTask(listId, task.id, updates);
   };
 
-  return (
-    <div className="fixed left-0 right-0 top-0 z-40 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" style={{ height: 'var(--vvh, 100dvh)' }} onClick={onClose}>
-      <div className="glass-menu w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl max-h-full flex flex-col" onClick={e => e.stopPropagation()}>
+  // Portal to <body> so the modal sits outside #root — otherwise the keyboard-open
+  // layout switch (which restructures #root and makes <main> the scroll container)
+  // re-stacks the sticky/backdrop-filter header above this fixed overlay on iOS.
+  return createPortal(
+    <div className="fixed left-0 right-0 top-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" style={{ height: 'var(--vvh, 100dvh)' }} onClick={onClose}>
+      <div className="glass-menu w-full sm:max-w-md h-full sm:h-[85vh] rounded-none sm:rounded-3xl flex flex-col" onClick={e => e.stopPropagation()}>
         {/* Pinned header — stays visible while the body scrolls (and when the keyboard is open) */}
         <div className="shrink-0 flex items-start justify-between gap-2 p-5 pb-3 border-b border-gray-200/60 dark:border-gray-700/60">
           <div className="flex-1 min-w-0">
@@ -1022,6 +1163,9 @@ function TaskDetailModal({ list, task, tracker, user, onClose }: {
             <div className={`text-xs mt-0.5 ${RECENCY_CLASSES[r.level].text}`}>Last done {formatAgo(task.last_done_at)}</div>
           </div>
           <div className="shrink-0 flex items-center gap-0.5">
+            <button onClick={() => { tracker.deleteTask(listId, task.id); onClose(); }} className="p-1.5 mr-1 text-gray-400 hover:text-red-500 rounded-lg" aria-label="Delete task" title="Delete task">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            </button>
             <button onClick={() => void undo()} disabled={!canUndo} className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg disabled:opacity-30 disabled:pointer-events-none" aria-label="Undo">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a5 5 0 015 5v2M3 10l4-4M3 10l4 4" /></svg>
             </button>
@@ -1035,7 +1179,7 @@ function TaskDetailModal({ list, task, tracker, user, onClose }: {
         </div>
 
         {/* Scrollable body */}
-        <div className="p-5 pt-4 space-y-4 overflow-y-auto">
+        <div className="flex-1 min-h-0 p-5 pt-4 space-y-4 overflow-y-auto">
 
           {/* Stats */}
           <div className="grid grid-cols-4 gap-2 text-center">
@@ -1135,7 +1279,12 @@ function TaskDetailModal({ list, task, tracker, user, onClose }: {
 
           {/* History with gap pills */}
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">History{logs.length > 0 ? ` · ${logs.length}` : ''}</div>
+            <div className="flex items-baseline justify-between gap-2 mb-1">
+              <div className="text-[10px] uppercase tracking-wide text-gray-400">History{logs.length > 0 ? ` · ${logs.length}` : ''}</div>
+              {!isOnline && task.total_count > doneLogs.length && (
+                <div className="text-[10px] text-amber-600 dark:text-amber-400">Recent only · reconnect for all {task.total_count}</div>
+              )}
+            </div>
             {loadingLogs ? (
               <div className="text-sm text-gray-400 py-2">Loading…</div>
             ) : logs.length === 0 ? (
@@ -1174,17 +1323,10 @@ function TaskDetailModal({ list, task, tracker, user, onClose }: {
               </div>
             )}
           </div>
-
-          {/* Delete task */}
-          <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
-            <button
-              onClick={() => { tracker.deleteTask(listId, task.id); onClose(); }}
-              className="text-sm text-red-600 dark:text-red-400 hover:underline"
-            >Delete task</button>
-          </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1195,13 +1337,15 @@ function ShareModal({ list, tracker, onClose }: {
   tracker: ReturnType<typeof useTracker>;
   onClose: () => void;
 }) {
+  const isOnline = useOnlineStatus();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [directory, setDirectory] = useState<DirectoryUser[]>([]);
 
   useEffect(() => {
+    if (!isOnline) return; // sharing needs the server; nothing to load offline
     getUsers().then(setDirectory).catch(() => {});
-  }, []);
+  }, [isOnline]);
 
   const sharedSubs = new Set(list.shared_with.map(u => u.sub));
   const candidates = directory.filter(u => !sharedSubs.has(u.sub) && u.sub !== list.owner_sub);
@@ -1218,8 +1362,8 @@ function ShareModal({ list, tracker, onClose }: {
     }
   };
 
-  return (
-    <div className="fixed left-0 right-0 top-0 z-40 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" style={{ height: 'var(--vvh, 100dvh)' }} onClick={onClose}>
+  return createPortal(
+    <div className="fixed left-0 right-0 top-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" style={{ height: 'var(--vvh, 100dvh)' }} onClick={onClose}>
       <div className="glass-menu w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl max-h-full overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="p-5 space-y-4">
           <div className="flex items-center justify-between">
@@ -1229,6 +1373,13 @@ function ShareModal({ list, tracker, onClose }: {
             </button>
           </div>
 
+          {!isOnline && (
+            <div className="flex items-center gap-2 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636a9 9 0 010 12.728m0 0l-12.728-.001a9 9 0 01.001-12.726m0 0L5.636 5.636M12 12h.01" /></svg>
+              You're offline — sharing needs a connection.
+            </div>
+          )}
+
           {/* Current shares */}
           {list.shared_with.length > 0 && (
             <div className="space-y-1">
@@ -1236,7 +1387,7 @@ function ShareModal({ list, tracker, onClose }: {
               {list.shared_with.map(u => (
                 <div key={u.sub} className="flex items-center justify-between py-1.5 px-2 rounded-lg bg-gray-50 dark:bg-gray-800/40">
                   <span className="text-sm text-gray-700 dark:text-gray-200">{u.name || u.email || u.sub}</span>
-                  <button onClick={() => tracker.unshareList(list.id, u.sub).catch(() => {})} className="text-xs text-red-500 hover:underline">Remove</button>
+                  <button disabled={!isOnline} onClick={() => tracker.unshareList(list.id, u.sub).catch(() => {})} className="text-xs text-red-500 hover:underline disabled:opacity-40 disabled:no-underline">Remove</button>
                 </div>
               ))}
             </div>
@@ -1245,7 +1396,9 @@ function ShareModal({ list, tracker, onClose }: {
           {/* Add a person (dropdown of known users) */}
           <div>
             <div className="text-xs uppercase tracking-wide text-gray-400 mb-1">Add person</div>
-            {candidates.length === 0 ? (
+            {!isOnline ? (
+              <p className="text-sm text-gray-400">Reconnect to add people to this list.</p>
+            ) : candidates.length === 0 ? (
               <p className="text-sm text-gray-400">No other users available yet — people appear here once they've signed in.</p>
             ) : (
               <select
@@ -1266,6 +1419,7 @@ function ShareModal({ list, tracker, onClose }: {
           <p className="text-xs text-gray-400">Lists are private to you until you share them. People you share with can view and update tasks.</p>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

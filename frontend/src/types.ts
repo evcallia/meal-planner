@@ -112,6 +112,9 @@ export interface TrackerTask {
   last_note: string | null;
   total_count: number;
   avg_interval_days: number | null;
+  // The most recent few completion/skip entries, embedded so history is viewable
+  // offline without an on-demand /logs fetch. Full history still loads on open.
+  recent_logs?: TrackerLog[];
 }
 
 export interface TrackerShareUser {

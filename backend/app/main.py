@@ -187,6 +187,16 @@ def run_migrations():
                 conn.commit()
             print("Migration complete: added section_name column")
 
+    # Soft-delete marker for tracker shares (lets a member undo a "leave")
+    if inspector.has_table("tracker_shares"):
+        ts_columns = [col["name"] for col in inspector.get_columns("tracker_shares")]
+        if "left_at" not in ts_columns:
+            print("Adding left_at column to tracker_shares...")
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE tracker_shares ADD COLUMN left_at TIMESTAMP"))
+                conn.commit()
+            print("Migration complete: added left_at column")
+
     # Drop the broken functional index if it exists (replaced with simple unique constraint)
     try:
         with engine.connect() as conn:

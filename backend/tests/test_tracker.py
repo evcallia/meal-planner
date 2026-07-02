@@ -65,6 +65,64 @@ def test_unshare_revokes_access(client):
     app.dependency_overrides.pop(get_current_user, None)
 
 
+def test_shared_member_can_leave_and_be_readded(client):
+    _as(USER_A)
+    list_id = client.post("/api/tracker/lists", json={"name": "House"}).json()["id"]
+    client.post(f"/api/tracker/lists/{list_id}/shares", json={"sub": "user-b"})
+
+    # Bob sees it, then leaves.
+    _as(USER_B)
+    assert len(client.get("/api/tracker").json()) == 1
+    assert client.post(f"/api/tracker/lists/{list_id}/leave").status_code == 204
+    assert client.get("/api/tracker").json() == []
+    # Leaving is idempotent.
+    assert client.post(f"/api/tracker/lists/{list_id}/leave").status_code == 204
+
+    # The list still exists for its owner.
+    _as(USER_A)
+    owner_view = client.get("/api/tracker").json()
+    assert len(owner_view) == 1 and owner_view[0]["shared_with"] == []
+
+    # Owner can re-add Bob.
+    assert client.post(f"/api/tracker/lists/{list_id}/shares", json={"sub": "user-b"}).status_code == 200
+    _as(USER_B)
+    assert len(client.get("/api/tracker").json()) == 1
+    app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_member_can_rejoin_after_leaving(client):
+    _as(USER_A)
+    list_id = client.post("/api/tracker/lists", json={"name": "House"}).json()["id"]
+    client.post(f"/api/tracker/lists/{list_id}/shares", json={"sub": "user-b"})
+
+    _as(USER_B)
+    client.post(f"/api/tracker/lists/{list_id}/leave")
+    assert client.get("/api/tracker").json() == []
+    # Undo the leave.
+    res = client.post(f"/api/tracker/lists/{list_id}/rejoin")
+    assert res.status_code == 200 and res.json()["id"] == list_id
+    assert any(l["id"] == list_id for l in client.get("/api/tracker").json())
+    app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_cannot_rejoin_a_list_never_shared(client):
+    # Rejoin must never grant access to a list the user was never a member of.
+    _as(USER_A)
+    list_id = client.post("/api/tracker/lists", json={"name": "Private"}).json()["id"]
+    _as(USER_B)
+    assert client.post(f"/api/tracker/lists/{list_id}/rejoin").status_code == 403
+    assert client.get("/api/tracker").json() == []
+    app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_owner_cannot_leave_own_list(client):
+    _as(USER_A)
+    list_id = client.post("/api/tracker/lists", json={"name": "Mine"}).json()["id"]
+    assert client.post(f"/api/tracker/lists/{list_id}/leave").status_code == 400
+    assert len(client.get("/api/tracker").json()) == 1
+    app.dependency_overrides.pop(get_current_user, None)
+
+
 def test_no_access_to_foreign_list_is_403(client):
     _as(USER_A)
     list_id = client.post("/api/tracker/lists", json={"name": "Secret"}).json()["id"]
@@ -256,6 +314,49 @@ def test_restore_list_rebuilds_tasks_logs_shares_and_position(client):
     # The collaborator can see the restored list.
     _as(USER_B)
     assert any(l["id"] == body["id"] for l in client.get("/api/tracker").json())
+    app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_task_payload_embeds_recent_logs_capped_at_five(client):
+    _as(USER_A)
+    list_id = client.post("/api/tracker/lists", json={"name": "Plants"}).json()["id"]
+    tid = client.post("/api/tracker/tasks", json={"list_id": list_id, "name": "Water"}).json()["id"]
+    # Seven completions on distinct days; only the latest 5 should be embedded.
+    for i in range(7):
+        done = (datetime.utcnow() - timedelta(days=i)).isoformat()
+        client.post(f"/api/tracker/tasks/{tid}/logs", json={"done_at": done})
+
+    task = client.get("/api/tracker").json()[0]["tasks"][0]
+    assert task["total_count"] == 7
+    assert len(task["recent_logs"]) == 5
+    # Newest first, and strictly descending by done_at.
+    times = [l["done_at"] for l in task["recent_logs"]]
+    assert times == sorted(times, reverse=True)
+    app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_log_payload_is_sse_serializable_and_stored_naive(client, db_session):
+    import json
+    from uuid import UUID
+    from app.routers.tracker import _task_dict
+    from app.models import TrackerTask, TrackerLog
+
+    _as(USER_A)
+    list_id = client.post("/api/tracker/lists", json={"name": "L"}).json()["id"]
+    tid = client.post("/api/tracker/tasks", json={"list_id": list_id, "name": "T"}).json()["id"]
+    # A naive log and a tz-aware one (exactly like the frontend's toISOString()).
+    assert client.post(f"/api/tracker/tasks/{tid}/logs", json={"done_at": datetime.utcnow().isoformat()}).status_code == 201
+    assert client.post(f"/api/tracker/tasks/{tid}/logs", json={"done_at": "2026-06-18T03:00:00.000Z"}).status_code == 201
+
+    task = db_session.query(TrackerTask).filter(TrackerTask.id == UUID(tid)).first()
+    data = _task_dict(db_session, task)
+    # SSE encodes this dict with json.dumps (not Pydantic) — embedded recent_logs
+    # must be JSON-serializable (no raw datetimes), or every broadcast 500s.
+    json.dumps(data)
+    assert data["recent_logs"] and isinstance(data["recent_logs"][0]["done_at"], str)
+    # Stored values are naive UTC — no tz-aware value leaks in to break datetime sorts.
+    stored = db_session.query(TrackerLog).filter(TrackerLog.task_id == UUID(tid)).all()
+    assert all(l.done_at.tzinfo is None for l in stored)
     app.dependency_overrides.pop(get_current_user, None)
 
 

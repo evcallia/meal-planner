@@ -300,6 +300,7 @@ class TrackerTaskSchema(BaseModel):
     last_note: str | None = None
     total_count: int
     avg_interval_days: float | None = None
+    recent_logs: list[TrackerLogSchema] = []
 
 
 class TrackerShareUser(BaseModel):

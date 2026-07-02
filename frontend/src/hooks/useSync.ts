@@ -62,6 +62,8 @@ import {
   updateTrackerList as updateTrackerListAPI,
   deleteTrackerList as deleteTrackerListAPI,
   reorderTrackerLists as reorderTrackerListsAPI,
+  leaveTrackerList as leaveTrackerListAPI,
+  rejoinTrackerList as rejoinTrackerListAPI,
   createTrackerTask as createTrackerTaskAPI,
   updateTrackerTask as updateTrackerTaskAPI,
   deleteTrackerTask as deleteTrackerTaskAPI,
@@ -599,6 +601,14 @@ export function useSync() {
           const payload = change.payload as { listIds: string[] };
           const resolved = await Promise.all(payload.listIds.map(async id => isTempId(id) ? (await getTempIdMapping(id)) ?? id : id));
           await reorderTrackerListsAPI(resolved);
+        } else if (change.type === 'tracker-list-leave') {
+          const payload = change.payload as { id: string };
+          const realId = isTempId(payload.id) ? (await getTempIdMapping(payload.id)) ?? payload.id : payload.id;
+          await leaveTrackerListAPI(realId);
+        } else if (change.type === 'tracker-list-rejoin') {
+          const payload = change.payload as { id: string };
+          const realId = isTempId(payload.id) ? (await getTempIdMapping(payload.id)) ?? payload.id : payload.id;
+          await rejoinTrackerListAPI(realId);
         } else if (change.type === 'tracker-task-create') {
           const payload = change.payload as { tempId: string; listId: string; name: string; target_interval_days?: number | null; notes?: string | null };
           let realListId = payload.listId;

@@ -529,6 +529,14 @@ export async function addTrackerShare(listId: string, payload: { email?: string;
   });
 }
 
+export async function leaveTrackerList(listId: string): Promise<void> {
+  await fetchAPI(`/tracker/lists/${listId}/leave`, { method: 'POST' });
+}
+
+export async function rejoinTrackerList(listId: string): Promise<TrackerList> {
+  return fetchAPI<TrackerList>(`/tracker/lists/${listId}/rejoin`, { method: 'POST' });
+}
+
 export async function removeTrackerShare(listId: string, shareSub: string): Promise<TrackerList> {
   return fetchAPI<TrackerList>(`/tracker/lists/${listId}/shares/${encodeURIComponent(shareSub)}`, {
     method: 'DELETE',

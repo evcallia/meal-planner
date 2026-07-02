@@ -263,6 +263,9 @@ class TrackerShare(Base):
     )
     sub: Mapped[str] = mapped_column(String(255), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Soft-delete marker: set when the member leaves. Null = active. Keeping the row
+    # lets the member undo a leave (rejoin) without the owner having to re-share.
+    left_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     list: Mapped["TrackerList"] = relationship("TrackerList", back_populates="shares")
 
