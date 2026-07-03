@@ -319,7 +319,7 @@ You can find docker builds here https://hub.docker.com/repository/docker/evcalli
    docker buildx build --builder multiarch --platform linux/amd64,linux/arm64 -t evcallia/meal-planner:{TAG} --push .
    ```
 
-3. `docker-compose.yml` already runs the published image (`evcallia/meal-planner:${APP_VERSION:-2.0.0}`) — bump the default tag (or set `APP_VERSION`) after pushing. `docker-compose-dev.yml` always builds fresh from source instead.
+3. `docker-compose.yml` already runs the published image (`evcallia/meal-planner:${APP_VERSION:-v2.0.0}`) — bump the default tag (or set `APP_VERSION`) after pushing. `docker-compose-dev.yml` always builds fresh from source instead.
 
 ## PWA Installation
 

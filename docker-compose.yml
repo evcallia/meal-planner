@@ -20,7 +20,7 @@ services:
       - meal-planner-backend
 
   app:
-    image: evcallia/meal-planner:${APP_VERSION:-2.0.0}
+    image: evcallia/meal-planner:${APP_VERSION:-v2.0.0}
     ports:
       - "${APP_PORT:-8000}:8000"
     environment:
