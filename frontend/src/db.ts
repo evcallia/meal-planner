@@ -48,6 +48,7 @@ export type ChangeType =
   | 'tracker-list-create'
   | 'tracker-list-update'
   | 'tracker-list-delete'
+  | 'tracker-list-restore'
   | 'tracker-list-reorder'
   | 'tracker-list-leave'
   | 'tracker-list-rejoin'

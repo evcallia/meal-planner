@@ -20,7 +20,7 @@ A mobile-focused Progressive Web App for meal planning that integrates with Appl
 
 ## Tech Stack
 
-- **Backend**: Python (FastAPI), PostgreSQL, SQLAlchemy
+- **Backend**: Go, PostgreSQL, GORM
 - **Frontend**: React, TypeScript, Tailwind CSS, Vite
 - **Auth**: OIDC via Authentik
 - **Containerization**: Docker Compose
@@ -34,9 +34,13 @@ A mobile-focused Progressive Web App for meal planning that integrates with Appl
 
 2. Edit `.env` with your configuration (see [Configuration](#configuration))
 
-3. Start the app:
+3. Start the app (pulls the published image):
    ```bash
-   docker compose up --build
+   docker compose up -d
+   ```
+   Or build from source:
+   ```bash
+   docker compose -f docker-compose-dev.yml up -d --build
    ```
 
 4. Visit http://localhost:8000
@@ -47,7 +51,7 @@ For faster development with hot-reload, run the backend and frontend separately.
 
 ### Prerequisites
 
-- Python 3.11+
+- Go 1.26+
 - Node.js 20+
 - PostgreSQL (or use Docker for just the database)
 
@@ -61,18 +65,15 @@ docker compose up db
 ### Backend
 
 ```bash
-cd backend
+# Run from the project root so .env is loaded
+go run ./backend/cmd/server
+```
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run with hot-reload (from project root so .env is loaded)
-cd ..
-PYTHONPATH=./backend uvicorn backend.app.main:app --reload --port 8000
+No local PostgreSQL? Run a throwaway embedded one:
+```bash
+cd backend && go run ./cmd/devpg -port 5433
+# then: POSTGRES_HOST=localhost POSTGRES_PORT=5433 POSTGRES_USER=dev \
+#       POSTGRES_PASSWORD=dev go run ./backend/cmd/server
 ```
 
 The backend will be available at http://localhost:8000
@@ -104,7 +105,7 @@ ALLOW_TUNNEL=true npm run dev
 ```bash
 ALLOW_TUNNEL=true FRONTEND_URL=https://your-ngrok-url.ngrok-free.dev \
   OIDC_REDIRECT_URI=https://your-ngrok-url.ngrok-free.dev/api/auth/callback \
-  uvicorn backend.app.main:app --reload --port 8000
+  go run ./backend/cmd/server
 ```
 
 You can also setup the .env with necessary values and run
@@ -194,40 +195,38 @@ npm run test:ui
 
 ### Backend Tests
 
-The backend uses **pytest** with **FastAPI TestClient** for API and service testing.
+The backend uses Go's standard **testing** package with an in-memory SQLite HTTP test harness, plus an embedded-Postgres integration test that exercises the production database dialect.
 
 ```bash
 cd backend
 
-# Install test dependencies
-pip install -r requirements.txt
-
 # Run all tests
-python -m pytest
+go test ./...
 
-# Run with verbose output
-python -m pytest -v
+# Verbose output
+go test -v ./...
 
-# Run with coverage
-python -m pytest --cov=app --cov-report=html --cov-report=term-missing
+# With coverage
+go test -coverprofile=coverage.out ./... && go tool cover -html=coverage.out
 
-# Run specific test categories
-python -m pytest -m unit          # Unit tests only
-python -m pytest -m integration   # Integration tests only
-python -m pytest -k "test_auth"   # Tests matching pattern
+# Tests matching a pattern
+go test -run Tracker ./...
+
+# Skip the (slower) embedded-Postgres integration test
+go test -short ./...
 ```
 
 **Test Coverage:**
-- ✅ **API Endpoints**: Days, meal notes, authentication, calendar events
-- ✅ **Database Models**: MealNote, MealItem relationships and constraints
-- ✅ **Authentication**: OIDC flow, session management, protected routes
-- ✅ **External Services**: Calendar integration, iCal parsing
-- ✅ **Data Validation**: Pydantic schemas, request/response validation
-- ✅ **Error Handling**: Invalid data, network failures, edge cases
+- ✅ **API Endpoints**: Days, meal notes, grocery, pantry, tracker, authentication, calendar events
+- ✅ **Database Models**: relationships, cascade deletes, migrations
+- ✅ **Authentication**: OIDC flow, session signing/expiry, protected routes
+- ✅ **External Services**: Calendar integration, iCal/CalDAV parsing
+- ✅ **Realtime**: SSE broadcasting, per-user filtering
+- ✅ **Error Handling**: validation, malformed data, offline/concurrency edge cases
 
 **Coverage Reports:**
-- Terminal: Displayed after pytest with `--cov-report=term-missing`
-- HTML: `backend/htmlcov/index.html`
+- Terminal: `go tool cover -func=coverage.out`
+- HTML: `go tool cover -html=coverage.out`
 
 ### Test Categories
 
@@ -281,12 +280,16 @@ it('handles user interaction', async () => {
 ```
 
 **Backend:**
-```python
-# Use pytest fixtures and FastAPI TestClient
-def test_api_endpoint(client: TestClient, mock_user):
-    with patch("app.auth.get_current_user", return_value=mock_user):
-        response = client.get("/api/endpoint")
-        assert response.status_code == 200
+```go
+// Use the shared harness (backend/internal/app/harness_test.go):
+// in-memory SQLite + signed-cookie auth + SSE collector
+func TestAPIEndpoint(t *testing.T) {
+    ta := newTestApp(t)
+    resp := ta.GET("/api/endpoint")
+    if resp.Status != 200 {
+        t.Fatalf("status = %d", resp.Status)
+    }
+}
 ```
 
 **Coverage Requirements:**
@@ -303,7 +306,16 @@ Create a `.env` file based on the `.env.example` file
 
 ## Building and Pushing to Docker Hub
 
-You can find docker builds here https://hub.docker.com/repository/docker/evcallia/meal-planner/tags or build from source following the below instructions. 
+You can find docker builds here https://hub.docker.com/repository/docker/evcallia/meal-planner/tags.
+
+**Automated (preferred):** pushing a version tag builds and pushes the multiarch image via GitHub Actions (`.github/workflows/release.yml`), tagged with the git tag plus `latest`:
+```bash
+git tag v2.0.0
+git push origin v2.0.0
+```
+Requires a `dockerhub` environment (Settings → Environments) holding the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` secrets (use a Docker Hub access token, not your password), with deployment tags restricted to `v*`.
+
+**Manual (fallback):** 
 
 1. Log in to Docker Hub:
    ```bash
@@ -316,13 +328,7 @@ You can find docker builds here https://hub.docker.com/repository/docker/evcalli
    docker buildx build --builder multiarch --platform linux/amd64,linux/arm64 -t evcallia/meal-planner:{TAG} --push .
    ```
 
-4. To use the pushed image, update `docker-compose.yml`:
-   ```yaml
-   services:
-     app:
-       image: evcallia/meal-planner:{TAG}
-       # Remove the 'build: .' line
-   ```
+3. `docker-compose.yml` already runs the published image (`evcallia/meal-planner:${APP_VERSION:-v2.0.0}`) — bump the default tag (or set `APP_VERSION`) after pushing. `docker-compose-dev.yml` always builds fresh from source instead.
 
 ## PWA Installation
 

@@ -63,6 +63,7 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
   const pendingActivateRef = useRef<string | null>(null);
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Drag-to-reorder lists (pointer-based; long-press to pick up a tab).
   const [dragId, setDragId] = useState<string | null>(null);
@@ -370,13 +371,28 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
             </button>
           </div>
           {searchOpen && (
-            <input
-              autoFocus
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search tasks across all lists…"
-              className="mt-2 w-full px-3 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-sm"
-            />
+            <div className="relative mt-2">
+              <input
+                autoFocus
+                ref={searchInputRef}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search tasks across all lists…"
+                className="w-full pl-3 pr-9 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-sm"
+              />
+              <button
+                // preventDefault on pointer-down so tapping X never blurs the
+                // input (blur would close the mobile keyboard mid-tap)
+                onMouseDown={e => e.preventDefault()}
+                onTouchStart={e => e.preventDefault()}
+                onTouchEnd={e => { e.preventDefault(); setSearch(''); searchInputRef.current?.focus(); }}
+                onClick={() => { setSearch(''); searchInputRef.current?.focus(); }}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50"
+                aria-label="Clear search"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
           )}
         </div>
       )}

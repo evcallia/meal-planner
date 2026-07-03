@@ -1,3 +1,7 @@
+# Dev variant: always builds the image fresh from source.
+#   docker compose -f docker-compose-dev.yml up -d --build
+# Versioned images for docker-compose.yml are built/pushed separately
+# (see README "Building and Pushing to Docker Hub").
 services:
   db:
     image: postgres:16-alpine
@@ -17,10 +21,10 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - meal-planner-backend
+      - meal-planner-dev-backend
 
   app:
-    image: evcallia/meal-planner:${APP_VERSION:-v2.0.0}
+    build: .
     ports:
       - "${APP_PORT:-8000}:8000"
     environment:
@@ -55,11 +59,11 @@ services:
       retries: 5
       start_period: 30s
     networks:
-      - meal-planner-backend
+      - meal-planner-dev-backend
 
 volumes:
   postgres_data:
 
 networks:
-  meal-planner-backend:
+  meal-planner-dev-backend:
     driver: bridge
