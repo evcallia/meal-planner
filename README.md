@@ -313,7 +313,7 @@ You can find docker builds here https://hub.docker.com/repository/docker/evcalli
 git tag v2.0.0
 git push origin v2.0.0
 ```
-Requires the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` repo secrets (Settings → Secrets and variables → Actions; use a Docker Hub access token, not your password).
+Requires a `dockerhub` environment (Settings → Environments) holding the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` secrets (use a Docker Hub access token, not your password), with deployment tags restricted to `v*`.
 
 **Manual (fallback):** 
 

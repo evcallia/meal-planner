@@ -15,6 +15,9 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     name: Build and Push Image
+    # Secrets live in the "dockerhub" environment (Settings → Environments),
+    # restricted to v* tags — unreachable from any other workflow or ref.
+    environment: dockerhub
 
     steps:
     - uses: actions/checkout@v4
