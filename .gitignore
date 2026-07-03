@@ -38,3 +38,6 @@ Thumbs.db
 *.log
 
 .claude/
+
+# Local deployment overrides (proprietary networking) — never commit
+docker-compose*.override.yml
