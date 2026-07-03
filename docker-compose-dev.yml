@@ -1,7 +1,7 @@
-# Dev/build variant: builds the image from source and tags it with the
-# version that docker-compose.yml pulls. Typical flow:
-#   docker compose -f docker-compose-dev.yml build   # produces meal-planner:<version>
-#   docker compose -f docker-compose-dev.yml up -d   # run the freshly built image
+# Dev variant: always builds the image fresh from source.
+#   docker compose -f docker-compose-dev.yml up -d --build
+# Versioned images for docker-compose.yml are built/pushed separately
+# (see README "Building and Pushing to Docker Hub").
 services:
   db:
     image: postgres:16-alpine
@@ -25,7 +25,6 @@ services:
 
   app:
     build: .
-    image: evcallia/meal-planner:${APP_VERSION:-2.0.0}
     ports:
       - "${APP_PORT:-8000}:8000"
     environment:
