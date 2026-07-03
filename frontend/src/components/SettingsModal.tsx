@@ -87,6 +87,7 @@ const typeLabels: Record<ChangeType, string> = {
   'tracker-list-create': 'Create list',
   'tracker-list-update': 'Update list',
   'tracker-list-delete': 'Delete list',
+  'tracker-list-restore': 'Restore list',
   'tracker-list-reorder': 'Reorder lists',
   'tracker-list-leave': 'Leave list',
   'tracker-list-rejoin': 'Rejoin list',

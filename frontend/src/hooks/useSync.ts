@@ -59,6 +59,7 @@ import {
   deleteItemDefault as deleteItemDefaultAPI,
   putItemDefault as putItemDefaultAPI,
   createTrackerList as createTrackerListAPI,
+  restoreTrackerList as restoreTrackerListAPI,
   updateTrackerList as updateTrackerListAPI,
   deleteTrackerList as deleteTrackerListAPI,
   reorderTrackerLists as reorderTrackerListsAPI,
@@ -597,6 +598,42 @@ export function useSync() {
             else { if (change.id) await removePendingChange(change.id); setPendingCount(prev => prev - 1); continue; }
           }
           await deleteTrackerListAPI(realId);
+        } else if (change.type === 'tracker-list-restore') {
+          // Offline undo of a list delete that had already reached the server:
+          // recreate the whole subtree atomically, then map the optimistic
+          // temp ids to the recreated ids (tasks match by position) so any
+          // queued/undoable ops referencing them keep resolving.
+          const payload = change.payload as {
+            tempListId: string;
+            name: string; icon?: string | null; color?: string | null; position?: number;
+            share_subs: string[];
+            tasks: {
+              tempId: string; name: string;
+              target_interval_days?: number | null; notes?: string | null; position: number;
+              season_start_month?: number | null; season_end_month?: number | null;
+              season_start_day?: number | null; season_end_day?: number | null;
+              logs: { done_at: string; kind?: string | null; note?: string | null; created_by_sub?: string | null }[];
+            }[];
+          };
+          const restored = await restoreTrackerListAPI({
+            name: payload.name, icon: payload.icon, color: payload.color,
+            position: payload.position, share_subs: payload.share_subs,
+            tasks: payload.tasks.map(t => ({
+              name: t.name, target_interval_days: t.target_interval_days, notes: t.notes,
+              position: t.position,
+              season_start_month: t.season_start_month, season_end_month: t.season_end_month,
+              season_start_day: t.season_start_day, season_end_day: t.season_end_day,
+              logs: t.logs.map(l => ({
+                done_at: l.done_at, kind: l.kind ?? undefined,
+                note: l.note, created_by_sub: l.created_by_sub,
+              })),
+            })),
+          });
+          if (isTempId(payload.tempListId)) await saveTempIdMapping(payload.tempListId, restored.id);
+          for (const t of payload.tasks) {
+            const created = restored.tasks.find(rt => rt.position === t.position);
+            if (created && isTempId(t.tempId)) await saveTempIdMapping(t.tempId, created.id);
+          }
         } else if (change.type === 'tracker-list-reorder') {
           const payload = change.payload as { listIds: string[] };
           const resolved = await Promise.all(payload.listIds.map(async id => isTempId(id) ? (await getTempIdMapping(id)) ?? id : id));

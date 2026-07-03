@@ -30,6 +30,7 @@ import {
   getPendingChanges,
   saveTempIdMapping,
   getTempIdMapping,
+  removePendingChange,
   removePendingChangesForTempId,
   saveLocalTrackerLists,
   getLocalTrackerLists,
@@ -455,12 +456,14 @@ export function useTracker() {
     let taskSnapshots: { task: TrackerTask; logs: TrackerLog[] }[] = [];
     if (isOnlineRef.current) {
       taskSnapshots = await Promise.all(list.tasks.map(async (t) => {
-        let logs: TrackerLog[] = [];
-        try { if (!isTempId(t.id)) logs = await getTrackerLogs(await resolveIdAsync(t.id)); } catch { /* best effort */ }
+        let logs: TrackerLog[] = t.recent_logs ?? [];
+        try { if (!isTempId(t.id)) logs = await getTrackerLogs(await resolveIdAsync(t.id)); } catch { /* best effort — recent_logs fallback */ }
         return { task: t, logs };
       }));
     } else {
-      taskSnapshots = list.tasks.map(t => ({ task: t, logs: [] }));
+      // Offline: full history isn't cached, but the recent logs ride along on
+      // every task, so an offline delete→undo keeps at least those.
+      taskSnapshots = list.tasks.map(t => ({ task: t, logs: t.recent_logs ?? [] }));
     }
     const snapshot = { list, tasks: taskSnapshots, index: listIndex };
 
@@ -475,10 +478,34 @@ export function useTracker() {
 
   // Recreate a deleted list (used by undo). Re-posts tasks and their logs.
   const restoreList = useCallback(async (snapshot: { list: TrackerList; tasks: { task: TrackerTask; logs: TrackerLog[] }[]; index: number }) => {
+    // Offline fast-path: if the delete this undo reverses is still sitting in
+    // the pending queue, just cancel it — the server never saw the delete, so
+    // the original list (full history, original ids) still exists. Restoring
+    // the original ids also means older undo entries keep working untouched.
+    if (!isOnlineRef.current) {
+      const deletedId = resolveId(snapshot.list.id);
+      const pending = await getPendingChanges();
+      const pendingDelete = pending.find(c => c.type === 'tracker-list-delete' &&
+        ((c.payload as { id: string }).id === deletedId || (c.payload as { id: string }).id === snapshot.list.id));
+      if (pendingDelete?.id != null) {
+        await removePendingChange(pendingDelete.id);
+        const restored: TrackerList = { ...snapshot.list, tasks: snapshot.tasks.map(s => s.task) };
+        optimisticVersionRef.current++;
+        setLists(prev => {
+          const next = [...prev];
+          next.splice(Math.min(snapshot.index, next.length), 0, restored);
+          return next;
+        });
+        await saveLocalTrackerList(toLocalList(restored));
+        await saveLocalTrackerTasks(restored.tasks.map(toLocalTask));
+        return;
+      }
+    }
     const tempListId = generateTempId();
+    const tempTaskIds = snapshot.tasks.map(() => generateTempId());
     const restored: TrackerList = {
       ...snapshot.list, id: tempListId,
-      tasks: snapshot.tasks.map(s => ({ ...s.task, id: generateTempId(), list_id: tempListId })),
+      tasks: snapshot.tasks.map((s, i) => ({ ...s.task, id: tempTaskIds[i], list_id: tempListId })),
     };
     optimisticVersionRef.current++;
     if (isOnlineRef.current) pendingMutationsRef.current++;
@@ -488,6 +515,9 @@ export function useTracker() {
       return next;
     });
     remapId(snapshot.list.id, tempListId);
+    // Older undo entries hold pre-delete task ids — chain them through the
+    // optimistic temp ids so they stay resolvable while the restore is in flight.
+    snapshot.tasks.forEach((s, i) => remapId(s.task.id, tempTaskIds[i]));
     await saveLocalTrackerList(toLocalList(restored));
 
     if (isOnlineRef.current) {
@@ -515,14 +545,73 @@ export function useTracker() {
         });
         remapId(tempListId, finalList.id);
         await saveTempIdMapping(tempListId, finalList.id);
+        // The restore reissued every task id (and log id). Older undo entries —
+        // e.g. undoing a mark-done recorded before the delete — still hold the
+        // pre-delete ids, so map each one to its recreated counterpart or those
+        // undos silently no-op against ids that no longer exist. Tasks are
+        // recreated with their original positions, so match on position.
+        const byPosition = new Map(finalList.tasks.map(t => [t.position, t]));
+        const logRemaps: Promise<void>[] = [];
+        snapshot.tasks.forEach((s, i) => {
+          const created = byPosition.get(s.task.position) ?? finalList.tasks[i];
+          if (!created) return;
+          remapId(tempTaskIds[i], created.id);
+          void saveTempIdMapping(tempTaskIds[i], created.id);
+          if (s.logs.length === 0) return;
+          logRemaps.push((async () => {
+            try {
+              // Logs also carry fresh ids; match old→new by content (done_at
+              // round-trips byte-identical through the server).
+              const fresh = await getTrackerLogs(created.id);
+              const pool = [...fresh];
+              for (const old of s.logs) {
+                const idx = pool.findIndex(n =>
+                  n.done_at === old.done_at &&
+                  (n.kind ?? 'done') === (old.kind ?? 'done') &&
+                  (n.note ?? null) === (old.note ?? null));
+                if (idx >= 0) {
+                  remapId(old.id, pool[idx].id);
+                  pool.splice(idx, 1);
+                }
+              }
+            } catch { /* best effort — only deep undo chains need log ids */ }
+          })());
+        });
+        await Promise.all(logRemaps);
         setLists(prev => prev.map(l => l.id === tempListId ? finalList : l));
         await deleteLocalTrackerList(tempListId);
         await saveLocalTrackerList(toLocalList(finalList));
         await saveLocalTrackerTasks(finalList.tasks.map(toLocalTask));
       } catch { /* will resync */ }
       finally { settleMutation(); }
+    } else {
+      // Offline and the delete already reached the server: queue a full
+      // restore so the list is recreated (tasks + logs + shares) on sync.
+      // useSync maps the temp ids to the recreated ones when it lands.
+      await queueChange('tracker-list-restore', '', {
+        tempListId,
+        tempTaskIds,
+        name: snapshot.list.name,
+        icon: snapshot.list.icon,
+        color: snapshot.list.color,
+        position: snapshot.list.position,
+        share_subs: snapshot.list.shared_with.map(u => u.sub),
+        tasks: snapshot.tasks.map((s, i) => ({
+          tempId: tempTaskIds[i],
+          name: s.task.name,
+          target_interval_days: s.task.target_interval_days,
+          notes: s.task.notes,
+          position: s.task.position,
+          season_start_month: s.task.season_start_month,
+          season_end_month: s.task.season_end_month,
+          season_start_day: s.task.season_start_day,
+          season_end_day: s.task.season_end_day,
+          logs: s.logs.map(l => ({ done_at: l.done_at, kind: l.kind, note: l.note, created_by_sub: l.created_by_sub })),
+        })),
+      });
+      await saveLocalTrackerTasks(restored.tasks.map(toLocalTask));
     }
-  }, [setLists, remapId, settleMutation]);
+  }, [setLists, remapId, resolveId, settleMutation]);
 
   const reorderListsCore = useCallback(async (orderedIds: string[]) => {
     optimisticVersionRef.current++;
