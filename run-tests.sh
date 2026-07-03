@@ -34,73 +34,52 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-PYTHON_CMD=""
-PIP_CMD=""
-VENV_DIR=""
-VENV_PYTHON=""
-VENV_PIP=""
-
 # Check for required commands
 check_requirements() {
     print_header "Checking Requirements"
-    
+
     local missing_commands=()
-    
+
     if ! command_exists npm; then
         missing_commands+=("npm")
     fi
-    
-    if command_exists python; then
-        PYTHON_CMD="python"
-    elif command_exists python3; then
-        PYTHON_CMD="python3"
-    else
-        missing_commands+=("python or python3")
+
+    if ! command_exists go; then
+        # Common local install locations before giving up
+        if [ -x "$HOME/sdk/go/bin/go" ]; then
+            export PATH="$HOME/sdk/go/bin:$PATH"
+        elif [ -x "/usr/local/go/bin/go" ]; then
+            export PATH="/usr/local/go/bin:$PATH"
+        else
+            missing_commands+=("go")
+        fi
     fi
-    
-    if command_exists pip; then
-        PIP_CMD="pip"
-    elif command_exists pip3; then
-        PIP_CMD="pip3"
-    fi
-    
+
     if [ ${#missing_commands[@]} -ne 0 ]; then
         print_color $RED "Missing required commands: ${missing_commands[*]}"
         print_color $RED "Please install the missing dependencies and try again."
         exit 1
     fi
-    
+
     print_color $GREEN "All required commands are available."
-}
-
-setup_backend_venv() {
-    VENV_DIR="$ROOT_DIR/backend/.venv"
-    if [ ! -x "$VENV_DIR/bin/python" ]; then
-        print_color $YELLOW "Creating backend virtual environment..."
-        "$PYTHON_CMD" -m venv "$VENV_DIR"
-    fi
-
-    VENV_PYTHON="$VENV_DIR/bin/python"
-    VENV_PIP="$VENV_DIR/bin/pip"
 }
 
 # Install dependencies
 install_dependencies() {
     print_header "Installing Dependencies"
-    
+
     # Frontend dependencies
     print_color $YELLOW "Installing frontend dependencies..."
     cd "$ROOT_DIR/frontend"
     npm install
     cd "$ROOT_DIR"
-    
-    # Backend dependencies
-    print_color $YELLOW "Installing backend dependencies..."
-    cd "$ROOT_DIR/backend"
-    setup_backend_venv
-    "$VENV_PIP" install -r requirements.txt
+
+    # Backend (Go) dependencies
+    print_color $YELLOW "Downloading Go module dependencies..."
+    cd "$ROOT_DIR/backend-go"
+    go mod download
     cd "$ROOT_DIR"
-    
+
     print_color $GREEN "Dependencies installed successfully."
 }
 
@@ -128,27 +107,23 @@ run_frontend_tests() {
     print_color $GREEN "Frontend tests completed."
 }
 
-# Run backend tests  
+# Run backend tests
 run_backend_tests() {
     print_header "Running Backend Tests"
-    
-    cd "$ROOT_DIR/backend"
-    setup_backend_venv
-    
-    # Run tests with coverage and capture output
-    print_color $YELLOW "Running Python/FastAPI tests with pytest..."
-    "$VENV_PYTHON" -m pytest --verbose --tb=short || true
-    
-    # Generate detailed coverage report and capture percentage
-    print_color $YELLOW "Generating detailed coverage report..."
-    coverage_output=$("$VENV_PYTHON" -m pytest --cov=app --cov-report=html --cov-report=term-missing 2>&1) || true
-    
-    # Extract coverage percentage from pytest output  
-    backend_coverage_pct=$(echo "$coverage_output" | grep -oE "TOTAL.*[0-9]+%" | grep -oE "[0-9]+%" | sed 's/%//' || echo "0")
-    
+
+    cd "$ROOT_DIR/backend-go"
+
+    print_color $YELLOW "Running Go tests..."
+    go test ./...
+
+    # Generate coverage report and capture percentage
+    print_color $YELLOW "Generating coverage report..."
+    coverage_output=$(go test ./... -coverprofile=coverage.out 2>&1) || true
+    backend_coverage_pct=$(go tool cover -func=coverage.out 2>/dev/null | grep -oE "total:.*[0-9]+\.[0-9]+" | grep -oE "[0-9]+\.[0-9]+" | head -1 || echo "0")
+
     # Store coverage for later use
     echo "$backend_coverage_pct" > /tmp/backend_coverage.txt
-    
+
     cd "$ROOT_DIR"
     print_color $GREEN "Backend tests completed."
 }
@@ -198,10 +173,10 @@ generate_summary() {
     echo
     
     # Backend test results  
-    if [ -f "backend/htmlcov/index.html" ] || [ -f "backend/.coverage" ]; then
+    if [ -f "backend-go/coverage.out" ]; then
         print_color $GREEN "✓ Backend tests completed with coverage report"
         print_color $BLUE "  Coverage: ${backend_coverage}%"
-        print_color $BLUE "  Report: backend/htmlcov/index.html"
+        print_color $BLUE "  Report: go tool cover -html=backend-go/coverage.out"
     else
         print_color $YELLOW "⚠ Backend tests completed (coverage report not found)"
     fi

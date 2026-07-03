@@ -10,8 +10,11 @@ npm run test:run 2>&1
 # Frontend build
 npm run build --prefix <project-root>/frontend 2>&1
 
-# Backend tests
-.venv/bin/python -m pytest tests/ 2>&1
+# Backend tests (Go)
+cd <project-root>/backend-go && go test ./... 2>&1
+
+# Backend build (Go)
+cd <project-root>/backend-go && go build ./... 2>&1
 
 # Run all tests
 bash <project-root>/run-tests.sh
@@ -19,7 +22,19 @@ bash <project-root>/run-tests.sh
 
 Key details:
 - On macOS with Homebrew, export `PATH="/opt/homebrew/bin:$PATH"` if npm/node isn't found
+- Go may live at `$HOME/sdk/go/bin` or `/usr/local/go/bin` — add to PATH if `go` isn't found
 - Shell cwd may reset — always use absolute paths or `cd` in the same command
+
+## Go Backend (backend-go/)
+The backend is a Go rewrite of the original FastAPI app (kept at `backend/` for reference). Layout:
+- `cmd/server/` — entrypoint (startup mirrors the FastAPI lifespan: AutoMigrate → migrations → cleanup → calendar cache init)
+- `internal/config` — env/.env settings + `ValidateSecurity` (same rules as Python `validate_security`)
+- `internal/models` — GORM models; all `DateTime` columns are **naive UTC**, `Date` columns are midnight-UTC `time.Time`
+- `internal/app` — one file per router (`grocery.go`, `tracker.go`, …), `serialize.go` builds the exact pydantic JSON shapes, `harness_test.go` is the shared test harness (in-memory SQLite + signed-cookie auth + SSE collector)
+- `internal/realtime` — SSE broadcaster (per-subscriber queues tagged with user sub, drop-oldest at 100)
+- `internal/ical` — holidays feed + hand-rolled CalDAV client + DB cache; `Service` has replaceable fetcher fields as test seams
+- `internal/httpx` — FastAPI-shaped errors (`{"detail": ...}`), `model_fields_set`-style body decoding (`DecodeBody` returns present keys), Python-isoformat datetime rendering (no "Z", microseconds only when nonzero)
+- Tests use pure-Go SQLite (`glebarez/sqlite`); prod uses Postgres — keep raw SQL portable across both
 
 ## Architecture Notes
 - `getCurrentUser()` returns `UserInfo | null` (null on 401 from `/api/auth/me` — the one endpoint where 401 is a legitimate logged-out state)
@@ -44,7 +59,7 @@ Key details:
 - **Per-user SSE**: tracker events broadcast via `broadcast_to_user(sub, ...)` to the list's audience (owner + shares) only — never the global `broadcast_event`. Full-list payloads use `_broadcast_list` which recomputes `is_owner` *per recipient* (a shared user must not receive the owner's perspective). Event type `tracker.updated`; actions: `list-added/updated/deleted/reordered/shared`, `task-added/updated/deleted/logged`, `tasks-reordered`
 - `users` table + `record_user()` (called on OIDC callback + dev-login) is a directory so owners can resolve a collaborator's email → sub when sharing. `GET /api/users` powers the share picker. **Sharing by email requires the target to have signed in at least once** (else 404)
 - `Base.metadata.create_all` creates the new tables on startup; no manual migration needed. Endpoints in `routers/tracker.py` (`/api/tracker`) and `routers/users.py`
-- Frontend: `useTracker` hook (mirrors grocery's optimistic+offline+undo machinery), `ListsView.tsx` (cards, task rows with a "Done" button, task-detail/history modal, share modal), IDB v9 (`trackerLists`, `trackerTasks` — logs are fetched on demand, not cached), `tracker-*` ChangeTypes in `useSync.ts`. Undo/redo covers mark-done, delete task, delete list (snapshots logs at delete time so undo restores history)
+- Frontend: `useTracker` hook (mirrors grocery's optimistic+offline+undo machinery), `ListsView.tsx` (cards, task rows with a "Done" button, task-detail/history modal, share modal), IDB v9 (`trackerLists`, `trackerTasks` — logs are fetched on demand, not cached), `tracker-*` ChangeTypes in `useSync.ts`. Undo/redo covers mark-done, delete task, delete list (snapshots logs at delete time so undo restores history). **List restore remaps ids**: the restore endpoint reissues list/task/log ids, so `restoreList` chains old→new ids (tasks matched by position, logs by done_at+kind+note) so older undo entries keep resolving. **Offline delete→undo**: if the queued `tracker-list-delete` hasn't synced, undo cancels the pending change and keeps the original ids (server untouched); if the delete already synced, undo queues `tracker-list-restore` (full subtree; offline snapshots carry each task's `recent_logs`) and `useSync` maps temp→real ids when it lands
 - Tab/page has its own `<UndoProvider id="lists">`. App.tsx warms the tracker IndexedDB cache from `tracker.updated` events while off-tab (like grocery/pantry) — applying list/task deltas incl. `recent_logs` — so lists + history stay current in the background and are ready to go offline with. On the Lists tab, `useTracker` handles events itself; the warmer no-ops there. (Safe despite per-user privacy: the server only broadcasts tracker events to the list's audience.) `recent_logs` also rides along on every SSE task payload, so history updates live; a reconnect does one catch-up `loadTracker` for events missed while offline
 - Server datetimes are naive UTC; `parseServerDate()` in `utils/recency.ts` appends `Z` so JS doesn't misread them as local time
 

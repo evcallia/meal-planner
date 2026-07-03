@@ -11,37 +11,35 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-# Stage 2: Python runtime
-FROM python:3.14-slim
+# Stage 2: Build Go backend
+FROM golang:1.26-alpine AS backend-builder
+
+WORKDIR /src
+
+COPY backend-go/go.mod backend-go/go.sum ./
+RUN go mod download
+
+COPY backend-go/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
+
+# Stage 3: Minimal runtime
+FROM alpine:3.20
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+# CA certs for outbound HTTPS (OIDC discovery, Apple CalDAV, holiday feed);
+# tzdata so time handling is correct; wget (busybox) serves the healthcheck.
+RUN apk add --no-cache ca-certificates tzdata
 
-# Install Python dependencies (use lockfile for reproducible builds)
-COPY backend/requirements.lock ./
-RUN pip install --no-cache-dir -r requirements.lock
-
-# Copy backend code
-COPY backend/app ./app
+COPY --from=backend-builder /out/server ./server
 
 # Copy built frontend
 COPY --from=frontend-builder /frontend/dist ./static
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-
 # Create non-root user
-RUN useradd --create-home --shell /bin/bash appuser
+RUN adduser -D -h /home/appuser appuser
 USER appuser
 
-# Expose port
 EXPOSE 8000
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "5"]
+CMD ["./server"]
