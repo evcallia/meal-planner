@@ -16,10 +16,10 @@ FROM golang:1.26-alpine AS backend-builder
 
 WORKDIR /src
 
-COPY backend-go/go.mod backend-go/go.sum ./
+COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
-COPY backend-go/ ./
+COPY backend/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
 # Stage 3: Minimal runtime

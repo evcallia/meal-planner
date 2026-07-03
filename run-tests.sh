@@ -76,7 +76,7 @@ install_dependencies() {
 
     # Backend (Go) dependencies
     print_color $YELLOW "Downloading Go module dependencies..."
-    cd "$ROOT_DIR/backend-go"
+    cd "$ROOT_DIR/backend"
     go mod download
     cd "$ROOT_DIR"
 
@@ -111,7 +111,7 @@ run_frontend_tests() {
 run_backend_tests() {
     print_header "Running Backend Tests"
 
-    cd "$ROOT_DIR/backend-go"
+    cd "$ROOT_DIR/backend"
 
     print_color $YELLOW "Running Go tests..."
     go test ./...
@@ -173,10 +173,10 @@ generate_summary() {
     echo
     
     # Backend test results  
-    if [ -f "backend-go/coverage.out" ]; then
+    if [ -f "backend/coverage.out" ]; then
         print_color $GREEN "✓ Backend tests completed with coverage report"
         print_color $BLUE "  Coverage: ${backend_coverage}%"
-        print_color $BLUE "  Report: go tool cover -html=backend-go/coverage.out"
+        print_color $BLUE "  Report: go tool cover -html=backend/coverage.out"
     else
         print_color $YELLOW "⚠ Backend tests completed (coverage report not found)"
     fi

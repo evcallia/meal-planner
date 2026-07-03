@@ -11,10 +11,10 @@ npm run test:run 2>&1
 npm run build --prefix <project-root>/frontend 2>&1
 
 # Backend tests (Go)
-cd <project-root>/backend-go && go test ./... 2>&1
+cd <project-root>/backend && go test ./... 2>&1
 
 # Backend build (Go)
-cd <project-root>/backend-go && go build ./... 2>&1
+cd <project-root>/backend && go build ./... 2>&1
 
 # Run all tests
 bash <project-root>/run-tests.sh
@@ -25,8 +25,8 @@ Key details:
 - Go may live at `$HOME/sdk/go/bin` or `/usr/local/go/bin` — add to PATH if `go` isn't found
 - Shell cwd may reset — always use absolute paths or `cd` in the same command
 
-## Go Backend (backend-go/)
-The backend is a Go rewrite of the original FastAPI app (kept at `backend/` for reference). Layout:
+## Go Backend (backend/)
+The backend is a Go rewrite of the original FastAPI app (same API contract). Layout:
 - `cmd/server/` — entrypoint (startup mirrors the FastAPI lifespan: AutoMigrate → migrations → cleanup → calendar cache init)
 - `internal/config` — env/.env settings + `ValidateSecurity` (same rules as Python `validate_security`)
 - `internal/models` — GORM models; all `DateTime` columns are **naive UTC**, `Date` columns are midnight-UTC `time.Time`
@@ -55,10 +55,10 @@ The backend is a Go rewrite of the original FastAPI app (kept at `backend/` for 
 ## Lists / Tracker (private, shareable recency tracker)
 - A 4th tab ("Lists") rebuilding the lastGLANCE concept: track *when you last did* a task. Each task has an optional `target_interval_days`; freshness is `elapsed / target`, color-coded green→amber→red and overdue tasks sort to the top automatically (`utils/recency.ts`)
 - **Privacy is a deliberate departure from the app's shared-global model**: tracker entities are per-user. A `TrackerList` has an `owner_sub`; it's private until shared. `TrackerShare(list_id, sub)` grants access. Access rule: `owner_sub == me OR a share row for me`. Owner-only ops: delete list, add/remove shares. Shared users can collaborate on tasks/logs
-- Models (`models.py`): `TrackerList` (owner_sub, name, icon, color, position) → `TrackerTask` (target_interval_days, notes, position, archived) → `TrackerLog` (done_at — backdatable, note). Stats (`last_done_at`, `total_count`, `avg_interval_days`) are computed from logs server-side in `_task_dict`, not stored
-- **Per-user SSE**: tracker events broadcast via `broadcast_to_user(sub, ...)` to the list's audience (owner + shares) only — never the global `broadcast_event`. Full-list payloads use `_broadcast_list` which recomputes `is_owner` *per recipient* (a shared user must not receive the owner's perspective). Event type `tracker.updated`; actions: `list-added/updated/deleted/reordered/shared`, `task-added/updated/deleted/logged`, `tasks-reordered`
-- `users` table + `record_user()` (called on OIDC callback + dev-login) is a directory so owners can resolve a collaborator's email → sub when sharing. `GET /api/users` powers the share picker. **Sharing by email requires the target to have signed in at least once** (else 404)
-- `Base.metadata.create_all` creates the new tables on startup; no manual migration needed. Endpoints in `routers/tracker.py` (`/api/tracker`) and `routers/users.py`
+- Models (`internal/models/models.go`): `TrackerList` (owner_sub, name, icon, color, position) → `TrackerTask` (target_interval_days, notes, position, archived) → `TrackerLog` (done_at — backdatable, note). Stats (`last_done_at`, `total_count`, `avg_interval_days`) are computed from logs server-side in `trackerTaskJSON`, not stored
+- **Per-user SSE**: tracker events broadcast via `BroadcastToUser(sub, ...)` to the list's audience (owner + shares) only — never the global `BroadcastEvent`. Full-list payloads use `trackerBroadcastList` which recomputes `is_owner` *per recipient* (a shared user must not receive the owner's perspective). Event type `tracker.updated`; actions: `list-added/updated/deleted/reordered/shared`, `task-added/updated/deleted/logged`, `tasks-reordered`
+- `users` table + `recordUser()` (called on OIDC callback + dev-login) is a directory so owners can resolve a collaborator's email → sub when sharing. `GET /api/users` powers the share picker. **Sharing by email requires the target to have signed in at least once** (else 404)
+- GORM `AutoMigrate` creates the new tables on startup; no manual migration needed. Endpoints in `internal/app/tracker.go` (`/api/tracker`) and `users.go`
 - Frontend: `useTracker` hook (mirrors grocery's optimistic+offline+undo machinery), `ListsView.tsx` (cards, task rows with a "Done" button, task-detail/history modal, share modal), IDB v9 (`trackerLists`, `trackerTasks` — logs are fetched on demand, not cached), `tracker-*` ChangeTypes in `useSync.ts`. Undo/redo covers mark-done, delete task, delete list (snapshots logs at delete time so undo restores history). **List restore remaps ids**: the restore endpoint reissues list/task/log ids, so `restoreList` chains old→new ids (tasks matched by position, logs by done_at+kind+note) so older undo entries keep resolving. **Offline delete→undo**: if the queued `tracker-list-delete` hasn't synced, undo cancels the pending change and keeps the original ids (server untouched); if the delete already synced, undo queues `tracker-list-restore` (full subtree; offline snapshots carry each task's `recent_logs`) and `useSync` maps temp→real ids when it lands
 - Tab/page has its own `<UndoProvider id="lists">`. App.tsx warms the tracker IndexedDB cache from `tracker.updated` events while off-tab (like grocery/pantry) — applying list/task deltas incl. `recent_logs` — so lists + history stay current in the background and are ready to go offline with. On the Lists tab, `useTracker` handles events itself; the warmer no-ops there. (Safe despite per-user privacy: the server only broadcasts tracker events to the list's audience.) `recent_logs` also rides along on every SSE task payload, so history updates live; a reconnect does one catch-up `loadTracker` for events missed while offline
 - Server datetimes are naive UTC; `parseServerDate()` in `utils/recency.ts` appends `Z` so JS doesn't misread them as local time
@@ -74,12 +74,10 @@ The backend is a Go rewrite of the original FastAPI app (kept at `backend/` for 
 - `DEFAULT_SETTINGS` is exported from `useSettings.ts` for use in tests
 
 ## Per-User SSE Broadcasting
-- `EventBroadcaster` tracks `sub` per queue via `_queue_subs` dict
-- `subscribe(sub=...)` associates a queue with a user's OIDC subject
-- `publish()` broadcasts to ALL queues (unchanged — used for shared data like grocery/pantry/calendar)
-- `publish_to_user(sub, payload)` broadcasts only to queues for that user (used for settings)
-- `broadcast_to_user()` helper function in `realtime.py` wraps `publish_to_user`
-- SSE endpoint passes `user.get("sub")` to `subscribe()` so queues are tagged
+- `Broadcaster` (`internal/realtime/realtime.go`) tags each subscriber queue with the user's OIDC sub via `Subscribe(sub)`
+- `Publish()`/`BroadcastEvent()` broadcast to ALL queues (used for shared data like grocery/pantry/calendar)
+- `PublishToUser(sub, ...)`/`BroadcastToUser()` broadcast only to that user's queues (used for settings + tracker)
+- The SSE endpoint (`internal/app/stream.go`) subscribes with the session user's sub so queues are tagged
 
 ## Data-Carrying SSE Events
 - SSE events carry mutation data so clients apply deltas directly without API refetches
@@ -96,7 +94,7 @@ The backend is a Go rewrite of the original FastAPI app (kept at `backend/` for 
 - `GET /api/grocery/item-defaults` returns defaults with non-null store_id OR section_name
 - `DELETE /api/grocery/item-defaults/{item_name}` — idempotent (204), case-insensitive via `func.lower()`
 - `PUT /api/grocery/item-defaults/{item_name}` — PARTIAL upsert via `model_fields_set` (`store_id` and/or `section_name`); used by undo restore
-- `ItemDefaultSchema` in schemas.py: `item_name`, `store_id`, `section_name`
+- `itemDefaultJSON` in `internal/app/serialize.go`: `item_name`, `store_id`, `section_name`
 - **Server writes section defaults** on item add (POST /items), cross-section move (PATCH /items/{id}/move), and list replace (PUT /api/grocery — merge/paste path); store defaults written on PATCH store_id as before
 - **Quick-add autofill**: exact item-name match fills store AND section (section combobox only overwritten when a remembered name exists). Per-section inline add fills store only — never moves the item
 - `itemDefaultsMap` values are `{ storeId, sectionName }` (per-field merge: current-list values win; IDB fills gaps). `putLocalItemDefault(name, { storeId?, sectionName? })` is a partial read-modify-write
@@ -221,15 +219,15 @@ The backend is a Go rewrite of the original FastAPI app (kept at `backend/` for 
 
 ## Preview / Local Dev Auth
 - Backend has a `/api/auth/dev-login` endpoint that's only available when `OIDC_ISSUER` env var is empty. It sets a fake session (`dev-user` / `dev@localhost`) and redirects to `/`
-- **Docker in dev-login mode**: `.env` has real OIDC + `SECURE_COOKIES=true`, so dev-login is disabled by default. Shell env overrides `.env` in docker-compose: `OIDC_ISSUER= OIDC_CLIENT_ID= OIDC_CLIENT_SECRET= SECURE_COOKIES=false FRONTEND_URL=http://localhost:8000 docker-compose up -d`. All five are required — `validate_security()` in `config.py` rejects `SECURE_COOKIES=false` unless `FRONTEND_URL` is localhost and OIDC is unset. Restore by re-running `docker-compose up -d` with a clean shell env
+- **Docker in dev-login mode**: `.env` has real OIDC + `SECURE_COOKIES=true`, so dev-login is disabled by default. Shell env overrides `.env` in docker-compose: `OIDC_ISSUER= OIDC_CLIENT_ID= OIDC_CLIENT_SECRET= SECURE_COOKIES=false FRONTEND_URL=http://localhost:8000 docker-compose up -d`. All five are required — `ValidateSecurity()` in `internal/config/config.go` rejects `SECURE_COOKIES=false` unless `FRONTEND_URL` is localhost and OIDC is unset. Restore by re-running `docker-compose up -d` with a clean shell env
 - In dev mode `/api/auth/login` returns 500 ("OIDC not configured") — sign in via `/api/auth/dev-login` directly
-- The `.env` file is in the project root — run uvicorn from the project root with `--app-dir backend` (not `cd backend && uvicorn`) so pydantic-settings can find `.env`
+- The `.env` file is in the project root — run the server from the project root (`go run ./backend/cmd/server`) so `config.Load(".env")` finds it; running from inside `backend/` misses the root `.env`. `backend/cmd/devpg` runs a throwaway embedded Postgres for machines without Docker (`cd backend && go run ./cmd/devpg -port 5433`)
 - Launch config overrides for local dev: `OIDC_ISSUER=` (empty), `SECURE_COOKIES=false`, `FRONTEND_URL=http://localhost:5173`, `POSTGRES_HOST=localhost`
 - To authenticate in preview: navigate to `/api/auth/dev-login` (e.g. `window.location.href = '/api/auth/dev-login'`)
 - Docker postgres (`meal-planner-db-1` from docker-compose) uses password from `.env`. The standalone `mealplanner-pg` container uses `changeme`. They use different volumes
 
 ## Multi-Day Calendar Events
-- `get_events_for_date()` in `ical_service.py` checks if `target_date` falls between `start_time.date()` and `end_time.date()` (all-day end dates are exclusive per iCal spec)
+- `GetEventsForDate()` in `internal/ical/event.go` checks if `target_date` falls between `start_time.date()` and `end_time.date()` (all-day end dates are exclusive per iCal spec)
 - DB query in `_get_events_from_db` uses `or_()` to also fetch events whose `end_time` extends into the requested range
 - Frontend `getEventDates()` in CalendarView computes all dates an event spans for restore/hide operations
 - `compareEvents()` sorts holidays first, then by `start_time`
