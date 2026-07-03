@@ -306,7 +306,16 @@ Create a `.env` file based on the `.env.example` file
 
 ## Building and Pushing to Docker Hub
 
-You can find docker builds here https://hub.docker.com/repository/docker/evcallia/meal-planner/tags or build from source following the below instructions. 
+You can find docker builds here https://hub.docker.com/repository/docker/evcallia/meal-planner/tags.
+
+**Automated (preferred):** pushing a version tag builds and pushes the multiarch image via GitHub Actions (`.github/workflows/release.yml`), tagged with the git tag plus `latest`:
+```bash
+git tag v2.0.0
+git push origin v2.0.0
+```
+Requires the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` repo secrets (Settings → Secrets and variables → Actions; use a Docker Hub access token, not your password).
+
+**Manual (fallback):** 
 
 1. Log in to Docker Hub:
    ```bash

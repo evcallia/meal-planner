@@ -1,5 +1,7 @@
 # Stage 1: Build frontend
-FROM node:24-alpine AS frontend-builder
+# --platform=$BUILDPLATFORM: run natively on the build host during multiarch
+# builds (the Vite output is arch-independent) instead of under QEMU.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend-builder
 
 WORKDIR /frontend
 
@@ -11,8 +13,8 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-# Stage 2: Build Go backend
-FROM golang:1.26-alpine AS backend-builder
+# Stage 2: Build Go backend (cross-compiled natively — pure Go, CGO off)
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS backend-builder
 
 WORKDIR /src
 
@@ -20,7 +22,9 @@ COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
 COPY backend/ ./
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
 # Stage 3: Minimal runtime
 FROM alpine:3.20
