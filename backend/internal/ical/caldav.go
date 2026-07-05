@@ -66,6 +66,13 @@ func (c *caldavClient) request(method, target, depth, body string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		// The most common cause in practice: Apple revokes ALL app-specific
+		// passwords whenever the Apple ID password changes.
+		return nil, fmt.Errorf("caldav %s %s: status 401 — credentials rejected; "+
+			"regenerate the app-specific password at appleid.apple.com and update "+
+			"APPLE_CALENDAR_APP_PASSWORD", method, target)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("caldav %s %s: status %d", method, target, resp.StatusCode)
 	}
