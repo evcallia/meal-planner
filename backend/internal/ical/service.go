@@ -66,6 +66,12 @@ func (s *Service) logf(format string, args ...any) {
 	}
 }
 
+// errf always logs — a failing CalDAV/holiday fetch must never be silent
+// (an expired app-specific password looked like "no events, no logs").
+func (s *Service) errf(format string, args ...any) {
+	log.Printf(format, args...)
+}
+
 func todayUTC() time.Time { return dateOf(time.Now()) }
 
 // CacheRange mirrors _get_cache_range.
@@ -91,7 +97,7 @@ func (s *Service) listCalendarsCalDAV() ([]Calendar, error) {
 func (s *Service) ListAvailableCalendars() []string {
 	calendars, err := s.ListCalendarsFn()
 	if err != nil {
-		s.logf("Error connecting to CalDAV: %v", err)
+		s.errf("[CalDAV] Error connecting: %v", err)
 		return []string{}
 	}
 	names := make([]string, 0, len(calendars))
@@ -141,7 +147,7 @@ func (s *Service) SelectedCalendars() []Calendar {
 	all, err := s.ListCalendarsFn()
 	if err != nil || len(all) == 0 {
 		if err != nil {
-			s.logf("Error connecting to CalDAV: %v", err)
+			s.errf("[CalDAV] Error connecting: %v", err)
 		}
 		return nil
 	}
@@ -162,6 +168,14 @@ func (s *Service) SelectedCalendars() []Calendar {
 	} else {
 		selected = []Calendar{all[0]}
 	}
+
+	names := make([]string, 0, len(selected))
+	for _, c := range selected {
+		names = append(names, c.Name)
+	}
+	// Unconditional, like the Python original — invaluable for diagnosing
+	// configuration/selection issues from production logs.
+	s.errf("[CalDAV] Using calendars: %v (configured: %v)", names, selectedNames)
 
 	s.mu.Lock()
 	s.calendarsCache.at = time.Now()
@@ -197,7 +211,7 @@ func (s *Service) fetchEventsFromCalDAV(startDate, endDate time.Time) []EventWit
 	for _, cal := range calendars {
 		blobs, err := client.Events(cal, startDT, endDT)
 		if err != nil {
-			s.logf("Error fetching from calendar %q: %v", cal.Name, err)
+			s.errf("[CalDAV] Error fetching from calendar %q: %v", cal.Name, err)
 			continue
 		}
 		for _, blob := range blobs {
@@ -260,7 +274,7 @@ func (s *Service) FetchHolidays(startDate, endDate time.Time) []EventWithSource 
 
 	data, err := s.FetchHolidaysRaw()
 	if err != nil {
-		s.logf("[Holidays] Error fetching holidays: %v", err)
+		s.errf("[Holidays] Error fetching holidays: %v", err)
 		return nil
 	}
 	all := parseICSEvents(data, USHolidaysCalendarName)
@@ -348,7 +362,7 @@ func (s *Service) RefreshDBCache() {
 		}).Error
 	})
 	if err != nil {
-		s.logf("[CalDAV Cache] Error refreshing DB cache: %v", err)
+		s.errf("[CalDAV Cache] Error refreshing DB cache: %v", err)
 	}
 }
 
