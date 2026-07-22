@@ -240,6 +240,21 @@ func makeTask(t *testing.T, s *Service, lst *models.TrackerList, name string, ta
 
 func intPtr(v int) *int { return &v }
 
+// makeTaskDoneAt creates a task with a completion at a FIXED instant — tests
+// that check due-ness at fixed dates must not derive log times from the real
+// clock, or they rot into time-bombs as wall time advances past the fixtures.
+func makeTaskDoneAt(t *testing.T, s *Service, lst *models.TrackerList, name string, target int, doneAt time.Time) *models.TrackerTask {
+	t.Helper()
+	task := models.TrackerTask{ListID: lst.ID, Name: name, TargetIntervalDays: intPtr(target)}
+	if err := s.db.Create(&task).Error; err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if err := s.db.Create(&models.TrackerLog{TaskID: task.ID, DoneAt: doneAt}).Error; err != nil {
+		t.Fatalf("create log: %v", err)
+	}
+	return &task
+}
+
 func TestDueTaskNotifiesAudienceOnce(t *testing.T) {
 	s, c := newTestService(t)
 	lst := makeList(t, s, "owner")
@@ -718,8 +733,10 @@ func TestTaskToggleCannotOverrideDisabledListReminders(t *testing.T) {
 func TestDueDigest(t *testing.T) {
 	s, c := newTestService(t)
 	lst := makeList(t, s, "owner")
-	makeTask(t, s, lst, "Water", intPtr(7), intPtr(10))
-	makeTask(t, s, lst, "Fertilize", intPtr(7), intPtr(10))
+	// Fixed timeline throughout — done 10 days before the 2026-07-18 checks.
+	doneAt := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
+	makeTaskDoneAt(t, s, lst, "Water", 7, doneAt)
+	makeTaskDoneAt(t, s, lst, "Fertilize", 7, doneAt)
 	s.db.Create(&models.TrackerShare{ListID: lst.ID, Sub: "member"})
 	addSubscription(t, s, "owner", "https://push.example.com/o")
 	addSubscription(t, s, "member", "https://push.example.com/m")
@@ -777,8 +794,9 @@ func TestDueDigest(t *testing.T) {
 func TestDueDigestTimeGateAndMutes(t *testing.T) {
 	s, c := newTestService(t)
 	lst := makeList(t, s, "owner")
-	makeTask(t, s, lst, "Loud", intPtr(7), intPtr(10))
-	muted := makeTask(t, s, lst, "Muted", intPtr(7), intPtr(10))
+	doneAt := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	makeTaskDoneAt(t, s, lst, "Loud", 7, doneAt)
+	muted := makeTaskDoneAt(t, s, lst, "Muted", 7, doneAt)
 	addSubscription(t, s, "owner", "https://push.example.com/o")
 	s.db.Create(&models.UserSettings{
 		Sub: "owner",
@@ -804,7 +822,8 @@ func TestDueDigestTimeGateAndMutes(t *testing.T) {
 func TestDueDigestQuietDay(t *testing.T) {
 	s, c := newTestService(t)
 	lst := makeList(t, s, "owner")
-	makeTask(t, s, lst, "Fresh", intPtr(7), intPtr(1)) // not due
+	// Done the day before the fixed check — comfortably inside its target.
+	makeTaskDoneAt(t, s, lst, "Fresh", 7, time.Date(2026, 7, 17, 9, 0, 0, 0, time.UTC))
 	addSubscription(t, s, "owner", "https://push.example.com/o")
 	s.db.Create(&models.UserSettings{
 		Sub:       "owner",
