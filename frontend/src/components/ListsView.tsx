@@ -43,12 +43,32 @@ function dueCount(list: TrackerList): number {
   return list.tasks.filter(isDue).length;
 }
 
+export interface ListNotifyPrefs {
+  edits: boolean;
+  due: boolean;
+}
+
 interface ListsViewProps {
   user: UserInfo;
   editHighlightColor?: string;
+  // Per-list notification prefs: global defaults + per-list overrides from
+  // synced user settings. The server enforces these when sending pushes.
+  notifyDefaults?: ListNotifyPrefs;
+  listNotifyOverrides?: Record<string, { edits?: boolean; due?: boolean }>;
+  onSetListNotify?: (listId: string, changes: { edits?: boolean; due?: boolean }) => void;
+  taskNotifyOverrides?: Record<string, { due?: boolean }>;
+  onSetTaskNotify?: (taskId: string, due: boolean) => void;
 }
 
-export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewProps) {
+export function ListsView({
+  user,
+  editHighlightColor = 'emerald',
+  notifyDefaults = { edits: true, due: true },
+  listNotifyOverrides = {},
+  onSetListNotify,
+  taskNotifyOverrides = {},
+  onSetTaskNotify,
+}: ListsViewProps) {
   const tracker = useTracker();
   const { lists, loading, createList } = tracker;
 
@@ -468,6 +488,12 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
                 tracker={tracker}
                 onOpenTask={(taskId) => setDetail({ listId: activeList.id, taskId })}
                 onShare={() => setShareFor(activeList.id)}
+                notify={{
+                  edits: notifyDefaults.edits && (listNotifyOverrides[activeList.id]?.edits ?? true),
+                  due: notifyDefaults.due && (listNotifyOverrides[activeList.id]?.due ?? true),
+                }}
+                notifyLocked={{ edits: !notifyDefaults.edits, due: !notifyDefaults.due }}
+                onSetNotify={onSetListNotify ? (changes) => onSetListNotify(activeList.id, changes) : undefined}
               />
             )}
           </div>
@@ -489,6 +515,11 @@ export function ListsView({ user, editHighlightColor = 'emerald' }: ListsViewPro
           tracker={tracker}
           user={user}
           onClose={() => setDetail(null)}
+          notifyDue={notifyDefaults.due
+            && (listNotifyOverrides[detailList.id]?.due ?? true)
+            && (taskNotifyOverrides[detailTask.id]?.due ?? true)}
+          notifyDueLocked={!(notifyDefaults.due && (listNotifyOverrides[detailList.id]?.due ?? true))}
+          onSetNotifyDue={onSetTaskNotify ? (on: boolean) => onSetTaskNotify(detailTask.id, on) : undefined}
         />
       )}
 
@@ -533,13 +564,17 @@ function DueSoonPanel({ tasks, lists, tracker, onOpenTask }: {
 
 // ----- Active list panel -----
 
-function ListPanel({ list, tracker, onOpenTask, onShare }: {
+function ListPanel({ list, tracker, onOpenTask, onShare, notify, notifyLocked, onSetNotify }: {
   list: TrackerList;
   tracker: ReturnType<typeof useTracker>;
   onOpenTask: (taskId: string) => void;
   onShare: () => void;
+  notify?: ListNotifyPrefs;
+  notifyLocked?: ListNotifyPrefs;
+  onSetNotify?: (changes: { edits?: boolean; due?: boolean }) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [notifyOpen, setNotifyOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(list.name);
   const [addOpen, setAddOpen] = useState(false);
@@ -649,6 +684,9 @@ function ListPanel({ list, tracker, onOpenTask, onShare }: {
           {menuOpen && (
             <div className="absolute right-0 top-9 z-20 glass-menu rounded-xl py-1 w-44 shadow-lg">
               <button onClick={() => { setMenuOpen(false); setAddOpen(true); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">Add task</button>
+              {notify && onSetNotify && (
+                <button onClick={() => { setMenuOpen(false); setNotifyOpen(true); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">Notifications</button>
+              )}
               {list.is_owner ? (
                 <button onClick={() => { setMenuOpen(false); tracker.deleteList(list.id); }} className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">Delete list</button>
               ) : (
@@ -714,7 +752,69 @@ function ListPanel({ list, tracker, onOpenTask, onShare }: {
       ) : list.tasks.length > 0 && (
         <button onClick={() => setAddOpen(true)} className="mt-2 text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600">+ Add task</button>
       )}
+
+      {notifyOpen && notify && onSetNotify && (
+        <ListNotifyModal
+          listName={list.name}
+          notify={notify}
+          locked={notifyLocked}
+          onToggle={(field) => onSetNotify({ [field]: !notify[field] })}
+          onClose={() => setNotifyOpen(false)}
+        />
+      )}
     </div>
+  );
+}
+
+// ----- Per-list notification preferences -----
+
+function ListNotifyModal({ listName, notify, locked, onToggle, onClose }: {
+  listName: string;
+  notify: ListNotifyPrefs;
+  locked?: ListNotifyPrefs;
+  onToggle: (field: 'edits' | 'due') => void;
+  onClose: () => void;
+}) {
+  const rows: { field: 'edits' | 'due'; label: string; description: string; lockedNote: string }[] = [
+    { field: 'edits', label: 'Partner edits', description: 'When someone else updates this list', lockedNote: 'List edits are turned off in Settings' },
+    { field: 'due', label: 'Due reminders', description: 'When a task in this list is due', lockedNote: 'List reminders are turned off in Settings' },
+  ];
+  // Portal to <body>: rendered in place, the list card's backdrop-filter makes
+  // it the containing block for position:fixed — the overlay would only cover
+  // the rounded card (square shadow, mis-centered dialog under the header).
+  return createPortal(
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="glass-menu w-full max-w-xs rounded-2xl p-4 shadow-xl" onClick={e => e.stopPropagation()}>
+        <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Notifications</h3>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">For “{listName}” — only on this account. Defaults for all lists live in Settings.</p>
+        <div className="space-y-3">
+          {rows.map(({ field, label, description, lockedNote }) => {
+            const isLocked = locked?.[field] ?? false;
+            return (
+              <label key={field} className={`flex items-center justify-between gap-3 ${isLocked ? 'opacity-50' : 'cursor-pointer'}`}>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{label}</span>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{isLocked ? lockedNote : description}</p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={notify[field]}
+                  aria-label={label}
+                  disabled={isLocked}
+                  onClick={() => onToggle(field)}
+                  className={`flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${notify[field] ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${isLocked ? 'cursor-not-allowed' : ''}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${notify[field] ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </label>
+            );
+          })}
+        </div>
+        <button onClick={onClose} className="mt-4 w-full py-2 bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-600 transition-colors">Done</button>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1029,12 +1129,15 @@ function BackdateCalendar({ onPick }: { onPick: (iso: string) => void }) {
 
 // ----- Task detail / history modal -----
 
-function TaskDetailModal({ list, task, tracker, user, onClose }: {
+function TaskDetailModal({ list, task, tracker, user, onClose, notifyDue, notifyDueLocked, onSetNotifyDue }: {
   list: TrackerList;
   task: TrackerTask;
   tracker: ReturnType<typeof useTracker>;
   user: UserInfo;
   onClose: () => void;
+  notifyDue?: boolean;
+  notifyDueLocked?: boolean;
+  onSetNotifyDue?: (on: boolean) => void;
 }) {
   const listId = list.id;
   const isOnline = useOnlineStatus();
@@ -1216,6 +1319,33 @@ function TaskDetailModal({ list, task, tracker, user, onClose }: {
               <div className="text-[10px] uppercase tracking-wide text-gray-400">Target</div>
             </div>
           </div>
+
+          {/* Per-task due-reminder mute (only meaningful with a target interval).
+              A disabled list-reminders setting wins — the toggle locks then,
+              matching the server rule (the mute can't force notifications on). */}
+          {onSetNotifyDue !== undefined && notifyDue !== undefined && task.target_interval_days != null && (
+            <label className={`flex items-center justify-between gap-3 ${notifyDueLocked ? 'opacity-50' : 'cursor-pointer'}`}>
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Due reminders</span>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {notifyDueLocked
+                    ? 'List reminders are turned off — enable them in Settings or this list’s menu first'
+                    : 'Notify you when this task is due'}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={notifyDue}
+                aria-label="Due reminders for this task"
+                disabled={notifyDueLocked}
+                onClick={() => onSetNotifyDue(!notifyDue)}
+                className={`flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${notifyDue ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${notifyDueLocked ? 'cursor-not-allowed' : ''}`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${notifyDue ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </label>
+          )}
 
           {/* Past year heatmap */}
           <div>

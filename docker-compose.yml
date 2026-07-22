@@ -44,6 +44,8 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8000}
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
       DEBUG_TIMING: ${DEBUG_TIMING:-false}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:email@domain.com}
+      PUSH_EDIT_WINDOW_MINUTES: ${PUSH_EDIT_WINDOW_MINUTES:-30}
     depends_on:
       db:
         condition: service_healthy

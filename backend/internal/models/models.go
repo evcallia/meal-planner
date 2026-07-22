@@ -247,7 +247,11 @@ func (m *ItemDefault) BeforeCreate(tx *gorm.DB) error {
 }
 
 type HiddenCalendarEvent struct {
-	ID           uuid.UUID  `gorm:"type:uuid;primaryKey"`
+	ID uuid.UUID `gorm:"type:uuid;primaryKey"`
+	// Sub scopes the hide to one user — hiding an event does not hide it for
+	// other household members. Legacy rows (pre-per-user) are backfilled per
+	// known user in db.RunMigrations.
+	Sub          string     `gorm:"type:varchar(255);index"`
 	EventUID     string     `gorm:"column:event_uid;type:text"`
 	EventDate    time.Time  `gorm:"type:date;index"`
 	CalendarName string     `gorm:"type:text"`
@@ -369,8 +373,11 @@ type TrackerTask struct {
 	SeasonStartDay     *int
 	SeasonEndDay       *int
 	SnoozeUntil        *time.Time `gorm:"type:timestamp"`
-	CreatedAt          time.Time  `gorm:"type:timestamp;autoCreateTime:false"`
-	UpdatedAt          time.Time  `gorm:"type:timestamp;autoUpdateTime:false"`
+	// When we last sent a "task is due" push for the current overdue cycle.
+	// Reset implicitly: a new done/skip/snooze moves the recency baseline past it.
+	DueNotifiedAt *time.Time `gorm:"type:timestamp"`
+	CreatedAt     time.Time  `gorm:"type:timestamp;autoCreateTime:false"`
+	UpdatedAt     time.Time  `gorm:"type:timestamp;autoUpdateTime:false"`
 
 	Logs []TrackerLog `gorm:"foreignKey:TaskID;constraint:OnDelete:CASCADE"`
 }
@@ -419,6 +426,87 @@ func (m *TrackerLog) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+// PushSubscription is a Web Push subscription for one browser/device of a
+// signed-in user.
+type PushSubscription struct {
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
+	Sub       string    `gorm:"type:varchar(255);index"`
+	Endpoint  string    `gorm:"type:text;unique"`
+	P256dh    string    `gorm:"column:p256dh;type:text"`
+	Auth      string    `gorm:"type:text"`
+	CreatedAt time.Time `gorm:"type:timestamp;autoCreateTime:false"`
+}
+
+func (m *PushSubscription) BeforeCreate(tx *gorm.DB) error {
+	if m.ID == uuid.Nil {
+		m.ID = NewID()
+	}
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt = NowUTC()
+	}
+	return nil
+}
+
+// VapidKeyPair is the server's VAPID keypair for Web Push (single row,
+// generated on first use).
+type VapidKeyPair struct {
+	ID         int    `gorm:"primaryKey"`
+	PrivateKey string `gorm:"type:text"`
+	PublicKey  string `gorm:"type:text"`
+}
+
+func (VapidKeyPair) TableName() string { return "vapid_keys" }
+
+// ActivityLog is one edit somebody made, phrased for humans — the backing
+// store for the "what happened since I last looked" feed. Rows for tracker
+// lists carry an audience snapshot so feed visibility matches list membership
+// even after the list (and its share rows) are deleted.
+type ActivityLog struct {
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
+	At        time.Time `gorm:"type:timestamp;index"`
+	ActorSub  string    `gorm:"type:varchar(255)"`
+	ActorName string    `gorm:"type:text"`
+	Category  string    `gorm:"type:varchar(32)"` // meals | pantry | grocery | lists
+	Detail    string    `gorm:"type:text"`        // verb phrase, e.g. `completed “Water plants”`
+	ListName  string    `gorm:"type:text"`        // tracker rows: list name for display
+	// ListID (text; empty for non-tracker rows) lets the feed apply the same
+	// per-list notification overrides as pushes. Kept separate from Audience:
+	// no FK, so entries survive list deletion.
+	ListID string `gorm:"type:text"`
+	// TaskID (text; set on "list-due" rows) lets the feed apply per-task mutes.
+	TaskID string `gorm:"type:text"`
+	// Audience is a delimited sub snapshot ("|sub1|sub2|") for tracker rows;
+	// empty = visible to every user (shared-global data).
+	Audience string `gorm:"type:text"`
+}
+
+func (m *ActivityLog) BeforeCreate(tx *gorm.DB) error {
+	if m.ID == uuid.Nil {
+		m.ID = NewID()
+	}
+	if m.At.IsZero() {
+		m.At = NowUTC()
+	}
+	return nil
+}
+
+// ActivitySeen is each user's "I've seen the feed up to here" marker.
+type ActivitySeen struct {
+	Sub    string    `gorm:"type:varchar(255);primaryKey"`
+	SeenAt time.Time `gorm:"type:timestamp"`
+}
+
+func (ActivitySeen) TableName() string { return "activity_seen" }
+
+// DueDigest tracks when each user's daily due-task summary was last sent,
+// so restarts never double-send and each local day sends exactly once.
+type DueDigest struct {
+	Sub    string    `gorm:"type:varchar(255);primaryKey"`
+	SentAt time.Time `gorm:"type:timestamp"`
+}
+
+func (DueDigest) TableName() string { return "due_digests" }
+
 // AllModels is the create_all set, in FK-dependency order.
 func AllModels() []any {
 	return []any{
@@ -429,5 +517,7 @@ func AllModels() []any {
 		&Store{}, &GrocerySection{}, &GroceryItem{}, &ItemDefault{},
 		&UserSettings{}, &User{},
 		&TrackerList{}, &TrackerShare{}, &TrackerListPosition{}, &TrackerTask{}, &TrackerLog{},
+		&PushSubscription{}, &VapidKeyPair{},
+		&ActivityLog{}, &ActivitySeen{}, &DueDigest{},
 	}
 }

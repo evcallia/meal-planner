@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, ReactNode } from 'react';
 import { Settings } from '../hooks/useSettings';
-import { getCalendarCacheStatus, refreshCalendarCache, CalendarCacheStatus, getHiddenCalendarEvents, unhideCalendarEvent, HiddenCalendarEvent } from '../api/client';
+import { getCalendarCacheStatus, refreshCalendarCache, CalendarCacheStatus, getHiddenCalendarEvents, unhideCalendarEvent, HiddenCalendarEvent, sendTestPushNotification } from '../api/client';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { isPushSupported, getPushSubscription, enablePush, disablePush } from '../utils/push';
 import {
   getLocalHiddenEvents,
   saveLocalHiddenEvent,
@@ -32,9 +33,8 @@ interface SettingsModalProps {
   onClose: () => void;
   isDark: boolean;
   onToggleDarkMode: () => void;
-  updateAvailable?: boolean;
-  onApplyUpdate?: () => void;
-  updating?: boolean;
+  accountName?: string;
+  onLogout?: () => void;
   pendingCount?: number;
   onClearPendingChanges?: () => void;
   onFetchPendingChanges?: () => Promise<PendingChange[]>;
@@ -236,6 +236,70 @@ async function enrichPendingChanges(changes: PendingChange[]): Promise<EnrichedP
   });
 }
 
+// Collapsible settings group — the modal grew too long to scan as a flat
+// list. Collapsed by default so the four group headers fit on one screen.
+function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-b border-gray-200 dark:border-gray-700 last:border-b-0">
+      <button
+        type="button"
+        data-testid="settings-section-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between py-3 text-left"
+      >
+        <span className="text-gray-900 dark:text-gray-100 font-semibold">{title}</span>
+        <svg
+          className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
+      {open && <div className="pb-4 space-y-4">{children}</div>}
+    </div>
+  );
+}
+
+interface NotifyToggleProps {
+  label: string;
+  description: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+}
+
+function NotifyToggle({ label, description, checked, disabled, onChange }: NotifyToggleProps) {
+  return (
+    <label className={`flex items-center justify-between gap-3 ${disabled ? 'opacity-50' : 'cursor-pointer'}`}>
+      <div className="flex-1 min-w-0">
+        <span className="text-gray-900 dark:text-gray-100 font-medium">{label}</span>
+        <p className="text-sm text-gray-500 dark:text-gray-400">{description}</p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={onChange}
+        className={`
+          flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+          ${checked ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
+          ${disabled ? 'cursor-not-allowed' : ''}
+        `}
+      >
+        <span
+          className={`
+            inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+            ${checked ? 'translate-x-6' : 'translate-x-1'}
+          `}
+        />
+      </button>
+    </label>
+  );
+}
+
 function formatRelativeTime(dateString: string | null): string {
   if (!dateString) return 'Never';
 
@@ -252,7 +316,7 @@ function formatRelativeTime(dateString: string | null): string {
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 }
 
-export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode, updateAvailable, onApplyUpdate, updating, pendingCount, onClearPendingChanges, onFetchPendingChanges, onGetSyncErrors, onSkipPendingChange }: SettingsModalProps) {
+export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode, accountName, onLogout, pendingCount, onClearPendingChanges, onFetchPendingChanges, onGetSyncErrors, onSkipPendingChange }: SettingsModalProps) {
   const [cacheStatus, setCacheStatus] = useState<CalendarCacheStatus | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
@@ -262,6 +326,67 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
   const [pendingChanges, setPendingChanges] = useState<EnrichedPendingChange[]>([]);
   const [showPendingList, setShowPendingList] = useState(false);
   const isOnline = useOnlineStatus();
+  const pushSupported = isPushSupported();
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
+
+  // The master notifications state is this device's push subscription
+  useEffect(() => {
+    if (!pushSupported) return;
+    let cancelled = false;
+    getPushSubscription().then(sub => {
+      if (!cancelled) setPushEnabled(!!sub);
+    });
+    return () => { cancelled = true; };
+  }, [pushSupported]);
+
+  const [pushTestMessage, setPushTestMessage] = useState<string | null>(null);
+
+  const handleTestPush = async () => {
+    setPushTestMessage(null);
+    try {
+      const { sent, results } = await sendTestPushNotification();
+      if (sent === 0) {
+        setPushTestMessage('No registered devices for your account — toggle notifications off and on again.');
+        return;
+      }
+      const failures = results.filter(r => r.error || (r.status ?? 0) >= 400);
+      if (failures.length === 0) {
+        setPushTestMessage(`Sent to ${sent} device${sent === 1 ? '' : 's'} — check your notifications.`);
+      } else {
+        setPushTestMessage(
+          `Sent ${sent - failures.length}/${sent}. Failed: ` +
+          failures.map(f => `${f.endpoint} (${f.error || `HTTP ${f.status}`})`).join(', ')
+        );
+      }
+    } catch {
+      setPushTestMessage('Test request failed — are you online?');
+    }
+  };
+
+  const handleTogglePush = async () => {
+    if (pushBusy) return;
+    setPushBusy(true);
+    setPushError(null);
+    try {
+      if (pushEnabled) {
+        await disablePush();
+        setPushEnabled(false);
+      } else {
+        const result = await enablePush();
+        if (result === 'enabled') {
+          setPushEnabled(true);
+        } else if (result === 'denied') {
+          setPushError('Notifications are blocked for this app. Allow them in your browser or system settings, then try again.');
+        } else {
+          setPushError('Could not enable notifications on this device.');
+        }
+      }
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   // Load cache status on mount
   useEffect(() => {
@@ -490,37 +615,213 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
         </div>
 
         {/* Content */}
-        <div className="p-4 space-y-4">
-          {/* Update Available */}
-          {updateAvailable && onApplyUpdate && (
-            <div className="pb-4 border-b border-gray-200 dark:border-gray-700">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 bg-blue-500 rounded-full shrink-0" />
-                  <div>
-                    <span className="text-gray-900 dark:text-gray-100 font-medium">Update Available</span>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">A new version is ready to install</p>
-                  </div>
-                </div>
-                <button
-                  onClick={onApplyUpdate}
-                  disabled={updating}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white rounded-lg transition-colors shrink-0 ${updating ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'}`}
-                >
-                  {updating && (
-                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                  )}
-                  {updating ? 'Updating…' : 'Update'}
-                </button>
-              </div>
+        <div className="p-4">
+          <SettingsSection title="Features">
+{/* Feature toggles */}
+          <div className="space-y-3">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Choose which tabs appear in the app. At least one always stays
+              on; with a single tab enabled the bottom bar is hidden. Data for
+              hidden tabs keeps syncing in the background.
+            </p>
+            {([
+              { key: 'featureMeals', label: 'Meals', description: 'Weekly meal planning calendar' },
+              { key: 'featurePantry', label: 'Pantry', description: 'Pantry inventory' },
+              { key: 'featureGrocery', label: 'Grocery', description: 'Shared grocery list' },
+              { key: 'featureLists', label: 'Lists', description: 'Recency-tracked task lists' },
+            ] as const).map(({ key, label, description }) => {
+              const enabledCount = [settings.featureMeals, settings.featurePantry, settings.featureGrocery, settings.featureLists]
+                .filter(v => v !== false).length;
+              const isOn = settings[key] !== false;
+              const isLastOn = isOn && enabledCount <= 1;
+              return (
+                <NotifyToggle
+                  key={key}
+                  label={label}
+                  description={isLastOn ? 'At least one tab must stay enabled' : description}
+                  checked={isOn}
+                  disabled={isLastOn}
+                  onChange={() => onUpdate({ [key]: !isOn })}
+                />
+              );
+            })}
+          </div>
+          </SettingsSection>
+          <SettingsSection title="Appearance">
+{/* Dark Mode Toggle */}
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <div className="flex-1 min-w-0">
+              <span className="text-gray-900 dark:text-gray-100 font-medium">Dark Mode</span>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Use dark theme for the interface
+              </p>
             </div>
-          )}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={isDark}
+              onClick={onToggleDarkMode}
+              className={`
+                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                ${isDark ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
+              `}
+            >
+              <span
+                className={`
+                  inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                  ${isDark ? 'translate-x-6' : 'translate-x-1'}
+                `}
+              />
+            </button>
+          </label>
 
-          {/* Calendar Sync Section */}
-          <div className="pb-4 border-b border-gray-200 dark:border-gray-700">
+{/* Compact View Toggle */}
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <div className="flex-1 min-w-0">
+              <span className="text-gray-900 dark:text-gray-100 font-medium">Compact View</span>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Fit a full week on screen with condensed cards
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.compactView}
+              onClick={() => onUpdate({ compactView: !settings.compactView })}
+              className={`
+                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                ${settings.compactView ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
+              `}
+            >
+              <span
+                className={`
+                  inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                  ${settings.compactView ? 'translate-x-6' : 'translate-x-1'}
+                `}
+              />
+            </button>
+          </label>
+
+{/* Text Scaling */}
+          <div className="space-y-3">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-900 dark:text-gray-100 font-medium">Text size (standard view)</span>
+                <span className="text-sm text-gray-500 dark:text-gray-400">{Math.round(settings.textScaleStandard * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0.85"
+                max="1.3"
+                step="0.05"
+                value={settings.textScaleStandard}
+                onChange={(e) => onUpdate({ textScaleStandard: clampScale(Number(e.target.value)) })}
+                className="mt-2 w-full"
+              />
+            </div>
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-900 dark:text-gray-100 font-medium">Text size (compact view)</span>
+                <span className="text-sm text-gray-500 dark:text-gray-400">{Math.round(settings.textScaleCompact * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0.85"
+                max="1.3"
+                step="0.05"
+                value={settings.textScaleCompact}
+                onChange={(e) => onUpdate({ textScaleCompact: clampScale(Number(e.target.value)) })}
+                className="mt-2 w-full"
+              />
+            </div>
+          </div>
+
+{/* Edit Highlight Color */}
+          <div>
+            <span className="text-gray-900 dark:text-gray-100 font-medium">Edit highlight</span>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Color marking the item or day being edited</p>
+            <div className="flex gap-2 mt-1.5">
+              {[
+                { value: 'emerald', bg: 'bg-emerald-500' },
+                { value: 'amber', bg: 'bg-amber-500' },
+                { value: 'purple', bg: 'bg-purple-500' },
+                { value: 'pink', bg: 'bg-pink-500' },
+                { value: 'red', bg: 'bg-red-500' },
+                { value: 'blue', bg: 'bg-blue-500' },
+              ].map(({ value, bg }) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-label={`${value} edit highlight color`}
+                  onClick={() => onUpdate({ editHighlightColor: value })}
+                  className={`w-7 h-7 rounded-full ${bg} transition-all ${
+                    settings.editHighlightColor === value
+                      ? 'ring-2 ring-offset-2 ring-gray-900 dark:ring-white dark:ring-offset-gray-800 scale-110'
+                      : 'opacity-60 hover:opacity-100'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+          </SettingsSection>
+          <SettingsSection title="Meals">
+{/* Meal Ideas Toggle */}
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <div className="flex-1 min-w-0">
+              <span className="text-gray-900 dark:text-gray-100 font-medium">Show Future Meals</span>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Keep a list of meals to schedule later
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.showMealIdeas}
+              onClick={() => onUpdate({ showMealIdeas: !settings.showMealIdeas })}
+              className={`
+                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                ${settings.showMealIdeas ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
+              `}
+            >
+              <span
+                className={`
+                  inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                  ${settings.showMealIdeas ? 'translate-x-6' : 'translate-x-1'}
+                `}
+              />
+            </button>
+          </label>
+
+{/* Itemized Column Toggle */}
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <div className="flex-1 min-w-0">
+              <span className="text-gray-900 dark:text-gray-100 font-medium">Show Itemized Column</span>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Show checkboxes to mark meals as added to shopping list
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.showItemizedColumn}
+              onClick={() => onUpdate({ showItemizedColumn: !settings.showItemizedColumn })}
+              className={`
+                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                ${settings.showItemizedColumn ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
+              `}
+            >
+              <span
+                className={`
+                  inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                  ${settings.showItemizedColumn ? 'translate-x-6' : 'translate-x-1'}
+                `}
+              />
+            </button>
+          </label>
+          </SettingsSection>
+          <SettingsSection title="Calendar">
+{/* Calendar Sync Section */}
+          <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-gray-900 dark:text-gray-100 font-medium">Calendar Sync</span>
               <button
@@ -556,150 +857,8 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
             )}
           </div>
 
-          {/* Dark Mode Toggle */}
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
-            <div className="flex-1 min-w-0">
-              <span className="text-gray-900 dark:text-gray-100 font-medium">Dark Mode</span>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Use dark theme for the interface
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={isDark}
-              onClick={onToggleDarkMode}
-              className={`
-                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
-                ${isDark ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
-              `}
-            >
-              <span
-                className={`
-                  inline-block h-4 w-4 transform rounded-full bg-white transition-transform
-                  ${isDark ? 'translate-x-6' : 'translate-x-1'}
-                `}
-              />
-            </button>
-          </label>
-
-          {/* Meal Ideas Toggle */}
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
-            <div className="flex-1 min-w-0">
-              <span className="text-gray-900 dark:text-gray-100 font-medium">Show Future Meals</span>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Keep a list of meals to schedule later
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={settings.showMealIdeas}
-              onClick={() => onUpdate({ showMealIdeas: !settings.showMealIdeas })}
-              className={`
-                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
-                ${settings.showMealIdeas ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
-              `}
-            >
-              <span
-                className={`
-                  inline-block h-4 w-4 transform rounded-full bg-white transition-transform
-                  ${settings.showMealIdeas ? 'translate-x-6' : 'translate-x-1'}
-                `}
-              />
-            </button>
-          </label>
-
-          {/* Itemized Column Toggle */}
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
-            <div className="flex-1 min-w-0">
-              <span className="text-gray-900 dark:text-gray-100 font-medium">Show Itemized Column</span>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Show checkboxes to mark meals as added to shopping list
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={settings.showItemizedColumn}
-              onClick={() => onUpdate({ showItemizedColumn: !settings.showItemizedColumn })}
-              className={`
-                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
-                ${settings.showItemizedColumn ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
-              `}
-            >
-              <span
-                className={`
-                  inline-block h-4 w-4 transform rounded-full bg-white transition-transform
-                  ${settings.showItemizedColumn ? 'translate-x-6' : 'translate-x-1'}
-                `}
-              />
-            </button>
-          </label>
-
-          {/* Compact View Toggle */}
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
-            <div className="flex-1 min-w-0">
-              <span className="text-gray-900 dark:text-gray-100 font-medium">Compact View</span>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Fit a full week on screen with condensed cards
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={settings.compactView}
-              onClick={() => onUpdate({ compactView: !settings.compactView })}
-              className={`
-                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
-                ${settings.compactView ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
-              `}
-            >
-              <span
-                className={`
-                  inline-block h-4 w-4 transform rounded-full bg-white transition-transform
-                  ${settings.compactView ? 'translate-x-6' : 'translate-x-1'}
-                `}
-              />
-            </button>
-          </label>
-
-          {/* Text Scaling */}
-          <div className="pt-2 border-t border-gray-200 dark:border-gray-700 space-y-3">
-            <div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-900 dark:text-gray-100 font-medium">Text size (standard view)</span>
-                <span className="text-sm text-gray-500 dark:text-gray-400">{Math.round(settings.textScaleStandard * 100)}%</span>
-              </div>
-              <input
-                type="range"
-                min="0.85"
-                max="1.3"
-                step="0.05"
-                value={settings.textScaleStandard}
-                onChange={(e) => onUpdate({ textScaleStandard: clampScale(Number(e.target.value)) })}
-                className="mt-2 w-full"
-              />
-            </div>
-            <div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-900 dark:text-gray-100 font-medium">Text size (compact view)</span>
-                <span className="text-sm text-gray-500 dark:text-gray-400">{Math.round(settings.textScaleCompact * 100)}%</span>
-              </div>
-              <input
-                type="range"
-                min="0.85"
-                max="1.3"
-                step="0.05"
-                value={settings.textScaleCompact}
-                onChange={(e) => onUpdate({ textScaleCompact: clampScale(Number(e.target.value)) })}
-                className="mt-2 w-full"
-              />
-            </div>
-          </div>
-
-          {/* Calendar Event Color */}
-          <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+{/* Calendar Event Color */}
+          <div>
             <span className="text-gray-900 dark:text-gray-100 font-medium">Event color</span>
             <p className="text-sm text-gray-500 dark:text-gray-400">Color for calendar events</p>
             <div className="flex gap-2 mt-1.5">
@@ -726,36 +885,8 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
             </div>
           </div>
 
-          {/* Edit Highlight Color */}
-          <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
-            <span className="text-gray-900 dark:text-gray-100 font-medium">Edit highlight</span>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Color marking the item or day being edited</p>
-            <div className="flex gap-2 mt-1.5">
-              {[
-                { value: 'emerald', bg: 'bg-emerald-500' },
-                { value: 'amber', bg: 'bg-amber-500' },
-                { value: 'purple', bg: 'bg-purple-500' },
-                { value: 'pink', bg: 'bg-pink-500' },
-                { value: 'red', bg: 'bg-red-500' },
-                { value: 'blue', bg: 'bg-blue-500' },
-              ].map(({ value, bg }) => (
-                <button
-                  key={value}
-                  type="button"
-                  aria-label={`${value} edit highlight color`}
-                  onClick={() => onUpdate({ editHighlightColor: value })}
-                  className={`w-7 h-7 rounded-full ${bg} transition-all ${
-                    settings.editHighlightColor === value
-                      ? 'ring-2 ring-offset-2 ring-gray-900 dark:ring-white dark:ring-offset-gray-800 scale-110'
-                      : 'opacity-60 hover:opacity-100'
-                  }`}
-                />
-              ))}
-            </div>
-          </div>
-
-          {/* US Holidays */}
-          <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+{/* US Holidays */}
+          <div>
             <label className="flex items-center justify-between gap-3 cursor-pointer">
               <div className="flex-1 min-w-0">
                 <span className="text-gray-900 dark:text-gray-100 font-medium">US Holidays</span>
@@ -812,8 +943,8 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
             )}
           </div>
 
-          {/* Hidden Events */}
-          <div className="pt-2 border-t border-gray-200 dark:border-gray-700 space-y-3">
+{/* Hidden Events */}
+          <div className="space-y-3">
             {/* Show All Events Toggle */}
             <label className="flex items-center justify-between gap-3 cursor-pointer">
               <div className="flex-1 min-w-0">
@@ -874,10 +1005,123 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               <p className="text-sm text-red-500">{hiddenError}</p>
             )}
           </div>
-
-          {/* Pending Changes */}
+          </SettingsSection>
+          <SettingsSection title="Notifications">
+{/* Notifications */}
+          <div className="space-y-3">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Notifications are off until you turn them on. First enable them on
+              this device, then pick what to hear about below — those choices
+              also control what appears under the bell icon, and they follow
+              your account to every device. Individual Lists can be muted from
+              the list's own menu.
+            </p>
+            <NotifyToggle
+              label="Enable on this device"
+              description={pushSupported
+                ? 'Push notifications on this device'
+                : 'Not supported in this browser (on iOS, add the app to your Home Screen)'}
+              checked={pushEnabled}
+              disabled={!pushSupported || pushBusy}
+              onChange={handleTogglePush}
+            />
+            {pushError && (
+              <p className="text-sm text-red-500">{pushError}</p>
+            )}
+            {pushSupported && pushEnabled && (
+              <div className="pl-3 border-l-2 border-gray-200 dark:border-gray-700 space-y-3">
+                <NotifyToggle
+                  label="Meal edits"
+                  description="When someone else updates the meal plan"
+                  checked={settings.notifyMealEdits}
+                  onChange={() => onUpdate({ notifyMealEdits: !settings.notifyMealEdits })}
+                />
+                <NotifyToggle
+                  label="Pantry edits"
+                  description="When someone else updates the pantry"
+                  checked={settings.notifyPantryEdits}
+                  onChange={() => onUpdate({ notifyPantryEdits: !settings.notifyPantryEdits })}
+                />
+                <NotifyToggle
+                  label="Grocery list edits"
+                  description="When someone else updates the grocery list"
+                  checked={settings.notifyGroceryEdits}
+                  onChange={() => onUpdate({ notifyGroceryEdits: !settings.notifyGroceryEdits })}
+                />
+                <NotifyToggle
+                  label="List edits"
+                  description="When someone updates a List shared with you (mute individual lists from their menus)"
+                  checked={settings.notifyListEdits}
+                  onChange={() => onUpdate({ notifyListEdits: !settings.notifyListEdits })}
+                />
+                <NotifyToggle
+                  label="List reminders"
+                  description="When a tracked task is due (mute individual lists or tasks from their menus)"
+                  checked={settings.notifyListsDue}
+                  onChange={() => onUpdate({ notifyListsDue: !settings.notifyListsDue })}
+                />
+                <div className="pl-3 border-l-2 border-gray-200 dark:border-gray-700 space-y-3">
+                  <NotifyToggle
+                    label="Daily summary"
+                    description={!settings.notifyListsDue
+                      ? 'Requires List reminders'
+                      : 'One notification with everything due, instead of alerts through the day'}
+                    checked={settings.notifyListsDue && settings.notifyListsDueDigest}
+                    disabled={!settings.notifyListsDue}
+                    onChange={() => onUpdate({
+                      notifyListsDueDigest: !settings.notifyListsDueDigest,
+                      // Record the device timezone so the server can honor local time
+                      notifyTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+                    })}
+                  />
+                  {settings.notifyListsDue && settings.notifyListsDueDigest && (
+                    <label className="flex items-center justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Summary time</span>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Local time for the daily notification</p>
+                      </div>
+                      <input
+                        type="time"
+                        value={settings.notifyListsDueDigestTime}
+                        onChange={(e) => onUpdate({
+                          notifyListsDueDigestTime: e.target.value || '08:00',
+                          notifyTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+                        })}
+                        className="px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-sm text-gray-900 dark:text-gray-100"
+                      />
+                    </label>
+                  )}
+                  <NotifyToggle
+                    label="Repeat daily"
+                    description={!settings.notifyListsDue
+                      ? 'Requires List reminders'
+                      : settings.notifyListsDueDigest
+                        ? 'Included in the daily summary'
+                        : 'Remind again each day (max once per 24h) while a task stays due'}
+                    checked={settings.notifyListsDue && !settings.notifyListsDueDigest && settings.notifyListsDueRepeat}
+                    disabled={!settings.notifyListsDue || settings.notifyListsDueDigest}
+                    onChange={() => onUpdate({ notifyListsDueRepeat: !settings.notifyListsDueRepeat })}
+                  />
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    onClick={handleTestPush}
+                    className="px-3 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                  >
+                    Send test notification
+                  </button>
+                  {pushTestMessage && (
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1.5">{pushTestMessage}</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+          </SettingsSection>
+{/* Pending Changes */}
           {pendingCount != null && pendingCount > 0 && onClearPendingChanges && (
-            <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+            <div className="pt-2">
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-gray-900 dark:text-gray-100 font-medium">Pending Changes</span>
@@ -963,6 +1207,21 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
             </div>
           )}
         </div>
+
+        {/* Account */}
+        {onLogout && (
+          <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3">
+            <span className="text-sm text-gray-500 dark:text-gray-400 truncate">
+              Signed in{accountName ? ` as ${accountName}` : ''}
+            </span>
+            <button
+              onClick={onLogout}
+              className="text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-700 shrink-0"
+            >
+              Log out
+            </button>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700">

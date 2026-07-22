@@ -10,11 +10,32 @@ import (
 
 	"mealplanner/internal/httpx"
 	"mealplanner/internal/models"
+	"mealplanner/internal/push"
 	"mealplanner/internal/session"
 )
 
 func (a *App) broadcast(eventType string, payload J, r *http.Request) {
+	// A "pushDetail" entry customizes the notification/activity phrasing for
+	// actions whose SSE payload doesn't carry a name (deletes); it is
+	// stripped before the payload goes out on the wire.
+	detailOverride, _ := payload["pushDetail"].(string)
+	delete(payload, "pushDetail")
 	a.Broadcaster.BroadcastEvent(eventType, payload, httpx.SourceID(r))
+	// Shared-data edits also fan out as push notifications to everyone except
+	// the editor (suppressed while the editor keeps editing — see push pkg).
+	detail, notify := editPushDetail(eventType, payload)
+	if !notify {
+		return
+	}
+	if detailOverride != "" {
+		detail = detailOverride
+	}
+	if actor := session.UserFrom(a.Sessions.Get(r)); actor != nil {
+		a.Push.QueueEdit(eventType, actor.Sub, displayName(actor), detail)
+		if category, ok := push.EditEventCategories[eventType]; ok {
+			a.logActivity(category, detail, actor, nil)
+		}
+	}
 }
 
 // upsertSectionDefault mirrors grocery._upsert_section_default: remember the
@@ -217,7 +238,14 @@ func (a *App) handleReplaceGrocery(w http.ResponseWriter, r *http.Request, _ *se
 		return
 	}
 	result := grocerySectionsJSON(sections)
-	a.broadcast("grocery.updated", J{"action": "replaced", "sections": result}, r)
+	replacedItems := 0
+	for _, sec := range payload.Sections {
+		replacedItems += len(sec.Items)
+	}
+	a.broadcast("grocery.updated", J{
+		"action": "replaced", "sections": result,
+		"pushDetail": "replaced the grocery list (" + countNoun(len(payload.Sections), "section") + ", " + countNoun(replacedItems, "item") + ")",
+	}, r)
 	httpx.WriteJSON(w, 200, result)
 }
 
@@ -272,7 +300,10 @@ func (a *App) handleDeleteGrocerySection(w http.ResponseWriter, r *http.Request,
 		httpx.WriteError(w, err)
 		return
 	}
-	a.broadcast("grocery.updated", J{"action": "section-deleted", "sectionId": section.ID.String()}, r)
+	a.broadcast("grocery.updated", J{
+		"action": "section-deleted", "sectionId": section.ID.String(),
+		"pushDetail": "removed the “" + section.Name + "” section",
+	}, r)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -404,6 +435,7 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 		httpx.Detail(w, http.StatusNotFound, "Item not found")
 		return
 	}
+	oldName := item.Name
 	// Write only the columns this PATCH actually changes — full-row writes
 	// let concurrent PATCHes of disjoint fields clobber each other, and a
 	// no-op must not bump updated_at (drives checked-item ordering).
@@ -480,9 +512,21 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 		}
 	}
 	a.DB.Where("id = ?", itemID).First(&item)
-	a.broadcast("grocery.updated", J{
+	// Check/uncheck and renames get precise phrasing; the generic derivation
+	// ("updated X") covers quantity/store tweaks.
+	updatePayload := J{
 		"action": "item-updated", "sectionId": item.SectionID.String(), "item": groceryItemJSON(&item),
-	}, r)
+	}
+	if _, ok := updates["checked"]; ok {
+		verb := "unchecked"
+		if item.Checked {
+			verb = "checked off"
+		}
+		updatePayload["pushDetail"] = verb + " “" + item.Name + "”"
+	} else if _, ok := updates["name"]; ok {
+		updatePayload["pushDetail"] = "renamed “" + oldName + "” to “" + item.Name + "”"
+	}
+	a.broadcast("grocery.updated", updatePayload, r)
 	httpx.WriteJSON(w, 200, groceryItemJSON(&item))
 }
 
@@ -635,6 +679,7 @@ func (a *App) handleDeleteGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 	}
 	a.broadcast("grocery.updated", J{
 		"action": "item-deleted", "sectionId": sectionID.String(), "itemId": itemID.String(),
+		"pushDetail": "removed “" + item.Name + "”",
 	}, r)
 	httpx.WriteJSON(w, 200, J{"status": "deleted"})
 }

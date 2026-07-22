@@ -48,7 +48,7 @@ func dateQuery(r *http.Request, name string) (time.Time, error) {
 	return t, nil
 }
 
-func (a *App) handleGetDays(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
+func (a *App) handleGetDays(w http.ResponseWriter, r *http.Request, user *session.UserInfo) {
 	startDate, err := dateQuery(r, "start_date")
 	if err != nil {
 		httpx.WriteError(w, err)
@@ -87,7 +87,7 @@ func (a *App) handleGetDays(w http.ResponseWriter, r *http.Request, _ *session.U
 
 	var events []ical.Event
 	if includeEvents {
-		events = a.Calendar.FetchICalEvents(startDate, endDate, false, includeHolidays)
+		events = a.Calendar.FetchICalEvents(startDate, endDate, false, includeHolidays, user.Sub)
 	}
 
 	days := []J{}
@@ -109,7 +109,7 @@ func (a *App) handleGetDays(w http.ResponseWriter, r *http.Request, _ *session.U
 	httpx.WriteJSON(w, 200, days)
 }
 
-func (a *App) handleGetEvents(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
+func (a *App) handleGetEvents(w http.ResponseWriter, r *http.Request, user *session.UserInfo) {
 	startDate, err := dateQuery(r, "start_date")
 	if err != nil {
 		httpx.WriteError(w, err)
@@ -135,7 +135,7 @@ func (a *App) handleGetEvents(w http.ResponseWriter, r *http.Request, _ *session
 		return
 	}
 
-	events := a.Calendar.FetchICalEvents(startDate, endDate, includeHidden, includeHolidays)
+	events := a.Calendar.FetchICalEvents(startDate, endDate, includeHidden, includeHolidays, user.Sub)
 
 	eventsByDate := map[string][]ical.Event{}
 	for current := startDate; !current.After(endDate); current = current.AddDate(0, 0, 1) {

@@ -153,5 +153,8 @@ func (a *App) handleDeleteStore(w http.ResponseWriter, r *http.Request, _ *sessi
 		return
 	}
 	a.broadcast("stores.updated", J{"action": "deleted", "storeId": storeID.String()}, r)
+	// Store ids also live in users' grocery chip-filter settings — prune them
+	// like the tracker notification overrides.
+	a.pruneNotifyOverrides(nil, nil, []string{storeID.String()})
 	httpx.WriteJSON(w, 200, J{"status": "deleted"})
 }

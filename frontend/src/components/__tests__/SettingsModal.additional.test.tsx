@@ -55,6 +55,10 @@ describe('SettingsModal - additional coverage', () => {
   const mockOnClose = vi.fn();
   const mockOnToggleDarkMode = vi.fn();
 
+  const expandSections = () => {
+    screen.getAllByTestId('settings-section-toggle').forEach(btn => fireEvent.click(btn));
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseOnlineStatus.mockReturnValue(true);
@@ -67,6 +71,7 @@ describe('SettingsModal - additional coverage', () => {
     await waitFor(() => {
       expect(screen.getByText('Settings')).toBeInTheDocument();
     });
+    expandSections();
     expect(screen.getByText('Dark Mode')).toBeInTheDocument();
   });
 
@@ -74,7 +79,8 @@ describe('SettingsModal - additional coverage', () => {
     render(
       <SettingsModal settings={defaultSettings} onUpdate={mockOnUpdate} onClose={mockOnClose} isDark={false} onToggleDarkMode={mockOnToggleDarkMode} />
     );
-    await waitFor(() => expect(screen.getByText('Dark Mode')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Settings')).toBeInTheDocument());
+    expandSections();
 
     const darkModeToggle = screen.getByText('Dark Mode').closest('div')?.querySelector('button[role="switch"]');
     if (darkModeToggle) {
@@ -91,6 +97,7 @@ describe('SettingsModal - additional coverage', () => {
       await Promise.resolve();
     });
 
+    expandSections();
     const toggle = screen.getByRole('switch', { name: /show itemized column/i });
     fireEvent.click(toggle);
     expect(mockOnUpdate).toHaveBeenCalledWith({ showItemizedColumn: false });
@@ -104,6 +111,7 @@ describe('SettingsModal - additional coverage', () => {
       await Promise.resolve();
     });
 
+    expandSections();
     const toggle = screen.getByRole('switch', { name: /show future meals/i });
     fireEvent.click(toggle);
     expect(mockOnUpdate).toHaveBeenCalledWith({ showMealIdeas: false });
@@ -117,6 +125,7 @@ describe('SettingsModal - additional coverage', () => {
       await Promise.resolve();
     });
 
+    expandSections();
     const toggle = screen.getByRole('switch', { name: /compact view/i });
     fireEvent.click(toggle);
     expect(mockOnUpdate).toHaveBeenCalledWith({ compactView: true });
@@ -133,5 +142,40 @@ describe('SettingsModal - additional coverage', () => {
     });
 
     expect(screen.getByText('Settings')).toBeInTheDocument();
+  });
+});
+
+describe('Features section', () => {
+  const baseProps = {
+    onUpdate: vi.fn(),
+    onClose: vi.fn(),
+    isDark: false,
+    onToggleDarkMode: vi.fn(),
+  };
+
+  beforeEach(() => vi.clearAllMocks());
+
+  const renderWith = async (settings: Partial<Settings>) => {
+    await act(async () => {
+      render(<SettingsModal settings={settings as Settings} {...baseProps} />);
+      await Promise.resolve();
+    });
+    screen.getAllByTestId('settings-section-toggle').forEach(btn => fireEvent.click(btn));
+  };
+
+  it('toggles a feature off', async () => {
+    await renderWith({ featureMeals: true, featurePantry: true, featureGrocery: true, featureLists: true });
+    fireEvent.click(screen.getByRole('switch', { name: /pantry inventory/i }));
+    expect(baseProps.onUpdate).toHaveBeenCalledWith({ featurePantry: false });
+  });
+
+  it('locks the last enabled feature', async () => {
+    await renderWith({ featureMeals: true, featurePantry: false, featureGrocery: false, featureLists: false });
+    const mealsToggle = screen.getByRole('switch', { name: /at least one tab must stay enabled/i });
+    expect(mealsToggle).toBeDisabled();
+    expect(screen.getByText('At least one tab must stay enabled')).toBeInTheDocument();
+    // The off ones can still be turned on
+    fireEvent.click(screen.getByRole('switch', { name: /shared grocery list/i }));
+    expect(baseProps.onUpdate).toHaveBeenCalledWith({ featureGrocery: true });
   });
 });

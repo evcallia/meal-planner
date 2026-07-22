@@ -359,7 +359,7 @@ func TestFetchICalEventsFromCache(t *testing.T) {
 		today.Add(10*time.Hour), tp(today.Add(11*time.Hour)))
 	calls := recordFetches(svc, nil)
 
-	result := svc.FetchICalEvents(today, today, true, true)
+	result := svc.FetchICalEvents(today, today, true, true, "test-user-123")
 	if len(result) != 1 || result[0].Title != "Today's Event" {
 		t.Fatalf("result = %v", result)
 	}
@@ -379,7 +379,7 @@ func TestFetchICalEventsOutsideCache(t *testing.T) {
 		eventWithSource("TestCal", "Future Event", farFuture.Add(10*time.Hour), nil),
 	})
 
-	result := svc.FetchICalEvents(farFuture, farFuture, true, true)
+	result := svc.FetchICalEvents(farFuture, farFuture, true, true, "test-user-123")
 	if len(*calls) != 1 {
 		t.Fatalf("expected 1 CalDAV fetch, got %d", len(*calls))
 	}
@@ -398,7 +398,7 @@ func TestFetchICalEventsNoCache(t *testing.T) {
 		eventWithSource("TestCal", "New Event", dt(2024, 2, 15, 10, 0), nil),
 	})
 
-	result := svc.FetchICalEvents(d(2024, 2, 15), d(2024, 2, 15), true, true)
+	result := svc.FetchICalEvents(d(2024, 2, 15), d(2024, 2, 15), true, true, "test-user-123")
 	if len(*calls) != 1 {
 		t.Fatalf("expected 1 CalDAV fetch, got %d", len(*calls))
 	}
@@ -419,7 +419,7 @@ func TestFetchICalEventsPreCacheRange(t *testing.T) {
 		eventWithSource("TestCal", "Past Event", requestStart.Add(10*time.Hour), nil),
 	})
 
-	result := svc.FetchICalEvents(requestStart, requestEnd, true, true)
+	result := svc.FetchICalEvents(requestStart, requestEnd, true, true, "test-user-123")
 	if len(result) != 1 || result[0].Title != "Past Event" {
 		t.Fatalf("result = %v", result)
 	}
@@ -444,7 +444,7 @@ func TestFetchICalEventsPostCacheRange(t *testing.T) {
 		eventWithSource("TestCal", "Future Event", requestStart.Add(10*time.Hour), nil),
 	})
 
-	result := svc.FetchICalEvents(requestStart, requestEnd, true, true)
+	result := svc.FetchICalEvents(requestStart, requestEnd, true, true, "test-user-123")
 	if len(result) != 1 || result[0].Title != "Future Event" {
 		t.Fatalf("result = %v", result)
 	}
@@ -470,7 +470,7 @@ func TestFetchICalEventsPartialOverlap(t *testing.T) {
 		eventWithSource("TestCal", "Fetched Event", today.AddDate(0, 0, -2).Add(9*time.Hour), nil),
 	})
 
-	result := svc.FetchICalEvents(requestStart, requestEnd, true, true)
+	result := svc.FetchICalEvents(requestStart, requestEnd, true, true, "test-user-123")
 	if len(*calls) != 1 {
 		t.Fatalf("expected 1 CalDAV fetch, got %d", len(*calls))
 	}
@@ -649,6 +649,7 @@ func TestFetchICalEventsFilterHidden(t *testing.T) {
 	hidden := seedCachedEvent(t, svc, "TestCal", "Hidden", today.Add(10*time.Hour), nil)
 	_ = visible
 	if err := svc.db.Create(&models.HiddenCalendarEvent{
+		Sub:          "test-user-123",
 		EventUID:     hidden.EventUID,
 		EventDate:    hidden.EventDate,
 		CalendarName: hidden.CalendarName,
@@ -658,11 +659,11 @@ func TestFetchICalEventsFilterHidden(t *testing.T) {
 		t.Fatalf("seed hidden: %v", err)
 	}
 
-	withHidden := svc.FetchICalEvents(today, today, true, true)
+	withHidden := svc.FetchICalEvents(today, today, true, true, "test-user-123")
 	if len(withHidden) != 2 {
 		t.Errorf("include_hidden=true should return both, got %d", len(withHidden))
 	}
-	filtered := svc.FetchICalEvents(today, today, false, true)
+	filtered := svc.FetchICalEvents(today, today, false, true, "test-user-123")
 	if len(filtered) != 1 || filtered[0].Title != "Visible" {
 		t.Errorf("include_hidden=false result = %v", filtered)
 	}
@@ -676,11 +677,11 @@ func TestFetchICalEventsExcludeHolidays(t *testing.T) {
 	seedCachedEvent(t, svc, "Personal", "Meeting", today.Add(9*time.Hour), nil)
 	seedCachedEvent(t, svc, USHolidaysCalendarName, "Some Holiday", today, nil)
 
-	all := svc.FetchICalEvents(today, today, true, true)
+	all := svc.FetchICalEvents(today, today, true, true, "test-user-123")
 	if len(all) != 2 {
 		t.Errorf("include_holidays=true should return both, got %d", len(all))
 	}
-	noHolidays := svc.FetchICalEvents(today, today, true, false)
+	noHolidays := svc.FetchICalEvents(today, today, true, false, "test-user-123")
 	if len(noHolidays) != 1 || noHolidays[0].Title != "Meeting" {
 		t.Errorf("include_holidays=false result = %v", noHolidays)
 	}

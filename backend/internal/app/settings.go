@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"gorm.io/gorm"
@@ -24,6 +25,89 @@ func decodeSettingsBlob(raw string) any {
 		return J{}
 	}
 	return settings
+}
+
+// pruneNotifyOverrides removes settings references to DELETED entities from
+// every user's blob: per-list/per-task notification overrides and store ids
+// in the grocery chip-filter arrays. It scans ALL users deliberately — a user
+// who left a list long ago still gets their orphans cleaned when it dies. The server normally never
+// writes settings (client-owned, last-write-wins), so a prune must bump
+// updated_at and broadcast settings.updated — otherwise a client's in-memory
+// copy would resurrect the orphans on its next save. Restores reissue ids, so
+// pruning at delete time can never strip settings an undo could reclaim.
+// Best-effort housekeeping: failures are logged, never surfaced.
+func (a *App) pruneNotifyOverrides(listIDs, taskIDs, storeIDs []string) {
+	if len(listIDs) == 0 && len(taskIDs) == 0 && len(storeIDs) == 0 {
+		return
+	}
+	var rows []models.UserSettings
+	if err := a.DB.Find(&rows).Error; err != nil {
+		log.Printf("settings prune: load failed: %v", err)
+		return
+	}
+	for i := range rows {
+		// UseNumber-decoded (decodeSettingsBlob) so re-marshaling preserves
+		// number representations exactly.
+		blob, ok := decodeSettingsBlob(rows[i].Settings).(map[string]any)
+		if !ok {
+			continue
+		}
+		changed := false
+		removeKeys := func(field string, ids []string) {
+			overrides, ok := blob[field].(map[string]any)
+			if !ok {
+				return
+			}
+			for _, id := range ids {
+				if _, exists := overrides[id]; exists {
+					delete(overrides, id)
+					changed = true
+				}
+			}
+		}
+		removeKeys("listNotifyOverrides", listIDs)
+		removeKeys("taskNotifyOverrides", taskIDs)
+		removeFromArray := func(field string, ids []string) {
+			arr, ok := blob[field].([]any)
+			if !ok || len(arr) == 0 {
+				return
+			}
+			kept := arr[:0]
+			for _, v := range arr {
+				s, _ := v.(string)
+				remove := false
+				for _, id := range ids {
+					if s == id {
+						remove = true
+						break
+					}
+				}
+				if remove {
+					changed = true
+				} else {
+					kept = append(kept, v)
+				}
+			}
+			blob[field] = kept
+		}
+		removeFromArray("grocerySelectedStoreIds", storeIDs)
+		removeFromArray("groceryExcludedStoreIds", storeIDs)
+		if !changed {
+			continue
+		}
+		raw, err := json.Marshal(blob)
+		if err != nil {
+			continue
+		}
+		now := models.NowUTC()
+		if err := a.DB.Model(&models.UserSettings{}).Where("sub = ?", rows[i].Sub).
+			Updates(map[string]any{"settings": string(raw), "updated_at": now}).Error; err != nil {
+			log.Printf("settings prune: update for %s failed: %v", rows[i].Sub, err)
+			continue
+		}
+		a.Broadcaster.BroadcastToUser(rows[i].Sub, "settings.updated",
+			J{"settings": decodeSettingsBlob(string(raw)), "updated_at": httpx.FormatDateTime(now)}, "")
+	}
 }
 
 func (a *App) handleGetSettings(w http.ResponseWriter, r *http.Request, user *session.UserInfo) {

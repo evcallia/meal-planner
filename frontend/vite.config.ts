@@ -72,6 +72,9 @@ export default defineConfig(({ mode }) => {
           ]
         },
         workbox: {
+          // Web Push handlers live in public/push-sw.js and get pulled into the
+          // generated service worker here.
+          importScripts: ['push-sw.js'],
           globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [/^\/api/],

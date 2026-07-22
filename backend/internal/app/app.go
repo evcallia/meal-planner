@@ -15,6 +15,8 @@ import (
 	"mealplanner/internal/config"
 	"mealplanner/internal/httpx"
 	"mealplanner/internal/ical"
+	"mealplanner/internal/models"
+	"mealplanner/internal/push"
 	"mealplanner/internal/realtime"
 	"mealplanner/internal/session"
 )
@@ -25,6 +27,7 @@ type App struct {
 	Sessions    *session.Manager
 	Broadcaster *realtime.Broadcaster
 	Calendar    *ical.Service
+	Push        *push.Service
 	oidc        *oidcClient
 }
 
@@ -35,9 +38,15 @@ func New(settings *config.Settings, db *gorm.DB) *App {
 		Sessions:    session.NewManager(settings.SecretKey, settings.SecureCookies || settings.AllowTunnel, settings.AllowTunnel),
 		Broadcaster: realtime.NewBroadcaster(),
 		Calendar:    ical.NewService(settings, db),
+		Push:        push.New(db, settings.VapidSubject, time.Duration(settings.PushEditWindowMinutes)*time.Minute),
 	}
 	if settings.OIDCIssuer != "" {
 		a.oidc = newOIDCClient(settings)
+	}
+	// Due-reminder feed entries are created by the background loop; announce
+	// them live so bells update without a refetch (actor_sub empty: no actor).
+	a.Push.OnActivity = func(row *models.ActivityLog, audience map[string]bool) {
+		a.emitActivity(row, audience, "")
 	}
 	return a
 }
@@ -130,6 +139,16 @@ func (a *App) Handler() http.Handler {
 
 	// Users directory
 	mux.HandleFunc("GET /api/users", auth(a.handleListUsers))
+
+	// Push notifications
+	mux.HandleFunc("GET /api/push/public-key", auth(a.handleGetPushPublicKey))
+	mux.HandleFunc("POST /api/push/subscriptions", auth(a.handleSavePushSubscription))
+	mux.HandleFunc("DELETE /api/push/subscriptions", auth(a.handleDeletePushSubscription))
+	mux.HandleFunc("POST /api/push/test", auth(a.handleTestPush))
+
+	// Activity feed
+	mux.HandleFunc("GET /api/activity", auth(a.handleGetActivity))
+	mux.HandleFunc("POST /api/activity/seen", auth(a.handleMarkActivitySeen))
 
 	// Tracker
 	mux.HandleFunc("GET /api/tracker", auth(a.handleTrackerListLists))
@@ -224,7 +243,7 @@ func (a *App) securityHeaders(next http.Handler) http.Handler {
 }
 
 var noCacheFiles = map[string]bool{
-	"sw.js": true, "index.html": true, "version.json": true, "manifest.webmanifest": true,
+	"sw.js": true, "push-sw.js": true, "index.html": true, "version.json": true, "manifest.webmanifest": true,
 }
 
 // serveSPA mirrors the FastAPI static-file catch-all: exact file if present

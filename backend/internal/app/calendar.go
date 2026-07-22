@@ -89,9 +89,9 @@ func (a *App) handleCalendarList(w http.ResponseWriter, r *http.Request, _ *sess
 	httpx.WriteJSON(w, 200, J{"available": available, "selected": selected})
 }
 
-func (a *App) handleListHidden(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
+func (a *App) handleListHidden(w http.ResponseWriter, r *http.Request, user *session.UserInfo) {
 	var hidden []models.HiddenCalendarEvent
-	if err := a.DB.Order("start_time DESC").Find(&hidden).Error; err != nil {
+	if err := a.DB.Where("sub = ?", user.Sub).Order("start_time DESC").Find(&hidden).Error; err != nil {
 		httpx.WriteError(w, err)
 		return
 	}
@@ -102,7 +102,7 @@ func (a *App) handleListHidden(w http.ResponseWriter, r *http.Request, _ *sessio
 	httpx.WriteJSON(w, 200, out)
 }
 
-func (a *App) handleHideEvent(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
+func (a *App) handleHideEvent(w http.ResponseWriter, r *http.Request, user *session.UserInfo) {
 	var payload struct {
 		EventUID     *string        `json:"event_uid"`
 		CalendarName string         `json:"calendar_name"`
@@ -120,14 +120,15 @@ func (a *App) handleHideEvent(w http.ResponseWriter, r *http.Request, _ *session
 	eventDate := time.Date(st.Year(), st.Month(), st.Day(), 0, 0, 0, 0, time.UTC)
 
 	var existing models.HiddenCalendarEvent
-	err := a.DB.Where("event_uid = ? AND start_time = ? AND calendar_name = ?",
-		*payload.EventUID, payload.StartTime.Time, payload.CalendarName).First(&existing).Error
+	err := a.DB.Where("sub = ? AND event_uid = ? AND start_time = ? AND calendar_name = ?",
+		user.Sub, *payload.EventUID, payload.StartTime.Time, payload.CalendarName).First(&existing).Error
 	if err == nil {
 		httpx.WriteJSON(w, 200, hiddenEventJSON(&existing))
 		return
 	}
 
 	hidden := models.HiddenCalendarEvent{
+		Sub:          user.Sub,
 		EventUID:     *payload.EventUID,
 		EventDate:    eventDate,
 		CalendarName: payload.CalendarName,
@@ -140,7 +141,8 @@ func (a *App) handleHideEvent(w http.ResponseWriter, r *http.Request, _ *session
 		httpx.WriteError(w, err)
 		return
 	}
-	a.broadcast("calendar.hidden", J{
+	// Per-user: only the hider's other sessions/devices should apply the hide.
+	a.Broadcaster.BroadcastToUser(user.Sub, "calendar.hidden", J{
 		"hidden_id":     hidden.ID.String(),
 		"event_id":      ical.EventKey(*payload.EventUID, payload.CalendarName, payload.StartTime.Time),
 		"event_uid":     *payload.EventUID,
@@ -149,18 +151,18 @@ func (a *App) handleHideEvent(w http.ResponseWriter, r *http.Request, _ *session
 		"end_time":      httpx.FormatDateTimePtr(payload.EndTime.Ptr()),
 		"all_day":       payload.AllDay,
 		"title":         *payload.Title,
-	}, r)
+	}, httpx.SourceID(r))
 	httpx.WriteJSON(w, 200, hiddenEventJSON(&hidden))
 }
 
-func (a *App) handleUnhideEvent(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
+func (a *App) handleUnhideEvent(w http.ResponseWriter, r *http.Request, user *session.UserInfo) {
 	hiddenID, err := uuid.Parse(r.PathValue("hiddenId"))
 	if err != nil {
 		httpx.WriteJSON(w, 200, J{"status": "not_found"})
 		return
 	}
 	var hidden models.HiddenCalendarEvent
-	if a.DB.Where("id = ?", hiddenID).First(&hidden).Error != nil {
+	if a.DB.Where("id = ? AND sub = ?", hiddenID, user.Sub).First(&hidden).Error != nil {
 		httpx.WriteJSON(w, 200, J{"status": "not_found"})
 		return
 	}
@@ -172,7 +174,7 @@ func (a *App) handleUnhideEvent(w http.ResponseWriter, r *http.Request, _ *sessi
 		httpx.WriteError(w, err)
 		return
 	}
-	a.broadcast("calendar.unhidden", J{
+	a.Broadcaster.BroadcastToUser(user.Sub, "calendar.unhidden", J{
 		"hidden_id":     hiddenID.String(),
 		"event_id":      eventID,
 		"event_uid":     hidden.EventUID,
@@ -180,6 +182,6 @@ func (a *App) handleUnhideEvent(w http.ResponseWriter, r *http.Request, _ *sessi
 		"start_time":    startTime,
 		"end_time":      endTime,
 		"all_day":       allDay,
-	}, r)
+	}, httpx.SourceID(r))
 	httpx.WriteJSON(w, 200, J{"status": "ok"})
 }

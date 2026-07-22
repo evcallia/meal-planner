@@ -235,7 +235,11 @@ func trackerAudience(lst *models.TrackerList) map[string]bool {
 }
 
 // trackerBroadcast mirrors _broadcast: identical payload for every recipient.
+// A "pushDetail" entry in extra customizes the push-notification body and is
+// stripped before the payload goes out on the wire.
 func (a *App) trackerBroadcast(lst *models.TrackerList, action string, extra J, r *http.Request, extraSubs ...string) {
+	detail, _ := extra["pushDetail"].(string)
+	delete(extra, "pushDetail")
 	payload := J{"action": action}
 	for k, v := range extra {
 		payload[k] = v
@@ -247,11 +251,50 @@ func (a *App) trackerBroadcast(lst *models.TrackerList, action string, extra J, 
 	for sub := range audience {
 		a.Broadcaster.BroadcastToUser(sub, "tracker.updated", payload, httpx.SourceID(r))
 	}
+	if detail == "" {
+		detail = trackerPushDetail(action, extra)
+	}
+	a.queueTrackerEditPush(lst, action, detail, r)
+}
+
+// trackerPushDetail derives a verb phrase from the broadcast payload for
+// actions where it carries the task; ambiguous sites pass pushDetail instead.
+func trackerPushDetail(action string, extra J) string {
+	taskName := ""
+	if task, ok := extra["task"].(J); ok {
+		taskName, _ = task["name"].(string)
+	}
+	switch {
+	case taskName == "":
+		return ""
+	case action == "task-added":
+		return "added “" + taskName + "”"
+	case action == "task-updated":
+		return "updated “" + taskName + "”"
+	case action == "task-logged":
+		return "completed “" + taskName + "”"
+	}
+	return ""
+}
+
+// queueTrackerEditPush fans a tracker edit out as a push notification to the
+// list's audience except the actor. Reorders are cosmetic (and per-user for
+// list order), so they don't notify.
+func (a *App) queueTrackerEditPush(lst *models.TrackerList, action, detail string, r *http.Request) {
+	if strings.Contains(action, "reorder") {
+		return
+	}
+	actor := session.UserFrom(a.Sessions.Get(r))
+	if actor == nil {
+		return
+	}
+	a.Push.QueueTrackerEdit(lst.ID.String(), lst.Name, trackerAudience(lst), actor.Sub, displayName(actor), detail)
+	a.logActivity("lists", detail, actor, lst)
 }
 
 // trackerBroadcastList mirrors _broadcast_list: full-list payload recomputed
 // per recipient so a shared user never receives the owner's perspective.
-func (a *App) trackerBroadcastList(lst *models.TrackerList, action string, r *http.Request, extraSubs ...string) {
+func (a *App) trackerBroadcastList(lst *models.TrackerList, action, detail string, r *http.Request, extraSubs ...string) {
 	audience := trackerAudience(lst)
 	for _, sub := range extraSubs {
 		audience[sub] = true
@@ -260,6 +303,23 @@ func (a *App) trackerBroadcastList(lst *models.TrackerList, action string, r *ht
 		a.Broadcaster.BroadcastToUser(sub, "tracker.updated",
 			J{"action": action, "list": a.trackerListJSON(lst, sub)}, httpx.SourceID(r))
 	}
+	if detail == "" {
+		switch action {
+		case "list-added":
+			detail = "created “" + lst.Name + "”"
+		case "list-deleted":
+			detail = "deleted “" + lst.Name + "”"
+		}
+	}
+	a.queueTrackerEditPush(lst, action, detail, r)
+}
+
+// trackerMemberName is a member's display name for notification phrasing.
+func (a *App) trackerMemberName(sub string) string {
+	if n := a.trackerFirstName(&sub); n != nil && *n != "" {
+		return *n
+	}
+	return "a member"
 }
 
 // trackerGetList mirrors _get_list (load + access check).
@@ -377,7 +437,7 @@ func (a *App) handleTrackerCreateList(w http.ResponseWriter, r *http.Request, us
 	}
 	a.DB.Preload("Tasks").Preload("Shares").Where("id = ?", lst.ID).First(&lst)
 	data := a.trackerListJSON(&lst, user.Sub)
-	a.trackerBroadcastList(&lst, "list-added", r)
+	a.trackerBroadcastList(&lst, "list-added", "", r)
 	httpx.WriteJSON(w, http.StatusCreated, data)
 }
 
@@ -481,7 +541,7 @@ func (a *App) handleTrackerRestoreList(w http.ResponseWriter, r *http.Request, u
 	}
 	a.DB.Preload("Tasks").Preload("Shares").Where("id = ?", lst.ID).First(&lst)
 	data := a.trackerListJSON(&lst, sub)
-	a.trackerBroadcastList(&lst, "list-added", r)
+	a.trackerBroadcastList(&lst, "list-added", "", r)
 	httpx.WriteJSON(w, http.StatusCreated, data)
 }
 
@@ -510,6 +570,7 @@ func (a *App) handleTrackerUpdateList(w http.ResponseWriter, r *http.Request, us
 		httpx.WriteError(w, lerr)
 		return
 	}
+	oldListName := lst.Name
 	updates := map[string]any{}
 	if payload.Name != nil {
 		lst.Name = strings.TrimSpace(*payload.Name)
@@ -530,8 +591,12 @@ func (a *App) handleTrackerUpdateList(w http.ResponseWriter, r *http.Request, us
 			return
 		}
 	}
+	renameDetail := ""
+	if payload.Name != nil && lst.Name != oldListName {
+		renameDetail = "renamed “" + oldListName + "” to “" + lst.Name + "”"
+	}
 	data := a.trackerListJSON(lst, user.Sub)
-	a.trackerBroadcastList(lst, "list-updated", r)
+	a.trackerBroadcastList(lst, "list-updated", renameDetail, r)
 	httpx.WriteJSON(w, 200, data)
 }
 
@@ -551,6 +616,10 @@ func (a *App) handleTrackerDeleteList(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	audience := trackerAudience(&lst)
+	// Capture task ids before the cascade delete so their per-task overrides
+	// can be pruned from user settings too.
+	var taskIDs []string
+	a.DB.Model(&models.TrackerTask{}).Where("list_id = ?", lst.ID).Pluck("id", &taskIDs)
 	if err := a.DB.Delete(&lst).Error; err != nil {
 		httpx.WriteError(w, err)
 		return
@@ -559,6 +628,9 @@ func (a *App) handleTrackerDeleteList(w http.ResponseWriter, r *http.Request, us
 	for member := range audience {
 		a.Broadcaster.BroadcastToUser(member, "tracker.updated", payload, httpx.SourceID(r))
 	}
+	// lst.Shares was preloaded before the delete, so the push audience is intact.
+	a.queueTrackerEditPush(&lst, "list-deleted", "deleted “"+lst.Name+"”", r)
+	a.pruneNotifyOverrides([]string{listID.String()}, taskIDs, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -672,7 +744,7 @@ func (a *App) handleTrackerAddShare(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	data := a.trackerListJSON(lst, user.Sub)
-	a.trackerBroadcastList(lst, "list-shared", r, targetSub)
+	a.trackerBroadcastList(lst, "list-shared", "shared the list with "+a.trackerMemberName(targetSub), r, targetSub)
 	httpx.WriteJSON(w, 200, data)
 }
 
@@ -702,7 +774,7 @@ func (a *App) handleTrackerRemoveShare(w http.ResponseWriter, r *http.Request, u
 		}
 	}
 	data := a.trackerListJSON(lst, user.Sub)
-	a.trackerBroadcastList(lst, "list-updated", r)
+	a.trackerBroadcastList(lst, "list-updated", "removed "+a.trackerMemberName(shareSub)+" from the list", r)
 	if audienceBefore[shareSub] {
 		a.Broadcaster.BroadcastToUser(shareSub, "tracker.updated",
 			J{"action": "list-deleted", "listId": listID.String()}, httpx.SourceID(r))
@@ -737,7 +809,7 @@ func (a *App) handleTrackerLeaveList(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	a.DB.Preload("Tasks").Preload("Shares").Where("id = ?", listID).First(&lst)
-	a.trackerBroadcastList(&lst, "list-updated", r)
+	a.trackerBroadcastList(&lst, "list-updated", "left the list", r)
 	a.Broadcaster.BroadcastToUser(sub, "tracker.updated",
 		J{"action": "list-deleted", "listId": listID.String()}, httpx.SourceID(r))
 	w.WriteHeader(http.StatusNoContent)
@@ -768,7 +840,7 @@ func (a *App) handleTrackerRejoinList(w http.ResponseWriter, r *http.Request, us
 		a.DB.Preload("Tasks").Preload("Shares").Where("id = ?", listID).First(&lst)
 	}
 	data := a.trackerListJSON(&lst, sub)
-	a.trackerBroadcastList(&lst, "list-shared", r, sub)
+	a.trackerBroadcastList(&lst, "list-shared", "rejoined the list", r, sub)
 	httpx.WriteJSON(w, 200, data)
 }
 
@@ -923,7 +995,15 @@ func (a *App) handleTrackerUpdateTask(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	data := a.trackerTaskJSON(task)
-	a.trackerBroadcast(lst, "task-updated", J{"listId": lst.ID.String(), "task": data}, r)
+	taskExtra := J{"listId": lst.ID.String(), "task": data}
+	if payload.Archived != nil {
+		if *payload.Archived {
+			taskExtra["pushDetail"] = "archived “" + task.Name + "”"
+		} else {
+			taskExtra["pushDetail"] = "restored “" + task.Name + "”"
+		}
+	}
+	a.trackerBroadcast(lst, "task-updated", taskExtra, r)
 	httpx.WriteJSON(w, 200, data)
 }
 
@@ -949,7 +1029,9 @@ func (a *App) handleTrackerDeleteTask(w http.ResponseWriter, r *http.Request, us
 	}
 	a.trackerBroadcast(lst, "task-deleted", J{
 		"listId": task.ListID.String(), "taskId": taskID.String(),
+		"pushDetail": "deleted “" + task.Name + "”",
 	}, r)
+	a.pruneNotifyOverrides(nil, []string{taskID.String()}, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1057,8 +1139,13 @@ func (a *App) handleTrackerAddLog(w http.ResponseWriter, r *http.Request, user *
 		httpx.WriteError(w, lerr)
 		return
 	}
+	verb := "completed"
+	if kind == "skip" {
+		verb = "skipped"
+	}
 	a.trackerBroadcast(lst, "task-logged", J{
 		"listId": lst.ID.String(), "task": a.trackerTaskJSON(task),
+		"pushDetail": verb + " “" + task.Name + "”",
 	}, r)
 	httpx.WriteJSON(w, http.StatusCreated, a.trackerLogJSON(&log))
 }
@@ -1086,7 +1173,10 @@ func (a *App) handleTrackerSkipTask(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	data := a.trackerTaskJSON(task)
-	a.trackerBroadcast(lst, "task-updated", J{"listId": lst.ID.String(), "task": data}, r)
+	a.trackerBroadcast(lst, "task-updated", J{
+		"listId": lst.ID.String(), "task": data,
+		"pushDetail": "skipped “" + task.Name + "” this cycle",
+	}, r)
 	httpx.WriteJSON(w, 200, data)
 }
 
@@ -1117,6 +1207,7 @@ func (a *App) handleTrackerDeleteLog(w http.ResponseWriter, r *http.Request, use
 	}
 	a.trackerBroadcast(lst, "task-logged", J{
 		"listId": lst.ID.String(), "task": a.trackerTaskJSON(task),
+		"pushDetail": "removed a completion of “" + task.Name + "”",
 	}, r)
 	w.WriteHeader(http.StatusNoContent)
 }

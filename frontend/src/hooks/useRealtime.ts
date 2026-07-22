@@ -12,6 +12,7 @@ let eventSource: EventSource | null = null;
 let subscriberCount = 0;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
+let hadConnection = false;
 const MAX_RECONNECT_DELAY = 60000; // Max 1 minute between retries
 const BASE_RECONNECT_DELAY = 3000; // Start with 3 seconds
 
@@ -56,6 +57,14 @@ const createSource = () => {
   eventSource.onopen = () => {
     // Reset reconnect attempts on successful connection
     reconnectAttempts = 0;
+    // Announce RE-connections only (the initial connect coincides with the
+    // app's initial data fetch): any events emitted while disconnected
+    // (server restart, network blip) are gone — listeners refetch to
+    // reconcile.
+    if (hadConnection) {
+      window.dispatchEvent(new Event('meal-planner-realtime-connected'));
+    }
+    hadConnection = true;
   };
 
   eventSource.onmessage = (event) => {

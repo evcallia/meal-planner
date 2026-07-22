@@ -59,6 +59,12 @@ const renderModal = async (props = defaultProps) => {
     render(<SettingsModal {...props} />)
     await Promise.resolve()
   })
+  // Sections are collapsed by default — expand them all so tests can reach
+  // every setting.
+  await act(async () => {
+    screen.getAllByTestId('settings-section-toggle').forEach(btn => fireEvent.click(btn))
+    await Promise.resolve()
+  })
 }
 
 const mockGetCalendarCacheStatus = vi.mocked(getCalendarCacheStatus)

@@ -42,6 +42,19 @@ func main() {
 	application := app.New(settings, gormDB)
 	application.Calendar.InitializeCache()
 
+	// Web Push: generate/load the VAPID keypair and start the periodic
+	// tracker due-task notification check.
+	if _, err := application.Push.VapidPublicKey(); err != nil {
+		log.Printf("web push disabled: VAPID key setup failed: %v", err)
+	} else {
+		subject := settings.VapidSubject
+		if subject == "" {
+			subject = "UNSET — set VAPID_SUBJECT, Apple rejects the default"
+		}
+		log.Printf("web push ready (VAPID subject: %s, edit window: %dm)", subject, settings.PushEditWindowMinutes)
+	}
+	go application.Push.RunDueLoop(application.Broadcaster.Done)
+
 	addr := ":8000"
 	if v := os.Getenv("PORT"); v != "" {
 		addr = ":" + v
