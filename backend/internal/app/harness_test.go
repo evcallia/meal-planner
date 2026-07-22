@@ -55,6 +55,8 @@ func newTestApp(t *testing.T) *testApp {
 		t.Fatalf("create_all: %v", err)
 	}
 	a := New(testSettings(), gdb)
+	// Push batches flush immediately so tests can assert right after Flush().
+	a.Push.BatchQuiet, a.Push.BatchMax = 0, 0
 	// No network in tests: calendar fetchers are stubbed to empty.
 	a.Calendar.FetchCalDAVEvents = func(start, end time.Time) []ical.EventWithSource { return nil }
 	a.Calendar.FetchHolidaysRaw = func() ([]byte, error) { return nil, errors.New("no network in tests") }

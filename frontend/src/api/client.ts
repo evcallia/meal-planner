@@ -601,3 +601,54 @@ export async function putSettings(settings: Record<string, unknown>, updatedAt: 
     body: JSON.stringify({ settings, updated_at: updatedAt }),
   });
 }
+
+// Push notification API
+
+export async function getPushPublicKey(): Promise<{ key: string }> {
+  return fetchAPI<{ key: string }>('/push/public-key');
+}
+
+export async function savePushSubscription(subscription: PushSubscriptionJSON): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>('/push/subscriptions', {
+    method: 'POST',
+    body: JSON.stringify(subscription),
+  });
+}
+
+export async function deletePushSubscription(endpoint: string): Promise<void> {
+  await fetchAPI('/push/subscriptions', {
+    method: 'DELETE',
+    body: JSON.stringify({ endpoint }),
+  });
+}
+
+export interface PushTestResult {
+  endpoint: string;
+  status?: number;
+  error?: string;
+}
+
+export async function sendTestPushNotification(): Promise<{ sent: number; results: PushTestResult[] }> {
+  return fetchAPI<{ sent: number; results: PushTestResult[] }>('/push/test', { method: 'POST' });
+}
+
+// Activity feed API
+
+export interface ActivityEntry {
+  id: string;
+  at: string;
+  actor_name: string;
+  category: string;
+  detail: string;
+  list_name?: string;
+  list_id?: string;
+  task_id?: string;
+}
+
+export async function getActivity(): Promise<{ entries: ActivityEntry[]; last_seen: string | null }> {
+  return fetchAPI<{ entries: ActivityEntry[]; last_seen: string | null }>('/activity');
+}
+
+export async function markActivitySeen(): Promise<{ status: string; seen_at: string }> {
+  return fetchAPI<{ status: string; seen_at: string }>('/activity/seen', { method: 'POST' });
+}

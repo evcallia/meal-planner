@@ -17,9 +17,22 @@ export const NONE_STORE_ID = '__none__';
 interface GroceryListViewProps {
   compactView?: boolean;
   editHighlightColor?: string;
+  // Store chip filter — lives in synced user settings (App owns the single
+  // useSettings instance) so it survives restarts and follows the user.
+  selectedStores?: string[];
+  excludedStores?: string[];
+  onStoreFilterChange?: (updates: { selected?: string[]; excluded?: string[] }) => void;
 }
 
-export function GroceryListView({ compactView: _compactView, editHighlightColor = 'emerald' }: GroceryListViewProps) {
+const EMPTY_FILTER: string[] = [];
+
+export function GroceryListView({
+  compactView: _compactView,
+  editHighlightColor = 'emerald',
+  selectedStores = EMPTY_FILTER,
+  excludedStores = EMPTY_FILTER,
+  onStoreFilterChange,
+}: GroceryListViewProps) {
   const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, createSection, moveItem, batchUpdateStoreId, itemDefaultsMap, removeItemDefault } = useGroceryList();
   const { stores, createStore, renameStore, removeStore, reorderStores } = useStores({
     grocerySections: sections,
@@ -58,18 +71,29 @@ export function GroceryListView({ compactView: _compactView, editHighlightColor 
   }, [editingItemId]);
   const [newItemName, setNewItemName] = useState('');
   const [showClearMenu, setShowClearMenu] = useState(false);
-  const [selectedStoreIds, setSelectedStoreIds] = useState<Set<string>>(() => {
+  const selectedStoreIds = useMemo(() => new Set(selectedStores), [selectedStores]);
+  const excludedStoreIds = useMemo(() => new Set(excludedStores), [excludedStores]);
+  const onStoreFilterChangeRef = useRef(onStoreFilterChange);
+  onStoreFilterChangeRef.current = onStoreFilterChange;
+
+  // One-time migration: the filter used to live in localStorage — seed the
+  // synced setting from any leftover value, then drop the legacy keys.
+  useEffect(() => {
     try {
-      const saved = localStorage.getItem('meal-planner-selected-stores');
-      return saved ? new Set(JSON.parse(saved)) : new Set();
-    } catch { return new Set(); }
-  });
-  const [excludedStoreIds, setExcludedStoreIds] = useState<Set<string>>(() => {
-    try {
-      const saved = localStorage.getItem('meal-planner-excluded-stores');
-      return saved ? new Set(JSON.parse(saved)) : new Set();
-    } catch { return new Set(); }
-  });
+      const legacySelected = localStorage.getItem('meal-planner-selected-stores');
+      const legacyExcluded = localStorage.getItem('meal-planner-excluded-stores');
+      if (legacySelected === null && legacyExcluded === null) return;
+      localStorage.removeItem('meal-planner-selected-stores');
+      localStorage.removeItem('meal-planner-excluded-stores');
+      const selected: string[] = legacySelected ? JSON.parse(legacySelected) : [];
+      const excluded: string[] = legacyExcluded ? JSON.parse(legacyExcluded) : [];
+      if ((selected.length > 0 || excluded.length > 0)
+        && selectedStoreIds.size === 0 && excludedStoreIds.size === 0) {
+        onStoreFilterChangeRef.current?.({ selected, excluded });
+      }
+    } catch { /* corrupt legacy value — start clean */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [showAllStores, setShowAllStores] = useState<boolean>(() => {
     try {
       return localStorage.getItem('meal-planner-show-all-stores') === 'true';
@@ -112,62 +136,42 @@ export function GroceryListView({ compactView: _compactView, editHighlightColor 
     return all.filter(s => s.name.toLowerCase().includes(lower));
   }, [sections, quickAddSection]);
 
-  // Auto-deselect stores that no longer have unchecked items
+  // Auto-deselect stores that no longer have unchecked items. Gated on
+  // `loading`: before the list loads every count is 0, and running then wiped
+  // the saved filter on every cold start (the "filter doesn't persist" bug).
   useEffect(() => {
-    if (selectedStoreIds.size === 0) return;
-    let changed = false;
-    const next = new Set(selectedStoreIds);
-    for (const id of next) {
-      if ((storeCounts.get(id) ?? 0) === 0) {
-        next.delete(id);
-        changed = true;
-      }
+    if (loading || selectedStoreIds.size === 0) return;
+    const next = [...selectedStoreIds].filter(id => (storeCounts.get(id) ?? 0) > 0);
+    if (next.length !== selectedStoreIds.size) {
+      onStoreFilterChangeRef.current?.({ selected: next });
     }
-    if (changed) {
-      setSelectedStoreIds(next);
-      try { localStorage.setItem('meal-planner-selected-stores', JSON.stringify([...next])); } catch {}
-    }
-  }, [storeCounts, selectedStoreIds]);
+  }, [loading, storeCounts, selectedStoreIds]);
 
   const handleToggleSelect = useCallback((storeId: string) => {
-    setSelectedStoreIds(prev => {
-      const next = new Set(prev);
-      if (next.has(storeId)) {
-        next.delete(storeId);
-      } else {
-        next.add(storeId);
-      }
-      try { localStorage.setItem('meal-planner-selected-stores', JSON.stringify([...next])); } catch {}
-      return next;
-    });
-  }, []);
+    const next = new Set(selectedStoreIds);
+    if (next.has(storeId)) {
+      next.delete(storeId);
+    } else {
+      next.add(storeId);
+    }
+    onStoreFilterChangeRef.current?.({ selected: [...next] });
+  }, [selectedStoreIds]);
 
   const handleExclude = useCallback((storeId: string) => {
-    setSelectedStoreIds(prev => {
-      if (prev.has(storeId)) {
-        const next = new Set(prev);
-        next.delete(storeId);
-        try { localStorage.setItem('meal-planner-selected-stores', JSON.stringify([...next])); } catch {}
-        return next;
-      }
-      return prev;
-    });
-    setExcludedStoreIds(prev => {
-      const next = new Set(prev);
-      next.add(storeId);
-      try { localStorage.setItem('meal-planner-excluded-stores', JSON.stringify([...next])); } catch {}
-      return next;
-    });
-  }, []);
+    const updates: { selected?: string[]; excluded?: string[] } = {
+      excluded: [...new Set(excludedStoreIds).add(storeId)],
+    };
+    if (selectedStoreIds.has(storeId)) {
+      updates.selected = [...selectedStoreIds].filter(id => id !== storeId);
+    }
+    onStoreFilterChangeRef.current?.(updates);
+  }, [selectedStoreIds, excludedStoreIds]);
 
   const handleRemoveExclusion = useCallback((storeId: string) => {
-    setExcludedStoreIds(prev => {
-      const next = new Set(prev);
-      next.delete(storeId);
-      try { localStorage.setItem('meal-planner-excluded-stores', JSON.stringify([...next])); } catch {}
-      return next;
+    onStoreFilterChangeRef.current?.({
+      excluded: [...excludedStoreIds].filter(id => id !== storeId),
     });
-  }, []);
+  }, [excludedStoreIds]);
 
   const handleToggleShowAllStores = useCallback(() => {
     setShowAllStores(prev => {

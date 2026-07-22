@@ -5,6 +5,7 @@ package db
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -198,5 +199,55 @@ func TestRunMigrationsNoOpOnCleanDatabase(t *testing.T) {
 	gdb.Model(&models.PantrySection{}).Where("name = ?", "General").Count(&count)
 	if count != 0 {
 		t.Fatalf("unexpected General section created")
+	}
+}
+
+// Legacy hidden calendar events (no sub — they applied to the whole
+// household) are cloned per known user so nothing reappears after the
+// per-user migration; the unscoped originals are removed.
+func TestRunMigrationsAssignsLegacyHiddenEventsPerUser(t *testing.T) {
+	gdb, err := OpenSQLiteMemory()
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := CreateAll(gdb); err != nil {
+		t.Fatalf("create_all: %v", err)
+	}
+	for _, sub := range []string{"user-a", "user-b"} {
+		if err := gdb.Create(&models.User{Sub: sub}).Error; err != nil {
+			t.Fatalf("seed user: %v", err)
+		}
+	}
+	legacy := models.HiddenCalendarEvent{
+		EventUID: "evt-legacy", EventDate: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		CalendarName: "Cal", Title: "Old hide", StartTime: time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC),
+	}
+	if err := gdb.Create(&legacy).Error; err != nil {
+		t.Fatalf("seed legacy hidden: %v", err)
+	}
+
+	if err := RunMigrations(gdb); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	var rows []models.HiddenCalendarEvent
+	gdb.Order("sub ASC").Find(&rows)
+	if len(rows) != 2 || rows[0].Sub != "user-a" || rows[1].Sub != "user-b" {
+		t.Fatalf("expected one clone per user, got %+v", rows)
+	}
+	for _, r := range rows {
+		if r.EventUID != "evt-legacy" || r.Title != "Old hide" {
+			t.Fatalf("clone lost fields: %+v", r)
+		}
+	}
+
+	// Idempotent: a second run creates nothing new.
+	if err := RunMigrations(gdb); err != nil {
+		t.Fatalf("second RunMigrations: %v", err)
+	}
+	var count int64
+	gdb.Model(&models.HiddenCalendarEvent{}).Count(&count)
+	if count != 2 {
+		t.Fatalf("migration not idempotent, got %d rows", count)
 	}
 }

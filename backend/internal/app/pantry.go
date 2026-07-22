@@ -2,6 +2,7 @@ package app
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -95,7 +96,14 @@ func (a *App) handleReplacePantry(w http.ResponseWriter, r *http.Request, _ *ses
 		return
 	}
 	result := pantrySectionsJSON(sections)
-	a.broadcast("pantry.updated", J{"action": "replaced", "sections": result}, r)
+	replacedItems := 0
+	for _, sec := range payload.Sections {
+		replacedItems += len(sec.Items)
+	}
+	a.broadcast("pantry.updated", J{
+		"action": "replaced", "sections": result,
+		"pushDetail": "replaced the pantry (" + countNoun(len(payload.Sections), "section") + ", " + countNoun(replacedItems, "item") + ")",
+	}, r)
 	httpx.WriteJSON(w, 200, result)
 }
 
@@ -274,6 +282,7 @@ func (a *App) handleUpdatePantryItem(w http.ResponseWriter, r *http.Request, _ *
 		httpx.Detail(w, http.StatusNotFound, "Item not found")
 		return
 	}
+	oldName := item.Name
 	updates := map[string]any{}
 	if payload.Name != nil {
 		name := strings.TrimSpace(*payload.Name)
@@ -298,9 +307,15 @@ func (a *App) handleUpdatePantryItem(w http.ResponseWriter, r *http.Request, _ *
 		}
 	}
 	a.DB.Where("id = ?", itemID).First(&item)
-	a.broadcast("pantry.updated", J{
+	updatePayload := J{
 		"action": "item-updated", "sectionId": item.SectionID.String(), "item": pantryItemJSON(&item),
-	}, r)
+	}
+	if _, ok := updates["name"]; ok {
+		updatePayload["pushDetail"] = "renamed “" + oldName + "” to “" + item.Name + "”"
+	} else if _, ok := updates["quantity"]; ok {
+		updatePayload["pushDetail"] = "set “" + item.Name + "” to " + strconv.Itoa(item.Quantity)
+	}
+	a.broadcast("pantry.updated", updatePayload, r)
 	httpx.WriteJSON(w, 200, pantryItemJSON(&item))
 }
 
@@ -409,7 +424,10 @@ func (a *App) handleDeletePantrySection(w http.ResponseWriter, r *http.Request, 
 		httpx.WriteError(w, err)
 		return
 	}
-	a.broadcast("pantry.updated", J{"action": "section-deleted", "sectionId": sectionID.String()}, r)
+	a.broadcast("pantry.updated", J{
+		"action": "section-deleted", "sectionId": sectionID.String(),
+		"pushDetail": "removed the “" + section.Name + "” section",
+	}, r)
 	httpx.WriteJSON(w, 200, J{"status": "deleted"})
 }
 
@@ -431,6 +449,7 @@ func (a *App) handleDeletePantryItem(w http.ResponseWriter, r *http.Request, _ *
 	}
 	a.broadcast("pantry.updated", J{
 		"action": "item-deleted", "sectionId": sectionID.String(), "itemId": itemID.String(),
+		"pushDetail": "removed “" + item.Name + "”",
 	}, r)
 	httpx.WriteJSON(w, 200, J{"status": "deleted"})
 }

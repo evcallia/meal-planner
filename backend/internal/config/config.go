@@ -37,6 +37,12 @@ type Settings struct {
 	DebugTiming              bool
 	AllowTunnel              bool
 	MealHistoryRetentionDays int
+	// VapidSubject is the contact claim for Web Push VAPID headers,
+	// e.g. "mailto:admin@example.com".
+	VapidSubject string
+	// PushEditWindowMinutes is the edit-notification quiet window (default 30).
+	// Set low (e.g. 1) to test edit notifications without waiting.
+	PushEditWindowMinutes int
 
 	// StaticDir is where the built React app lives (not part of the Python
 	// Settings class; the Python app derived it from __file__).
@@ -147,6 +153,8 @@ func Load(envPath string) *Settings {
 		DebugTiming:              l.boolean("DEBUG_TIMING", false),
 		AllowTunnel:              l.boolean("ALLOW_TUNNEL", false),
 		MealHistoryRetentionDays: l.integer("MEAL_HISTORY_RETENTION_DAYS", 365),
+		VapidSubject:             l.str("VAPID_SUBJECT", ""),
+		PushEditWindowMinutes:    l.integer("PUSH_EDIT_WINDOW_MINUTES", 30),
 
 		StaticDir: l.str("STATIC_DIR", "static"),
 	}

@@ -424,14 +424,15 @@ func (s *Service) fetchAndCacheEvents(startDate, endDate time.Time) []Event {
 	return out
 }
 
-// filterHiddenEvents mirrors _filter_hidden_events.
-func (s *Service) filterHiddenEvents(events []Event, startDate, endDate time.Time) []Event {
+// filterHiddenEvents mirrors _filter_hidden_events. Hides are per-user: only
+// rows belonging to sub are applied.
+func (s *Service) filterHiddenEvents(events []Event, startDate, endDate time.Time, sub string) []Event {
 	if len(events) == 0 {
 		return events
 	}
 	var hidden []models.HiddenCalendarEvent
-	err := s.db.Where("event_date <= ? AND (event_date >= ? OR end_time >= ?)",
-		endDate, startDate, dateOf(startDate)).Find(&hidden).Error
+	err := s.db.Where("sub = ? AND event_date <= ? AND (event_date >= ? OR end_time >= ?)",
+		sub, endDate, startDate, dateOf(startDate)).Find(&hidden).Error
 	if err != nil || len(hidden) == 0 {
 		return events
 	}
@@ -450,12 +451,13 @@ func (s *Service) filterHiddenEvents(events []Event, startDate, endDate time.Tim
 
 // FetchICalEvents mirrors fetch_ical_events: serve from the DB cache when the
 // range is covered, otherwise fetch the uncovered parts from CalDAV.
-func (s *Service) FetchICalEvents(startDate, endDate time.Time, includeHidden, includeHolidays bool) []Event {
+// hiddenForSub is whose hidden-event rows to apply when includeHidden is false.
+func (s *Service) FetchICalEvents(startDate, endDate time.Time, includeHidden, includeHolidays bool, hiddenForSub string) []Event {
 	cacheStart, cacheEnd := s.CacheMetadata()
 
 	applyFilters := func(events []Event) []Event {
 		if !includeHidden {
-			events = s.filterHiddenEvents(events, startDate, endDate)
+			events = s.filterHiddenEvents(events, startDate, endDate, hiddenForSub)
 		}
 		if !includeHolidays {
 			out := make([]Event, 0, len(events))

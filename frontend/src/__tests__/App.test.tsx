@@ -46,10 +46,11 @@ vi.mock('../components/StatusBar', () => ({
 }));
 
 vi.mock('../components/SettingsModal', () => ({
-  SettingsModal: vi.fn(({ onClose, onToggleDarkMode }) => (
+  SettingsModal: vi.fn(({ onClose, onToggleDarkMode, onLogout }) => (
     <div data-testid="settings-modal">
       <button data-testid="toggle-dark-mode" onClick={onToggleDarkMode}>Toggle Dark Mode</button>
       <button data-testid="close-settings" onClick={onClose}>Close</button>
+      <button data-testid="settings-logout" onClick={onLogout}>Logout</button>
     </div>
   ))
 }));
@@ -147,7 +148,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useSettings } from '../hooks/useSettings';
 import { getCurrentUser, logout, refreshCalendarCache } from '../api/client';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
-import { getDays, updateNotes } from '../api/client';
+import { getDays, updateNotes, getGroceryList } from '../api/client';
 import { __resetCalendarFeedRefreshForTests } from '../App';
 import { queueChange, getLocalNote, saveLocalNote } from '../db';
 import { scrollToElementWithOffset } from '../utils/scroll';
@@ -236,9 +237,10 @@ describe('App', () => {
       expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
     });
 
-    // Click logout button
-    const logoutButton = screen.getByText(/logout/i);
-    fireEvent.click(logoutButton);
+    // Logout now lives inside the settings modal
+    fireEvent.click(screen.getByLabelText('Settings'));
+    await waitFor(() => expect(screen.getByTestId('settings-modal')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('settings-logout'));
 
     await waitFor(() => {
       expect(mockLogout).toHaveBeenCalled();
@@ -374,7 +376,8 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
-      expect(screen.getByText('Cached User')).toBeInTheDocument();
+      // Header shows the first name only
+      expect(screen.getAllByText('Cached').length).toBeGreaterThan(0);
     });
   });
 
@@ -388,7 +391,8 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
-      expect(screen.getByText('Cached User')).toBeInTheDocument();
+      // Header shows the first name only
+      expect(screen.getAllByText('Cached').length).toBeGreaterThan(0);
     });
     consoleSpy.mockRestore();
   });
@@ -515,5 +519,74 @@ describe('App', () => {
     });
 
     expect(mockRefreshCalendarCache).toHaveBeenCalledTimes(1); // still — cooldown
+  });
+});
+
+describe('SSE reconnect refresh', () => {
+  it('refetches all data when the realtime stream reconnects', async () => {
+    const mockUser = { sub: 'u1', name: 'Test User', email: 'test@example.com' };
+    vi.mocked(getCurrentUser).mockResolvedValue(mockUser);
+
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
+    });
+    await waitFor(() => expect(vi.mocked(getGroceryList)).toHaveBeenCalled());
+    const before = vi.mocked(getGroceryList).mock.calls.length;
+
+    await act(async () => {
+      window.dispatchEvent(new Event('meal-planner-realtime-connected'));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(getGroceryList).mock.calls.length).toBeGreaterThan(before);
+    });
+  });
+});
+
+describe('Features setting', () => {
+  it('hides the bottom nav and lands on the enabled tab when only one feature is on', async () => {
+    const mockUser = { sub: 'u1', name: 'Test User', email: 'test@example.com' };
+    vi.mocked(getCurrentUser).mockResolvedValue(mockUser);
+    vi.mocked(useSettings).mockReturnValue({
+      settings: {
+        featureMeals: false, featurePantry: true, featureGrocery: false, featureLists: false,
+        showItemizedColumn: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1,
+      },
+      updateSettings: vi.fn(),
+    } as any);
+
+    render(<App />);
+
+    // Auto-switched off the (disabled) meals tab onto pantry
+    await waitFor(() => {
+      expect(screen.getByTestId('pantry-panel')).toBeInTheDocument();
+    });
+    // Single feature → no bottom navigation at all
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+    expect(screen.queryByText('Grocery')).not.toBeInTheDocument();
+  });
+
+  it('shows only enabled tabs in the nav', async () => {
+    const mockUser = { sub: 'u1', name: 'Test User', email: 'test@example.com' };
+    vi.mocked(getCurrentUser).mockResolvedValue(mockUser);
+    vi.mocked(useSettings).mockReturnValue({
+      settings: {
+        featureMeals: true, featurePantry: false, featureGrocery: true, featureLists: false,
+        showItemizedColumn: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1,
+      },
+      updateSettings: vi.fn(),
+    } as any);
+
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
+    });
+    const nav = screen.getByRole('navigation');
+    expect(nav).toHaveTextContent('Meals');
+    expect(nav).toHaveTextContent('Grocery');
+    expect(nav).not.toHaveTextContent('Pantry');
+    expect(nav).not.toHaveTextContent('Lists');
   });
 });

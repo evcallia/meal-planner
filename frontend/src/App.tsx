@@ -8,12 +8,16 @@ import { ListsView } from './components/ListsView';
 import { StatusChip, StatusToast } from './components/StatusBar';
 import { ReAuthModal } from './components/ReAuthModal';
 import { SettingsModal } from './components/SettingsModal';
+import { ActivityPanel } from './components/ActivityPanel';
 import { UpdateNotification } from './components/UpdateNotification';
 import { useSync } from './hooks/useSync';
 import { useDarkMode } from './hooks/useDarkMode';
 import { useSettings } from './hooks/useSettings';
 import { useRealtime } from './hooks/useRealtime';
 import { useKeyboardOpen } from './hooks/useKeyboardOpen';
+import { useVisualViewportPin } from './hooks/useVisualViewportPin';
+import { useActivity } from './hooks/useActivity';
+import { ensurePushSubscription } from './utils/push';
 import { getCurrentUser, getLoginUrl, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents, refreshCalendarCache, getTrackerLists } from './api/client';
 import { UserInfo, GrocerySection, GroceryItem, PantrySection, PantryItem, Store, MealIdea, ConnectionStatus, TrackerList, TrackerTask } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
@@ -27,6 +31,14 @@ import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, sav
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
 type Page = 'meals' | 'pantry' | 'grocery' | 'lists';
+
+const ALL_PAGES: Page[] = ['meals', 'pantry', 'grocery', 'lists'];
+const PAGE_FEATURE_KEYS: Record<Page, 'featureMeals' | 'featurePantry' | 'featureGrocery' | 'featureLists'> = {
+  meals: 'featureMeals',
+  pantry: 'featurePantry',
+  grocery: 'featureGrocery',
+  lists: 'featureLists',
+};
 
 // Map tracker objects to their IndexedDB shape (keeps recent_logs so offline
 // history is cached). Used by the background fetch + inactive-tab cache warmer.
@@ -51,21 +63,27 @@ export function __resetCalendarFeedRefreshForTests() { lastCalendarFeedRefresh =
 function PageHeader({
   title,
   user,
-  onLogout,
   onShowSettings,
   status,
   pendingCount,
   updateAvailable,
+  unseenActivity,
+  onShowActivity,
 }: {
   title: string;
   user: UserInfo;
-  onLogout: () => void;
   onShowSettings: () => void;
   status: string;
   pendingCount: number;
   updateAvailable?: boolean;
+  unseenActivity?: number;
+  onShowActivity?: () => void;
 }) {
   const { canUndo, canRedo, undo, redo } = useUndo();
+  const firstName = user.name?.trim().split(/\s+/)[0] || user.email?.split('@')[0] || 'Account';
+  // The bell badge covers partner activity AND a pending app update (the
+  // update row lives in the Activity panel now, not Settings).
+  const bellCount = (unseenActivity ?? 0) + (updateAvailable ? 1 : 0);
   const headerRef = useRef<HTMLElement>(null);
   const showStatus = status !== 'online' && status !== 'auth-required';
 
@@ -85,7 +103,24 @@ function PageHeader({
         <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100 truncate">{title}</h1>
         <div className="flex flex-col items-end gap-0.5">
           {showStatus && <StatusChip status={status as ConnectionStatus} pendingCount={pendingCount} />}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+          {/* Activity bell */}
+          {onShowActivity && (
+            <button
+              onClick={onShowActivity}
+              className="relative p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              aria-label={bellCount ? `Activity (${bellCount} new)` : 'Activity'}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+              {bellCount > 0 && (
+                <span className="absolute top-0.5 right-0.5 min-w-[1.1rem] h-[1.1rem] px-1 flex items-center justify-center text-[10px] font-semibold text-white bg-red-500 rounded-full">
+                  {bellCount > 9 ? '9+' : bellCount}
+                </span>
+              )}
+            </button>
+          )}
           {/* Refresh button */}
           <button
             onClick={() => window.location.reload()}
@@ -119,27 +154,20 @@ function PageHeader({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4M21 10l-4 4" />
             </svg>
           </button>
-          {/* Settings button */}
-          <button
-            onClick={onShowSettings}
-            className="relative p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-            aria-label={updateAvailable ? "Settings (update available)" : "Settings"}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            {updateAvailable && (
-              <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-blue-500 rounded-full ring-2 ring-white dark:ring-gray-800" />
-            )}
-          </button>
-          <span className="text-sm text-gray-600 dark:text-gray-400 hidden sm:inline">{user.name || user.email}</span>
-          <button
-            onClick={onLogout}
-            className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-          >
-            Logout
-          </button>
+          {/* Settings button with the account's first name beneath */}
+          <div className="flex flex-col items-center">
+            <button
+              onClick={onShowSettings}
+              className="relative p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              aria-label="Settings"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+            <span className="text-[10px] leading-none -mt-0.5 text-gray-500 dark:text-gray-400 max-w-[56px] truncate">{firstName}</span>
+          </div>
           </div>
         </div>
       </div>
@@ -147,77 +175,90 @@ function PageHeader({
   );
 }
 
-function BottomNav({ currentPage, onChange, groceryCount, hidden }: { currentPage: Page; onChange: (page: Page) => void; groceryCount: number; hidden?: boolean }) {
-  if (hidden) return null;
+function BottomNav({ currentPage, onChange, groceryCount, hidden, pages }: { currentPage: Page; onChange: (page: Page) => void; groceryCount: number; hidden?: boolean; pages: Page[] }) {
+  // Keep the island glued to the visible bottom edge — iOS can leave the
+  // layout viewport panned/stale after the keyboard closes, which floated
+  // the fixed nav part-way up the screen.
+  const navRef = useVisualViewportPin<HTMLElement>();
+  // A single enabled feature needs no navigation at all.
+  if (hidden || pages.length <= 1) return null;
   return (
-    <nav className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 safe-area-bottom">
+    <nav ref={navRef} className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 safe-area-bottom">
       {/* backdrop-filter lives on this inner (non-fixed) layer — on iOS a fixed
           element that itself has backdrop-filter detaches and drifts during
           momentum scroll. Keeping the fixed element filter-free keeps it locked. */}
       <div className="glass-nav rounded-full px-6 flex gap-7">
-        <button
-          onClick={() => onChange('meals')}
-          className={`flex flex-col items-center py-2 transition-colors ${
-            currentPage === 'meals'
-              ? 'text-blue-600 dark:text-blue-400'
-              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-          }`}
-        >
-          {/* Calendar icon */}
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-          <span className="text-xs mt-0.5 font-medium">Meals</span>
-        </button>
-        <button
-          onClick={() => onChange('pantry')}
-          className={`flex flex-col items-center py-2 transition-colors ${
-            currentPage === 'pantry'
-              ? 'text-blue-600 dark:text-blue-400'
-              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-          }`}
-        >
-          {/* Package/pantry icon */}
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-          </svg>
-          <span className="text-xs mt-0.5 font-medium">Pantry</span>
-        </button>
-        <button
-          onClick={() => onChange('grocery')}
-          className={`flex flex-col items-center py-2 transition-colors ${
-            currentPage === 'grocery'
-              ? 'text-blue-600 dark:text-blue-400'
-              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-          }`}
-        >
-          {/* Shopping cart icon */}
-          <div className="relative">
+        {pages.includes('meals') && (
+          <button
+            onClick={() => onChange('meals')}
+            className={`flex flex-col items-center py-2 transition-colors ${
+              currentPage === 'meals'
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+            }`}
+          >
+            {/* Calendar icon */}
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
-            {groceryCount > 0 && (
-              <span className="absolute -top-1.5 -right-2.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold text-white bg-blue-500 rounded-full leading-none">
-                {groceryCount > 99 ? '99+' : groceryCount}
-              </span>
-            )}
-          </div>
-          <span className="text-xs mt-0.5 font-medium">Grocery</span>
-        </button>
-        <button
-          onClick={() => onChange('lists')}
-          className={`flex flex-col items-center py-2 transition-colors ${
-            currentPage === 'lists'
-              ? 'text-blue-600 dark:text-blue-400'
-              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-          }`}
-        >
-          {/* Checklist/tasks icon */}
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-          </svg>
-          <span className="text-xs mt-0.5 font-medium">Lists</span>
-        </button>
+            <span className="text-xs mt-0.5 font-medium">Meals</span>
+          </button>
+        )}
+        {pages.includes('pantry') && (
+          <button
+            onClick={() => onChange('pantry')}
+            className={`flex flex-col items-center py-2 transition-colors ${
+              currentPage === 'pantry'
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+            }`}
+          >
+            {/* Package/pantry icon */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+            <span className="text-xs mt-0.5 font-medium">Pantry</span>
+          </button>
+        )}
+        {pages.includes('grocery') && (
+          <button
+            onClick={() => onChange('grocery')}
+            className={`flex flex-col items-center py-2 transition-colors ${
+              currentPage === 'grocery'
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+            }`}
+          >
+            {/* Shopping cart icon */}
+            <div className="relative">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" />
+              </svg>
+              {groceryCount > 0 && (
+                <span className="absolute -top-1.5 -right-2.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold text-white bg-blue-500 rounded-full leading-none">
+                  {groceryCount > 99 ? '99+' : groceryCount}
+                </span>
+              )}
+            </div>
+            <span className="text-xs mt-0.5 font-medium">Grocery</span>
+          </button>
+        )}
+        {pages.includes('lists') && (
+          <button
+            onClick={() => onChange('lists')}
+            className={`flex flex-col items-center py-2 transition-colors ${
+              currentPage === 'lists'
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+            }`}
+          >
+            {/* Checklist/tasks icon */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+            </svg>
+            <span className="text-xs mt-0.5 font-medium">Lists</span>
+          </button>
+        )}
       </div>
     </nav>
   );
@@ -229,7 +270,8 @@ function MealsPage({
   pendingCount,
   settings,
   onShowSettings,
-  onLogout,
+  unseenActivity,
+  onShowActivity,
   updateAvailable,
 }: {
   user: UserInfo;
@@ -237,10 +279,12 @@ function MealsPage({
   pendingCount: number;
   settings: ReturnType<typeof import('./hooks/useSettings').useSettings>['settings'];
   onShowSettings: () => void;
-  onLogout: () => void;
+  unseenActivity?: number;
+  onShowActivity?: () => void;
   updateAvailable?: boolean;
 }) {
   const isOnline = useOnlineStatus();
+  const fabRef = useVisualViewportPin<HTMLDivElement>();
   const todayRefElement = useRef<HTMLDivElement | null>(null);
   const handleTodayRefReady = useCallback((ref: HTMLDivElement | null) => {
     todayRefElement.current = ref;
@@ -313,7 +357,7 @@ function MealsPage({
 
   return (
     <>
-      <PageHeader title="Meals" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} />
+      <PageHeader title="Meals" user={user} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} unseenActivity={unseenActivity} onShowActivity={onShowActivity} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         {settings.showMealIdeas && (
           <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
@@ -332,8 +376,8 @@ function MealsPage({
         />
       </main>
 
-      {/* Floating Action Buttons */}
-      <div className="fixed bottom-20 right-4 z-20 flex flex-col gap-2">
+      {/* Floating Action Buttons (viewport-pinned like the bottom nav) */}
+      <div ref={fabRef} className="fixed bottom-20 right-4 z-20 flex flex-col gap-2">
         <button
           onClick={scrollToToday}
           className="glass-nav rounded-full px-3 py-1.5 transition-all duration-200 hover:scale-105 flex items-center gap-1.5 text-sm text-blue-600 dark:text-blue-400"
@@ -354,23 +398,36 @@ function GroceryPage({
   status,
   pendingCount,
   settings,
+  onUpdateSettings,
   onShowSettings,
-  onLogout,
+  unseenActivity,
+  onShowActivity,
   updateAvailable,
 }: {
   user: UserInfo;
   status: string;
   pendingCount: number;
   settings: ReturnType<typeof import('./hooks/useSettings').useSettings>['settings'];
+  onUpdateSettings: (updates: Partial<ReturnType<typeof import('./hooks/useSettings').useSettings>['settings']>) => void;
   onShowSettings: () => void;
-  onLogout: () => void;
+  unseenActivity?: number;
+  onShowActivity?: () => void;
   updateAvailable?: boolean;
 }) {
   return (
     <>
-      <PageHeader title="Grocery" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} />
+      <PageHeader title="Grocery" user={user} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} unseenActivity={unseenActivity} onShowActivity={onShowActivity} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
-        <GroceryListView compactView={settings.compactView} editHighlightColor={settings.editHighlightColor} />
+        <GroceryListView
+          compactView={settings.compactView}
+          editHighlightColor={settings.editHighlightColor}
+          selectedStores={settings.grocerySelectedStoreIds}
+          excludedStores={settings.groceryExcludedStoreIds}
+          onStoreFilterChange={(updates) => onUpdateSettings({
+            ...(updates.selected !== undefined ? { grocerySelectedStoreIds: updates.selected } : {}),
+            ...(updates.excluded !== undefined ? { groceryExcludedStoreIds: updates.excluded } : {}),
+          })}
+        />
       </main>
     </>
   );
@@ -381,23 +438,45 @@ function ListsPage({
   status,
   pendingCount,
   settings,
+  onUpdateSettings,
   onShowSettings,
-  onLogout,
+  unseenActivity,
+  onShowActivity,
   updateAvailable,
 }: {
   user: UserInfo;
   status: string;
   pendingCount: number;
   settings: ReturnType<typeof import('./hooks/useSettings').useSettings>['settings'];
+  onUpdateSettings: (updates: Partial<ReturnType<typeof import('./hooks/useSettings').useSettings>['settings']>) => void;
   onShowSettings: () => void;
-  onLogout: () => void;
+  unseenActivity?: number;
+  onShowActivity?: () => void;
   updateAvailable?: boolean;
 }) {
   return (
     <>
-      <PageHeader title="Lists" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} />
+      <PageHeader title="Lists" user={user} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} unseenActivity={unseenActivity} onShowActivity={onShowActivity} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
-        <ListsView user={user} editHighlightColor={settings.editHighlightColor} />
+        <ListsView
+          user={user}
+          editHighlightColor={settings.editHighlightColor}
+          notifyDefaults={{ edits: settings.notifyListEdits, due: settings.notifyListsDue }}
+          listNotifyOverrides={settings.listNotifyOverrides}
+          onSetListNotify={(listId, changes) => onUpdateSettings({
+            listNotifyOverrides: {
+              ...settings.listNotifyOverrides,
+              [listId]: { ...settings.listNotifyOverrides[listId], ...changes },
+            },
+          })}
+          taskNotifyOverrides={settings.taskNotifyOverrides}
+          onSetTaskNotify={(taskId, due) => onUpdateSettings({
+            taskNotifyOverrides: {
+              ...settings.taskNotifyOverrides,
+              [taskId]: { ...settings.taskNotifyOverrides[taskId], due },
+            },
+          })}
+        />
       </main>
     </>
   );
@@ -409,7 +488,8 @@ function PantryPage({
   pendingCount,
   settings,
   onShowSettings,
-  onLogout,
+  unseenActivity,
+  onShowActivity,
   updateAvailable,
 }: {
   user: UserInfo;
@@ -417,12 +497,13 @@ function PantryPage({
   pendingCount: number;
   settings: ReturnType<typeof import('./hooks/useSettings').useSettings>['settings'];
   onShowSettings: () => void;
-  onLogout: () => void;
+  unseenActivity?: number;
+  onShowActivity?: () => void;
   updateAvailable?: boolean;
 }) {
   return (
     <>
-      <PageHeader title="Pantry" user={user} onLogout={onLogout} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} />
+      <PageHeader title="Pantry" user={user} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} unseenActivity={unseenActivity} onShowActivity={onShowActivity} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         <PantryPanel editHighlightColor={settings.editHighlightColor} />
       </main>
@@ -432,8 +513,19 @@ function PantryPage({
 
 function AppContent() {
   const [user, setUser] = useState<UserInfo | null>(null);
+
+  // Self-heal the push subscription on launch: app updates can destroy it
+  // (the nuclear update path unregisters the SW, deleting its subscriptions),
+  // which used to silently reset the device's notification toggle to off.
+  const pushEnsuredRef = useRef(false);
+  useEffect(() => {
+    if (!user || pushEnsuredRef.current) return;
+    pushEnsuredRef.current = true;
+    ensurePushSubscription();
+  }, [user]);
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
   const [currentPage, setCurrentPage] = useState<Page>(() => {
     const saved = sessionStorage.getItem('meal-planner-tab');
     if (saved === 'meals' || saved === 'pantry' || saved === 'grocery' || saved === 'lists') return saved;
@@ -468,6 +560,21 @@ function AppContent() {
   const { status, pendingCount, clearAllPendingChanges, fetchPendingChanges, getSyncErrors, skipPendingChange } = useSync();
   const { isDark, toggle: toggleDarkMode } = useDarkMode();
   const { settings, updateSettings } = useSettings();
+
+  // Which tabs exist (Features setting). Missing keys count as enabled, and
+  // an all-off state (bad synced data) falls back to everything — the UI
+  // guarantees at least one, but settings arrive from other devices too.
+  const enabledPages = ALL_PAGES.filter(p => settings[PAGE_FEATURE_KEYS[p]] !== false);
+  const visiblePages = enabledPages.length > 0 ? enabledPages : ALL_PAGES;
+
+  // If the current tab's feature was just disabled (possibly from another
+  // device via settings sync), land on the first enabled tab.
+  useEffect(() => {
+    if (!visiblePages.includes(currentPage)) {
+      handlePageChange(visiblePages[0]);
+    }
+  }, [visiblePages, currentPage, handlePageChange]);
+  const activity = useActivity(!!user, user?.sub, settings);
   const isOnline = useOnlineStatus();
   useRealtime();
   const keyboardOpen = useKeyboardOpen();
@@ -1104,6 +1211,22 @@ function AppContent() {
     }
   }, [fetchAllData]);
 
+  // Refresh everything when the SSE stream reconnects: events emitted while
+  // disconnected (server deploy, network blip) are lost with no replay, and
+  // the focus/online triggers below don't fire if the app stayed visible.
+  // Throttled so a flapping connection doesn't hammer the API.
+  const lastSseRefreshRef = useRef(0);
+  useEffect(() => {
+    if (!user) return;
+    const onReconnected = () => {
+      if (Date.now() - lastSseRefreshRef.current < 10000) return;
+      lastSseRefreshRef.current = Date.now();
+      broadcastFullRefresh();
+    };
+    window.addEventListener('meal-planner-realtime-connected', onReconnected);
+    return () => window.removeEventListener('meal-planner-realtime-connected', onReconnected);
+  }, [user, broadcastFullRefresh]);
+
   // Refresh when the app regains focus (e.g. returning to PWA or browser tab).
   // SSE may have disconnected while in the background.
   useEffect(() => {
@@ -1213,7 +1336,8 @@ function AppContent() {
             pendingCount={pendingCount}
             settings={settings}
             onShowSettings={() => setShowSettings(true)}
-            onLogout={handleLogout}
+            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
         </UndoProvider>
@@ -1226,7 +1350,8 @@ function AppContent() {
             pendingCount={pendingCount}
             settings={settings}
             onShowSettings={() => setShowSettings(true)}
-            onLogout={handleLogout}
+            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
         </UndoProvider>
@@ -1238,8 +1363,10 @@ function AppContent() {
             status={status}
             pendingCount={pendingCount}
             settings={settings}
+            onUpdateSettings={updateSettings}
             onShowSettings={() => setShowSettings(true)}
-            onLogout={handleLogout}
+            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
         </UndoProvider>
@@ -1251,14 +1378,28 @@ function AppContent() {
             status={status}
             pendingCount={pendingCount}
             settings={settings}
+            onUpdateSettings={updateSettings}
             onShowSettings={() => setShowSettings(true)}
-            onLogout={handleLogout}
+            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
         </UndoProvider>
       )}
 
       {/* Settings Modal */}
+      {showActivity && (
+        <ActivityPanel
+          entries={activity.entries}
+          lastSeen={activity.lastSeen}
+          loading={activity.loading}
+          onClose={() => setShowActivity(false)}
+          onSeen={activity.markSeen}
+          updateAvailable={updateAvailable}
+          onApplyUpdate={applyUpdate}
+          updating={updating}
+        />
+      )}
       {showSettings && (
         <SettingsModal
           settings={settings}
@@ -1266,9 +1407,8 @@ function AppContent() {
           onClose={() => setShowSettings(false)}
           isDark={isDark}
           onToggleDarkMode={toggleDarkMode}
-          updateAvailable={updateAvailable}
-          onApplyUpdate={applyUpdate}
-          updating={updating}
+          accountName={user?.name || user?.email || ''}
+          onLogout={handleLogout}
           pendingCount={pendingCount}
           onClearPendingChanges={clearAllPendingChanges}
           onFetchPendingChanges={fetchPendingChanges}
@@ -1281,7 +1421,7 @@ function AppContent() {
       <UpdateNotification updateAvailable={updateAvailable} onApplyUpdate={applyUpdate} updating={updating} />
 
       {/* Bottom Navigation */}
-      <BottomNav currentPage={currentPage} onChange={handlePageChange} groceryCount={groceryCount} hidden={keyboardOpen} />
+      <BottomNav currentPage={currentPage} onChange={handlePageChange} groceryCount={groceryCount} hidden={keyboardOpen} pages={visiblePages} />
     </div>
   );
 }

@@ -100,6 +100,33 @@ func RunMigrations(db *gorm.DB) error {
 	// unique constraint) — best-effort, mirroring Python.
 	_ = db.Exec("DROP INDEX IF EXISTS ix_stores_name_lower").Error
 
+	// Hidden calendar events became per-user: rows that predate the sub
+	// column were household-wide hides, so clone one per known user (keeping
+	// the current behavior for everyone) and drop the unscoped originals.
+	// With no recorded users there is nothing to assign them to — leave them;
+	// they match no one, so those events simply reappear.
+	var legacyHidden []models.HiddenCalendarEvent
+	if err := db.Where("sub IS NULL OR sub = ''").Find(&legacyHidden).Error; err == nil && len(legacyHidden) > 0 {
+		var users []models.User
+		if err := db.Find(&users).Error; err == nil && len(users) > 0 {
+			log.Printf("Assigning %d legacy hidden events to %d users...", len(legacyHidden), len(users))
+			for _, h := range legacyHidden {
+				for _, u := range users {
+					clone := h
+					clone.ID = models.NewID()
+					clone.Sub = u.Sub
+					if err := db.Create(&clone).Error; err != nil {
+						return err
+					}
+				}
+				if err := db.Delete(&models.HiddenCalendarEvent{}, "id = ?", h.ID).Error; err != nil {
+					return err
+				}
+			}
+			log.Println("Migration complete: hidden events are per-user")
+		}
+	}
+
 	return nil
 }
 
@@ -111,7 +138,10 @@ func CleanupOldData(db *gorm.DB, retentionDays int) {
 
 	notes := db.Where("date < ?", notesCutoff).Delete(&models.MealNote{})
 	events := db.Where("event_date < ?", eventsCutoff).Delete(&models.CachedCalendarEvent{})
-	log.Printf("Cleaned up %d meal notes older than %s and %d cached events older than %s",
+	activityCutoff := today.AddDate(0, 0, -30)
+	activity := db.Where("at < ?", activityCutoff).Delete(&models.ActivityLog{})
+	log.Printf("Cleaned up %d meal notes older than %s, %d cached events older than %s, %d activity entries older than %s",
 		notes.RowsAffected, notesCutoff.Format("2006-01-02"),
-		events.RowsAffected, eventsCutoff.Format("2006-01-02"))
+		events.RowsAffected, eventsCutoff.Format("2006-01-02"),
+		activity.RowsAffected, activityCutoff.Format("2006-01-02"))
 }
