@@ -22,6 +22,11 @@ interface GroceryListViewProps {
   selectedStores?: string[];
   excludedStores?: string[];
   onStoreFilterChange?: (updates: { selected?: string[]; excluded?: string[] }) => void;
+  // Display preferences (synced user settings). See useSettings.
+  groupBy?: 'category' | 'none';
+  hideStores?: boolean;
+  sortBy?: 'manual' | 'alphabetical';
+  onUpdateDisplayPrefs?: (updates: { groupBy?: 'category' | 'none'; hideStores?: boolean; sortBy?: 'manual' | 'alphabetical' }) => void;
 }
 
 const EMPTY_FILTER: string[] = [];
@@ -32,8 +37,12 @@ export function GroceryListView({
   selectedStores = EMPTY_FILTER,
   excludedStores = EMPTY_FILTER,
   onStoreFilterChange,
+  groupBy = 'category',
+  hideStores = false,
+  sortBy = 'manual',
+  onUpdateDisplayPrefs,
 }: GroceryListViewProps) {
-  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, renameSection, deleteSection, createSection, moveItem, batchUpdateStoreId, itemDefaultsMap, removeItemDefault } = useGroceryList();
+  const { sections, loading, mergeList, toggleItem, addItem, deleteItem, editItem, clearChecked, clearAll, reorderSections, reorderItems, reorderItemsGlobal, renameSection, deleteSection, createSection, moveItem, batchUpdateStoreId, itemDefaultsMap, removeItemDefault } = useGroceryList();
   const { stores, createStore, renameStore, removeStore, reorderStores } = useStores({
     grocerySections: sections,
     onItemsStoreChanged: batchUpdateStoreId,
@@ -73,6 +82,14 @@ export function GroceryListView({
   const [showClearMenu, setShowClearMenu] = useState(false);
   const selectedStoreIds = useMemo(() => new Set(selectedStores), [selectedStores]);
   const excludedStoreIds = useMemo(() => new Set(excludedStores), [excludedStores]);
+  // When stores are hidden there is no chip UI to reveal or change the filter,
+  // so it must not silently filter the list — treat it as empty for all
+  // display decisions. The saved filter is preserved and returns when stores
+  // are shown again.
+  const activeSelectedStoreIds = useMemo(
+    () => (hideStores ? new Set<string>() : selectedStoreIds), [hideStores, selectedStoreIds]);
+  const activeExcludedStoreIds = useMemo(
+    () => (hideStores ? new Set<string>() : excludedStoreIds), [hideStores, excludedStoreIds]);
   const onStoreFilterChangeRef = useRef(onStoreFilterChange);
   onStoreFilterChangeRef.current = onStoreFilterChange;
 
@@ -192,35 +209,37 @@ export function GroceryListView({
     let filtered = sections.filter(s => s.items.some(i => !i.checked));
 
     // 1. Remove excluded stores' items
-    if (excludedStoreIds.size > 0) {
+    if (activeExcludedStoreIds.size > 0) {
       filtered = filtered
         .map(s => ({
           ...s,
           items: s.items.filter(i => {
-            if (!i.store_id) return !excludedStoreIds.has(NONE_STORE_ID);
-            return !excludedStoreIds.has(i.store_id);
+            if (!i.store_id) return !activeExcludedStoreIds.has(NONE_STORE_ID);
+            return !activeExcludedStoreIds.has(i.store_id);
           }),
         }))
         .filter(s => s.items.some(i => !i.checked));
     }
 
     // 2. If any stores are selected, show only those
-    if (selectedStoreIds.size > 0) {
+    if (activeSelectedStoreIds.size > 0) {
       filtered = filtered
         .map(s => ({
           ...s,
-          items: s.items.filter(i => !i.checked && (selectedStoreIds.has(NONE_STORE_ID)
-            ? !i.store_id || selectedStoreIds.has(i.store_id!)
-            : i.store_id && selectedStoreIds.has(i.store_id))),
+          items: s.items.filter(i => !i.checked && (activeSelectedStoreIds.has(NONE_STORE_ID)
+            ? !i.store_id || activeSelectedStoreIds.has(i.store_id!)
+            : i.store_id && activeSelectedStoreIds.has(i.store_id))),
         }))
         .filter(s => s.items.length > 0);
     }
 
-    if (sortByStore) {
+    const effectiveSortByStore = sortByStore && !hideStores;
+    if (sortBy === 'alphabetical' || effectiveSortByStore) {
       const storeOrder = new Map(stores.map(s => [s.id, s.position]));
       filtered = filtered.map(s => ({
         ...s,
         items: [...s.items].sort((a, b) => {
+          if (sortBy === 'alphabetical') return a.name.localeCompare(b.name);
           const aPos = a.store_id ? (storeOrder.get(a.store_id) ?? Infinity) : Infinity;
           const bPos = b.store_id ? (storeOrder.get(b.store_id) ?? Infinity) : Infinity;
           if (aPos !== bPos) return aPos - bPos;
@@ -229,7 +248,47 @@ export function GroceryListView({
       }));
     }
     return filtered;
-  }, [sections, selectedStoreIds, excludedStoreIds, sortByStore, stores]);
+  }, [sections, activeSelectedStoreIds, activeExcludedStoreIds, sortByStore, stores, sortBy, hideStores]);
+
+  // "Group by: none" — one flat list of every unchecked item across the
+  // (already filtered/sorted) visible sections. Items keep their section
+  // membership in the data; this is purely a view. Alphabetical re-sorts the
+  // whole list globally.
+  const flatItems = useMemo(() => {
+    const rows: { item: GrocerySection['items'][number]; sectionName: string }[] = [];
+    for (const s of visibleSections) {
+      for (const item of s.items) {
+        if (item.checked) continue;
+        rows.push({ item, sectionName: s.name });
+      }
+    }
+    if (sortBy === 'alphabetical') {
+      rows.sort((a, b) => a.item.name.localeCompare(b.item.name));
+    } else {
+      // Manual: follow the cross-section global order.
+      rows.sort((a, b) => (a.item.global_position ?? 0) - (b.item.global_position ?? 0));
+    }
+    return rows;
+  }, [visibleSections, sortBy]);
+
+  // Manual drag reorder only makes sense with the natural (manual) item order.
+  const itemDragEnabled = sortBy === 'manual';
+  // Flat-view (group by: none) manual drag reorders the global order.
+  const flatDragEnabled = groupBy === 'none' && sortBy === 'manual';
+
+  const flatContainerRef = useRef<HTMLDivElement>(null);
+  const handleFlatReorder = useCallback((from: number, to: number) => {
+    const ids = flatItems.map(r => r.item.id);
+    const [moved] = ids.splice(from, 1);
+    ids.splice(to, 0, moved);
+    reorderItemsGlobal(ids);
+  }, [flatItems, reorderItemsGlobal]);
+
+  const { dragState: flatDragState, getDragHandlers: getFlatDragHandlers, getHandleMouseDown: getFlatHandleMouseDown } = useDragReorder({
+    itemCount: flatItems.length,
+    onReorder: handleFlatReorder,
+    containerRef: flatContainerRef,
+  });
 
   const handleSectionReorder = useCallback((from: number, to: number) => {
     const fromSection = visibleSections[from];
@@ -374,7 +433,7 @@ export function GroceryListView({
   // When sort-by-store is active, drag indices correspond to the sorted visibleSections,
   // not the unsorted sections. Map sorted indices to the item IDs and use reorderItemsByIds.
   const handleReorderItems = useCallback((sectionId: string, from: number, to: number) => {
-    if (!sortByStore && selectedStoreIds.size === 0 && excludedStoreIds.size === 0) {
+    if ((!sortByStore || hideStores) && activeSelectedStoreIds.size === 0 && activeExcludedStoreIds.size === 0) {
       reorderItems(sectionId, from, to);
       return;
     }
@@ -388,7 +447,7 @@ export function GroceryListView({
     reordered.splice(to, 0, moved);
     // Pass the new ID order to the hook
     reorderItems(sectionId, from, to, reordered.map(i => i.id));
-  }, [sortByStore, selectedStoreIds, excludedStoreIds, visibleSections, reorderItems]);
+  }, [sortByStore, hideStores, activeSelectedStoreIds, activeExcludedStoreIds, visibleSections, reorderItems]);
 
   useEffect(() => {
     if (!showClearMenu) return;
@@ -508,29 +567,45 @@ export function GroceryListView({
       .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
   }, [sections]);
 
-  const formatSectionsForCopy = (secs: typeof sections) => {
+  // Format for copy exactly as displayed: flat (no headers) when grouped by
+  // none, sectioned otherwise, and honoring the selected sort order.
+  const formatForCopy = useCallback((secs: typeof sections) => {
+    const orderItems = (items: typeof secs[number]['items']) => (
+      sortBy === 'alphabetical'
+        ? [...items].sort((a, b) => a.name.localeCompare(b.name))
+        : groupBy === 'none'
+          ? [...items].sort((a, b) => (a.global_position ?? 0) - (b.global_position ?? 0))
+          : items
+    );
+    const lineFor = (item: typeof secs[number]['items'][number]) =>
+      item.quantity ? `(${item.quantity}) ${item.name}` : item.name;
+
+    if (groupBy === 'none') {
+      const items = orderItems(secs.flatMap(s => s.items.filter(i => !i.checked)));
+      return items.map(lineFor).join('\n').trim();
+    }
     const lines: string[] = [];
     for (const section of secs) {
       const unchecked = section.items.filter(i => !i.checked);
       if (unchecked.length === 0) continue;
       lines.push(`[${section.name}]`);
-      for (const item of unchecked) {
-        lines.push(item.quantity ? `(${item.quantity}) ${item.name}` : item.name);
+      for (const item of orderItems(unchecked)) {
+        lines.push(lineFor(item));
       }
       lines.push('');
     }
     return lines.join('\n').trim();
-  };
+  }, [groupBy, sortBy]);
 
   const handleCopyFullList = useCallback(() => {
-    navigator.clipboard.writeText(formatSectionsForCopy(sections));
+    navigator.clipboard.writeText(formatForCopy(sections));
     setShowClearMenu(false);
-  }, [sections]);
+  }, [sections, formatForCopy]);
 
   const handleCopyFiltered = useCallback(() => {
-    navigator.clipboard.writeText(formatSectionsForCopy(visibleSections));
+    navigator.clipboard.writeText(formatForCopy(visibleSections));
     setShowClearMenu(false);
-  }, [visibleSections]);
+  }, [visibleSections, formatForCopy]);
 
   const hasItems = sections.length > 0;
 
@@ -743,15 +818,17 @@ export function GroceryListView({
                       </div>
                     )}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <label className="block text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-0.5 ml-1">Store</label>
-                    <StoreAutocomplete
-                      stores={stores}
-                      selectedStoreId={quickAddStoreId}
-                      onSelect={setQuickAddStoreId}
-                      onCreate={createStore}
-                    />
-                  </div>
+                  {!hideStores && (
+                    <div className="flex-1 min-w-0">
+                      <label className="block text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-0.5 ml-1">Store</label>
+                      <StoreAutocomplete
+                        stores={stores}
+                        selectedStoreId={quickAddStoreId}
+                        onSelect={setQuickAddStoreId}
+                        onCreate={createStore}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Add Item button + paste link */}
@@ -784,7 +861,7 @@ export function GroceryListView({
             </button>
 
             {/* Sort by store toggle */}
-            {stores.length > 0 && (
+            {stores.length > 0 && !hideStores && (
               <button
                 onClick={() => setSortByStore(prev => !prev)}
                 className={`p-2 rounded ${sortByStore ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'}`}
@@ -810,7 +887,7 @@ export function GroceryListView({
                 </button>
                 {showClearMenu && (
                   <div className="absolute right-0 top-full mt-1 glass-menu rounded-lg py-1 z-20 min-w-[220px]">
-                    {visibleSections.length > 0 && (selectedStoreIds.size > 0 || excludedStoreIds.size > 0) && (
+                    {visibleSections.length > 0 && (activeSelectedStoreIds.size > 0 || activeExcludedStoreIds.size > 0) && (
                       <button
                         onClick={handleCopyFiltered}
                         className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -826,12 +903,12 @@ export function GroceryListView({
                         Copy full list
                       </button>
                     )}
-                    {stores.length > 0 && (
+                    {stores.length > 0 && !hideStores && (
                       <button
                         onClick={() => { handleToggleShowAllStores(); setShowClearMenu(false); }}
                         className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                       >
-                        {showAllStores ? 'Show only active stores' : 'Show all stores'}
+                        {showAllStores ? 'Show only active store chips' : 'Show all store chips'}
                       </button>
                     )}
                     {checkedItems.length > 0 && (
@@ -842,7 +919,7 @@ export function GroceryListView({
                         Clear checked ({checkedItems.length})
                       </button>
                     )}
-                    {visibleSections.length > 1 && (
+                    {groupBy !== 'none' && visibleSections.length > 1 && (
                       collapsedSections.size > 0 ? (
                         <button
                           onClick={() => { setCollapsedSections(new Set()); try { localStorage.setItem('meal-planner-grocery-collapsed', '[]'); } catch {} setShowClearMenu(false); }}
@@ -859,6 +936,38 @@ export function GroceryListView({
                         </button>
                       )
                     )}
+                    {/* Display preferences */}
+                    <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
+                    <div className="px-4 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">Group by</div>
+                    <MenuRadioOption
+                      label="Category"
+                      active={groupBy === 'category'}
+                      onClick={() => onUpdateDisplayPrefs?.({ groupBy: 'category' })}
+                    />
+                    <MenuRadioOption
+                      label="None"
+                      active={groupBy === 'none'}
+                      onClick={() => onUpdateDisplayPrefs?.({ groupBy: 'none' })}
+                    />
+                    <div className="px-4 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">Sort by</div>
+                    <MenuRadioOption
+                      label="Manually"
+                      active={sortBy === 'manual'}
+                      onClick={() => onUpdateDisplayPrefs?.({ sortBy: 'manual' })}
+                    />
+                    <MenuRadioOption
+                      label="Alphabetically"
+                      active={sortBy === 'alphabetical'}
+                      onClick={() => onUpdateDisplayPrefs?.({ sortBy: 'alphabetical' })}
+                    />
+                    <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
+                    <button
+                      onClick={() => { onUpdateDisplayPrefs?.({ hideStores: !hideStores }); setShowClearMenu(false); }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                    >
+                      {hideStores ? 'Show stores' : 'Hide stores'}
+                    </button>
+                    <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
                     <button
                       onClick={handleClearAll}
                       className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
@@ -871,7 +980,7 @@ export function GroceryListView({
             )}
 
             {/* Chevron toggle for store chips */}
-            {visibleStores.length > 0 && (
+            {visibleStores.length > 0 && !hideStores && (
               <button
                 onClick={() => { const next = !toolbarExpanded; setToolbarExpanded(next); try { localStorage.setItem('meal-planner-toolbar-expanded', String(next)); } catch {} }}
                 className="relative p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
@@ -890,7 +999,7 @@ export function GroceryListView({
       </div>
 
       {/* Store filter bar — collapsible */}
-      {toolbarExpanded && (
+      {toolbarExpanded && !hideStores && (
         <StoreFilterBar
           stores={visibleStores}
           selectedStoreIds={selectedStoreIds}
@@ -907,7 +1016,50 @@ export function GroceryListView({
       )}
       </div>
 
-      {/* Sections with unchecked items */}
+      {/* Group by "none" — one flat list of every unchecked item, no headers */}
+      {groupBy === 'none' ? (
+        flatItems.length > 0 && (
+          <div className="mt-4 glass rounded-lg py-1" ref={flatContainerRef} data-item-container>
+            {flatItems.map(({ item, sectionName }, index) => {
+              const isBeingDragged = flatDragState.isDragging && flatDragState.dragIndex === index;
+              const shiftStyle = computeShiftTransform(index, flatDragState);
+              return (
+                <div
+                  key={item.id}
+                  data-drag-index={index}
+                  style={{
+                    opacity: isBeingDragged ? 0.3 : 1,
+                    transform: shiftStyle || undefined,
+                    transition: flatDragState.isDragging ? 'transform 200ms ease-out, opacity 200ms' : undefined,
+                  }}
+                >
+                  <GroceryItemRow
+                    item={item}
+                    onToggle={toggleItem}
+                    onDelete={deleteItem}
+                    onEdit={editItem}
+                    dragHandlers={flatDragEnabled ? getFlatDragHandlers(index) : undefined}
+                    handleMouseDown={flatDragEnabled ? getFlatHandleMouseDown(index) : undefined}
+                    isDragging={flatDragState.isDragging}
+                    stores={stores}
+                    onStoreAssign={handleStoreAssign}
+                    onCreateStore={createStore}
+                    editingItemId={editingItemId}
+                    onEditingItemChange={handleEditingItemChange}
+                    commitEditingRef={commitEditingRef}
+                    sectionName={sectionName}
+                    allSections={sections}
+                    editHighlightColor={editHighlightColor}
+                    onChangeSection={handleChangeItemSection}
+                    hideStores={hideStores}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )
+      ) : (
+      /* Sections with unchecked items */
       <div ref={sectionContainerRef} className="mt-4">
         {visibleSections.map((section, sectionIndex) => {
           const isBeingDragged = sectionDragState.isDragging && sectionDragState.dragIndex === sectionIndex;
@@ -958,11 +1110,14 @@ export function GroceryListView({
                 allSections={sections}
                 editHighlightColor={editHighlightColor}
                 onChangeSection={handleChangeItemSection}
+                hideStores={hideStores}
+                itemDragEnabled={itemDragEnabled}
               />
             </div>
           );
         })}
       </div>
+      )}
 
       {/* Checked items */}
       {checkedItems.length > 0 && (
@@ -988,6 +1143,7 @@ export function GroceryListView({
                 allSections={sections}
                 editHighlightColor={editHighlightColor}
                 onChangeSection={handleChangeItemSection}
+                hideStores={hideStores}
               />
             ))}
           </div>
@@ -1031,6 +1187,24 @@ interface SectionCardProps {
   allSections: { id: string; name: string }[];
   editHighlightColor: string;
   onChangeSection: (itemId: string, targetSectionName: string) => void;
+  hideStores?: boolean;
+  itemDragEnabled?: boolean;
+}
+
+function MenuRadioOption({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center justify-between px-4 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+    >
+      <span>{label}</span>
+      {active && (
+        <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+      )}
+    </button>
+  );
 }
 
 function SectionCard({
@@ -1066,6 +1240,8 @@ function SectionCard({
   allSections,
   editHighlightColor,
   onChangeSection,
+  hideStores = false,
+  itemDragEnabled = true,
 }: SectionCardProps) {
   const uncheckedItems = section.items.filter(i => !i.checked);
   const itemContainerRef = useRef<HTMLDivElement>(null);
@@ -1178,8 +1354,8 @@ function SectionCard({
                   onToggle={onToggle}
                   onDelete={onDelete}
                   onEdit={onEdit}
-                  dragHandlers={getItemDragHandlers(index)}
-                  handleMouseDown={getItemHandleMouseDown(index)}
+                  dragHandlers={itemDragEnabled ? getItemDragHandlers(index) : undefined}
+                  handleMouseDown={itemDragEnabled ? getItemHandleMouseDown(index) : undefined}
                   isDragging={itemDragState.isDragging}
                   stores={stores}
                   onStoreAssign={onStoreAssign}
@@ -1191,6 +1367,7 @@ function SectionCard({
                   allSections={allSections}
                   editHighlightColor={editHighlightColor}
                   onChangeSection={onChangeSection}
+                  hideStores={hideStores}
                 />
               </div>
             );
@@ -1338,9 +1515,10 @@ interface GroceryItemRowProps {
   allSections: { id: string; name: string }[];
   editHighlightColor: string;
   onChangeSection: (itemId: string, targetSectionName: string) => void;
+  hideStores?: boolean;
 }
 
-function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging, stores, onStoreAssign: _onStoreAssign, onCreateStore, editingItemId, onEditingItemChange, commitEditingRef, sectionName, allSections, onChangeSection, editHighlightColor }: GroceryItemRowProps) {
+function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handleMouseDown, isDragging, stores, onStoreAssign: _onStoreAssign, onCreateStore, editingItemId, onEditingItemChange, commitEditingRef, sectionName, allSections, onChangeSection, editHighlightColor, hideStores = false }: GroceryItemRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
   const isEditing = editingItemId === item.id;
@@ -1462,12 +1640,14 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
           value={editSectionName}
           onChange={setEditSectionName}
         />
-        <StoreAutocomplete
-          stores={stores}
-          selectedStoreId={editStoreId}
-          onSelect={setEditStoreId}
-          onCreate={onCreateStore}
-        />
+        {!hideStores && (
+          <StoreAutocomplete
+            stores={stores}
+            selectedStoreId={editStoreId}
+            onSelect={setEditStoreId}
+            onCreate={onCreateStore}
+          />
+        )}
         <div className="flex items-center justify-end gap-3">
           <button
             onClick={cancelEdit}
@@ -1608,7 +1788,7 @@ function GroceryItemRow({ item, onToggle, onDelete, onEdit, dragHandlers, handle
             )}
             {item.name}
           </span>
-          {storeName && (
+          {storeName && !hideStores && (
             <div className="text-xs text-gray-400 dark:text-gray-500 leading-tight">
               {storeName}
             </div>

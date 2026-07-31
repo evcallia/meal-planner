@@ -10,6 +10,10 @@
     <meta name="apple-mobile-web-app-title" content="Meal Planner" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Meal Planner</title>
+    <!-- Self-heal for stale SW deployments (external file: CSP has no
+         unsafe-inline). Must load before the app bundle so it can catch the
+         bundle's own load failure. -->
+    <script src="/recover.js"></script>
   </head>
   <body>
     <div id="root">

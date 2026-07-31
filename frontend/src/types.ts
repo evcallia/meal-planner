@@ -70,6 +70,8 @@ export interface GroceryItem {
   quantity: string | null;
   checked: boolean;
   position: number;
+  // Cross-section manual order for the "group by: none" flat view.
+  global_position: number;
   store_id: string | null;
   updated_at: string;
 }

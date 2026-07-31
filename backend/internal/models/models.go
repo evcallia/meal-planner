@@ -192,9 +192,12 @@ type GroceryItem struct {
 	Quantity  *string   `gorm:"type:text"`
 	Checked   bool
 	Position  int
-	StoreID   *uuid.UUID `gorm:"type:uuid"`
-	CreatedAt time.Time  `gorm:"type:timestamp;autoCreateTime:false"`
-	UpdatedAt time.Time  `gorm:"type:timestamp;autoUpdateTime:false"`
+	// GlobalPosition is an independent, cross-section manual ordering used by
+	// the "group by: none" flat view. Section-scoped Position is unaffected.
+	GlobalPosition int
+	StoreID        *uuid.UUID `gorm:"type:uuid"`
+	CreatedAt      time.Time  `gorm:"type:timestamp;autoCreateTime:false"`
+	UpdatedAt      time.Time  `gorm:"type:timestamp;autoUpdateTime:false"`
 }
 
 func (m *GroceryItem) BeforeCreate(tx *gorm.DB) error {

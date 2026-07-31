@@ -35,6 +35,7 @@ export type ChangeType =
   | 'grocery-clear'
   | 'grocery-reorder-sections'
   | 'grocery-reorder-items'
+  | 'grocery-reorder-items-global'
   | 'grocery-rename-section'
   | 'grocery-move-item'
   | 'grocery-delete-section'
@@ -109,6 +110,9 @@ export interface LocalGroceryItem {
   quantity: string | null;
   checked: boolean;
   position: number;
+  // Cross-section flat order ("group by: none"). Optional: older cached rows
+  // and some optimistic writes omit it; display falls back to a stable order.
+  global_position?: number;
   store_id: string | null;
   updated_at: string;
 }

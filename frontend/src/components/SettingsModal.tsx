@@ -74,6 +74,7 @@ const typeLabels: Record<ChangeType, string> = {
   'grocery-clear': 'Clear grocery items',
   'grocery-reorder-sections': 'Reorder grocery sections',
   'grocery-reorder-items': 'Reorder grocery items',
+  'grocery-reorder-items-global': 'Reorder grocery items',
   'grocery-rename-section': 'Rename grocery section',
   'grocery-move-item': 'Move grocery item',
   'grocery-delete-section': 'Delete grocery section',
@@ -223,6 +224,9 @@ async function enrichPendingChanges(changes: PendingChange[]): Promise<EnrichedP
         detail = gSecName ? `${gSecName} (${gCount} items)` : `${gCount} items`;
         break;
       }
+      case 'grocery-reorder-items-global':
+        detail = `${((payload?.itemIds as string[]) || []).length} items`;
+        break;
       case 'grocery-move-item':
         detail = groceryItemMap.get(payload?.id as string) || '';
         break;

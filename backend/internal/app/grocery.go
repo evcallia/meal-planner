@@ -192,6 +192,7 @@ func (a *App) handleReplaceGrocery(w http.ResponseWriter, r *http.Request, _ *se
 		if err := tx.Where("1 = 1").Delete(&models.GrocerySection{}).Error; err != nil {
 			return err
 		}
+		globalPos := 0
 		for i, sec := range payload.Sections {
 			section := models.GrocerySection{Name: *sec.Name, Position: i}
 			if err := tx.Create(&section).Error; err != nil {
@@ -210,13 +211,15 @@ func (a *App) handleReplaceGrocery(w http.ResponseWriter, r *http.Request, _ *se
 					storeID = storeDefaultFor(tx, item.Name)
 				}
 				gi := models.GroceryItem{
-					SectionID: section.ID,
-					Name:      item.Name,
-					Quantity:  item.Quantity,
-					Checked:   item.Checked,
-					Position:  j,
-					StoreID:   storeID,
+					SectionID:      section.ID,
+					Name:           item.Name,
+					Quantity:       item.Quantity,
+					Checked:        item.Checked,
+					Position:       j,
+					GlobalPosition: globalPos,
+					StoreID:        storeID,
 				}
+				globalPos++
 				if err := tx.Create(&gi).Error; err != nil {
 					return err
 				}
@@ -409,6 +412,36 @@ func (a *App) handleReorderGroceryItems(w http.ResponseWriter, r *http.Request, 
 	httpx.WriteJSON(w, 200, J{"status": "ok"})
 }
 
+// handleReorderGroceryItemsGlobal sets the cross-section GlobalPosition for the
+// given items in the order received. Used by the "group by: none" flat view.
+// Section-scoped Position is untouched, so category grouping keeps its order.
+func (a *App) handleReorderGroceryItemsGlobal(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
+	var payload struct {
+		ItemIDs []string `json:"item_ids"`
+	}
+	if _, err := httpx.DecodeBody(r, &payload); err != nil {
+		httpx.ValidationError(w, "Invalid request body")
+		return
+	}
+	ids, err := parseUUIDList(payload.ItemIDs)
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+	for i, id := range ids {
+		a.DB.Model(&models.GroceryItem{}).Where("id = ?", id).
+			UpdateColumn("global_position", i)
+	}
+	positions := make([]J, 0, len(ids))
+	for i, id := range ids {
+		positions = append(positions, J{"id": id.String(), "global_position": i})
+	}
+	a.broadcast("grocery.updated", J{
+		"action": "items-reordered-global", "items": positions,
+	}, r)
+	httpx.WriteJSON(w, 200, J{"status": "ok"})
+}
+
 func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
 	itemID, err := httpx.ParseUUID(r.PathValue("itemId"))
 	if err != nil {
@@ -557,6 +590,13 @@ func (a *App) handleAddGroceryItem(w http.ResponseWriter, r *http.Request, _ *se
 		Order("position DESC").Limit(1).Scan(&maxPos).RowsAffected > 0 {
 		nextPos = maxPos.Position + 1
 	}
+	// Global (cross-section) order: append to the end of the flat list.
+	var maxGlobal struct{ GlobalPosition int }
+	nextGlobal := 0
+	if a.DB.Model(&models.GroceryItem{}).
+		Order("global_position DESC").Limit(1).Scan(&maxGlobal).RowsAffected > 0 {
+		nextGlobal = maxGlobal.GlobalPosition + 1
+	}
 
 	var storeID *uuid.UUID
 	if payload.StoreID != nil {
@@ -572,11 +612,12 @@ func (a *App) handleAddGroceryItem(w http.ResponseWriter, r *http.Request, _ *se
 	}
 
 	item := models.GroceryItem{
-		SectionID: sectionID,
-		Name:      strings.TrimSpace(payload.Name),
-		Quantity:  payload.Quantity,
-		Position:  nextPos,
-		StoreID:   storeID,
+		SectionID:      sectionID,
+		Name:           strings.TrimSpace(payload.Name),
+		Quantity:       payload.Quantity,
+		Position:       nextPos,
+		GlobalPosition: nextGlobal,
+		StoreID:        storeID,
 	}
 	if err := a.DB.Create(&item).Error; err != nil {
 		httpx.WriteError(w, err)

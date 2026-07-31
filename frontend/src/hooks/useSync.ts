@@ -46,6 +46,7 @@ import {
   clearGroceryItems as clearGroceryItemsAPI,
   reorderGrocerySections as reorderGrocerySectionsAPI,
   reorderGroceryItems as reorderGroceryItemsAPI,
+  reorderGroceryItemsGlobal as reorderGroceryItemsGlobalAPI,
   renameGrocerySection as renameGrocerySectionAPI,
   deleteGrocerySection as deleteGrocerySectionAPI,
   createGrocerySection as createGrocerySectionAPI,
@@ -487,6 +488,18 @@ export function useSync() {
             })
           );
           await reorderGroceryItemsAPI(realSectionId, resolvedItemIds);
+        } else if (change.type === 'grocery-reorder-items-global') {
+          const payload = change.payload as { itemIds: string[] };
+          const resolvedItemIds = await Promise.all(
+            payload.itemIds.map(async (id) => {
+              if (isTempId(id)) {
+                const mapped = await getTempIdMapping(id);
+                return mapped ?? id;
+              }
+              return id;
+            })
+          );
+          await reorderGroceryItemsGlobalAPI(resolvedItemIds);
         } else if (change.type === 'grocery-rename-section') {
           const payload = change.payload as { sectionId: string; name: string };
           let realSectionId = payload.sectionId;

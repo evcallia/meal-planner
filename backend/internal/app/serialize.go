@@ -64,10 +64,11 @@ func groceryItemJSON(item *models.GroceryItem) J {
 		"section_id": item.SectionID.String(),
 		"name":       item.Name,
 		"quantity":   strOrNil(item.Quantity),
-		"checked":    item.Checked,
-		"position":   item.Position,
-		"store_id":   uuidPtr(item.StoreID),
-		"updated_at": httpx.FormatDateTime(item.UpdatedAt),
+		"checked":         item.Checked,
+		"position":        item.Position,
+		"global_position": item.GlobalPosition,
+		"store_id":        uuidPtr(item.StoreID),
+		"updated_at":      httpx.FormatDateTime(item.UpdatedAt),
 	}
 }
 

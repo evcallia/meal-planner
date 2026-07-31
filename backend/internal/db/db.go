@@ -96,6 +96,36 @@ func RunMigrations(db *gorm.DB) error {
 		log.Println("Migration complete: pantry_items now use sections")
 	}
 
+	// Seed grocery items' global_position (the cross-section flat order used by
+	// the "group by: none" view) once, when the column was just added and every
+	// row is still 0. Order by section position then item position so the flat
+	// list initially matches the natural category order.
+	if db.Migrator().HasColumn(&models.GroceryItem{}, "global_position") {
+		var itemCount, seededCount int64
+		db.Model(&models.GroceryItem{}).Count(&itemCount)
+		db.Model(&models.GroceryItem{}).Where("global_position <> 0").Count(&seededCount)
+		if itemCount > 1 && seededCount == 0 {
+			log.Println("Seeding grocery_items.global_position for flat ordering...")
+			var sections []models.GrocerySection
+			if err := db.Preload("Items", func(tx *gorm.DB) *gorm.DB {
+				return tx.Order("position ASC")
+			}).Order("position ASC").Find(&sections).Error; err != nil {
+				return err
+			}
+			pos := 0
+			for si := range sections {
+				for ii := range sections[si].Items {
+					if err := db.Model(&models.GroceryItem{}).Where("id = ?", sections[si].Items[ii].ID).
+						UpdateColumn("global_position", pos).Error; err != nil {
+						return err
+					}
+					pos++
+				}
+			}
+			log.Println("Migration complete: grocery global_position seeded")
+		}
+	}
+
 	// Drop the broken functional index if it exists (replaced with a plain
 	// unique constraint) — best-effort, mirroring Python.
 	_ = db.Exec("DROP INDEX IF EXISTS ix_stores_name_lower").Error
