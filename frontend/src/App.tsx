@@ -427,6 +427,14 @@ function GroceryPage({
             ...(updates.selected !== undefined ? { grocerySelectedStoreIds: updates.selected } : {}),
             ...(updates.excluded !== undefined ? { groceryExcludedStoreIds: updates.excluded } : {}),
           })}
+          groupBy={settings.groceryGroupBy}
+          hideStores={settings.groceryHideStores}
+          sortBy={settings.grocerySortBy}
+          onUpdateDisplayPrefs={(updates) => onUpdateSettings({
+            ...(updates.groupBy !== undefined ? { groceryGroupBy: updates.groupBy } : {}),
+            ...(updates.hideStores !== undefined ? { groceryHideStores: updates.hideStores } : {}),
+            ...(updates.sortBy !== undefined ? { grocerySortBy: updates.sortBy } : {}),
+          })}
         />
       </main>
     </>
@@ -866,7 +874,7 @@ function AppContent() {
 
         if (detail.type === 'grocery.updated' && currentPageRef.current !== 'grocery') {
           if (pending.some(c => c.type.startsWith('grocery-'))) return;
-          const gPayload = detail.payload as { action?: string; sections?: GrocerySection[]; section?: GrocerySection; sectionId?: string; item?: GroceryItem; itemId?: string; fromSectionId?: string; toSectionId?: string; items?: { id: string; position: number }[]; name?: string };
+          const gPayload = detail.payload as { action?: string; sections?: GrocerySection[]; section?: GrocerySection; sectionId?: string; item?: GroceryItem; itemId?: string; fromSectionId?: string; toSectionId?: string; items?: { id: string; position?: number; global_position?: number }[]; name?: string };
           try {
             const raw = localStorage.getItem('meal-planner-grocery');
             let data: GrocerySection[] = raw ? JSON.parse(raw) : [];
@@ -936,6 +944,12 @@ function AppContent() {
                   });
                 }
                 break;
+              case 'items-reordered-global':
+                if (gPayload.items) {
+                  const gposMap = new Map(gPayload.items.map(i => [i.id, i.global_position]));
+                  data = data.map(s => ({ ...s, items: s.items.map(i => { const g = gposMap.get(i.id); return g !== undefined ? { ...i, global_position: g } : i; }) }));
+                }
+                break;
               case 'cleared-checked':
                 data = data.map(s => ({ ...s, items: s.items.filter(i => !i.checked) })).filter(s => s.items.length > 0);
                 break;
@@ -951,7 +965,7 @@ function AppContent() {
             await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
             await saveLocalGroceryItems(data.flatMap(s => s.items.map(i => ({
               id: i.id, section_id: i.section_id, name: i.name,
-              quantity: i.quantity, checked: i.checked, position: i.position, store_id: i.store_id, updated_at: i.updated_at,
+              quantity: i.quantity, checked: i.checked, position: i.position, global_position: i.global_position, store_id: i.store_id, updated_at: i.updated_at,
             }))));
           } catch {}
         }

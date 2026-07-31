@@ -100,6 +100,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/grocery/sections/{sectionId}", auth(a.handleDeleteGrocerySection))
 	mux.HandleFunc("PATCH /api/grocery/reorder-sections", auth(a.handleReorderGrocerySections))
 	mux.HandleFunc("PATCH /api/grocery/sections/{sectionId}/reorder-items", auth(a.handleReorderGroceryItems))
+	mux.HandleFunc("PATCH /api/grocery/reorder-items-global", auth(a.handleReorderGroceryItemsGlobal))
 	mux.HandleFunc("POST /api/grocery/items", auth(a.handleAddGroceryItem))
 	mux.HandleFunc("PATCH /api/grocery/items/{itemId}", auth(a.handleUpdateGroceryItem))
 	mux.HandleFunc("PATCH /api/grocery/items/{itemId}/move", auth(a.handleMoveGroceryItem))
@@ -243,7 +244,7 @@ func (a *App) securityHeaders(next http.Handler) http.Handler {
 }
 
 var noCacheFiles = map[string]bool{
-	"sw.js": true, "push-sw.js": true, "index.html": true, "version.json": true, "manifest.webmanifest": true,
+	"sw.js": true, "push-sw.js": true, "recover.js": true, "index.html": true, "version.json": true, "manifest.webmanifest": true,
 }
 
 // serveSPA mirrors the FastAPI static-file catch-all: exact file if present

@@ -372,6 +372,16 @@ export async function reorderGroceryItems(sectionId: string, itemIds: string[]):
   });
 }
 
+// Cross-section flat ordering for the "group by: none" view. itemIds is the
+// full ordered list of (unchecked) item ids; the server assigns global_position
+// by index. Section-scoped order is untouched.
+export async function reorderGroceryItemsGlobal(itemIds: string[]): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/grocery/reorder-items-global`, {
+    method: 'PATCH',
+    body: JSON.stringify({ item_ids: itemIds }),
+  });
+}
+
 export async function renameGrocerySection(sectionId: string, name: string): Promise<GrocerySection> {
   return fetchAPI<GrocerySection>(`/grocery/sections/${sectionId}`, {
     method: 'PATCH',

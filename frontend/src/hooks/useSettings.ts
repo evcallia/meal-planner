@@ -46,6 +46,13 @@ export interface Settings {
   // restarts (iOS may evict localStorage) and follows you across devices.
   grocerySelectedStoreIds: string[];
   groceryExcludedStoreIds: string[];
+  // Grocery display preferences (synced per-user). Group by category (the
+  // section headers) or 'none' (one flat list). Hide stores removes chips +
+  // per-item store labels without touching data. Sort items manually
+  // (drag order) or alphabetically.
+  groceryGroupBy: 'category' | 'none';
+  groceryHideStores: boolean;
+  grocerySortBy: 'manual' | 'alphabetical';
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -78,6 +85,9 @@ export const DEFAULT_SETTINGS: Settings = {
   taskNotifyOverrides: {},
   grocerySelectedStoreIds: [],
   groceryExcludedStoreIds: [],
+  groceryGroupBy: 'category',
+  groceryHideStores: false,
+  grocerySortBy: 'manual',
 };
 
 const STORAGE_KEY = 'meal-planner-settings';
