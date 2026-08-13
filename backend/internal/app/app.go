@@ -29,6 +29,8 @@ type App struct {
 	Calendar    *ical.Service
 	Push        *push.Service
 	oidc        *oidcClient
+
+	loginLimiter *loginLimiter
 }
 
 func New(settings *config.Settings, db *gorm.DB) *App {
@@ -39,6 +41,8 @@ func New(settings *config.Settings, db *gorm.DB) *App {
 		Broadcaster: realtime.NewBroadcaster(),
 		Calendar:    ical.NewService(settings, db),
 		Push:        push.New(db, settings.VapidSubject, time.Duration(settings.PushEditWindowMinutes)*time.Minute),
+
+		loginLimiter: newLoginLimiter(),
 	}
 	if settings.OIDCIssuer != "" {
 		a.oidc = newOIDCClient(settings)

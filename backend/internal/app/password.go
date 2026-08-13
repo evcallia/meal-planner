@@ -10,6 +10,8 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -20,6 +22,64 @@ import (
 )
 
 const minPasswordLength = 8
+
+// bcrypt only reads the first 72 bytes; GenerateFromPassword errors beyond
+// that. Reject explicitly instead of surfacing a 500.
+const maxPasswordBytes = 72
+
+// Online brute-force throttle: after this many failures for one username
+// within the window, logins for it get 429 until attempts age out. In-memory
+// (restart resets), like the push batch state.
+const (
+	maxLoginFailures   = 10
+	loginFailureWindow = 15 * time.Minute
+)
+
+type loginLimiter struct {
+	mu    sync.Mutex
+	fails map[string][]time.Time
+	now   func() time.Time // injectable for tests
+}
+
+func newLoginLimiter() *loginLimiter {
+	return &loginLimiter{fails: map[string][]time.Time{}, now: time.Now}
+}
+
+// prune drops aged-out failures for username; caller holds mu.
+func (l *loginLimiter) prune(username string) {
+	cutoff := l.now().Add(-loginFailureWindow)
+	kept := l.fails[username][:0]
+	for _, t := range l.fails[username] {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) == 0 {
+		delete(l.fails, username)
+		return
+	}
+	l.fails[username] = kept
+}
+
+func (l *loginLimiter) blocked(username string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.prune(username)
+	return len(l.fails[username]) >= maxLoginFailures
+}
+
+func (l *loginLimiter) recordFailure(username string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.prune(username)
+	l.fails[username] = append(l.fails[username], l.now())
+}
+
+func (l *loginLimiter) reset(username string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.fails, username)
+}
 
 // dummyHash keeps the compare cost identical for unknown usernames so the
 // login endpoint doesn't leak which usernames exist via timing.
@@ -65,6 +125,10 @@ func SetPasswordCredential(db *gorm.DB, username, password string) (string, erro
 }
 
 func (a *App) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
+	// Public endpoint: requireUser's body cap doesn't apply, so cap here.
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	}
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -73,18 +137,25 @@ func (a *App) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		httpx.Detail(w, http.StatusBadRequest, "Username and password required")
 		return
 	}
+	username := strings.ToLower(strings.TrimSpace(body.Username))
+	if a.loginLimiter.blocked(username) {
+		httpx.Detail(w, http.StatusTooManyRequests, "Too many failed attempts. Try again later.")
+		return
+	}
 	var cred models.UserCredential
-	err := a.DB.Where("username = ?", strings.ToLower(strings.TrimSpace(body.Username))).
-		First(&cred).Error
+	err := a.DB.Where("username = ?", username).First(&cred).Error
 	if err != nil {
 		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(body.Password))
+		a.loginLimiter.recordFailure(username)
 		httpx.Detail(w, http.StatusUnauthorized, "Invalid username or password")
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(cred.PasswordHash), []byte(body.Password)) != nil {
+		a.loginLimiter.recordFailure(username)
 		httpx.Detail(w, http.StatusUnauthorized, "Invalid username or password")
 		return
 	}
+	a.loginLimiter.reset(username)
 	// The credential pins the canonical sub; the directory row supplies
 	// email/name for the session (fall back to the username as email).
 	var user models.User
@@ -111,6 +182,10 @@ func (a *App) handleSetPassword(w http.ResponseWriter, r *http.Request, user *se
 	}
 	if len(body.Password) < minPasswordLength {
 		httpx.Detail(w, http.StatusBadRequest, "Password must be at least 8 characters")
+		return
+	}
+	if len(body.Password) > maxPasswordBytes {
+		httpx.Detail(w, http.StatusBadRequest, "Password must be at most 72 characters")
 		return
 	}
 	if user.Email == nil || *user.Email == "" {

@@ -60,6 +60,23 @@ Login: `POST /api/auth/login/password` `{username, password}` → 200 with
 `{sub, email, name}` + session cookie, or 401 `Invalid username or password`
 (unknown users burn a dummy bcrypt compare to keep timing flat).
 
+Hardening:
+
+- Passwords are stored ONLY as bcrypt hashes (salted, adaptive cost); the
+  plaintext is never persisted or logged. bcrypt reads at most 72 bytes, so
+  set-password rejects longer inputs with a 400 (8-char minimum too).
+- All credential/identity lookups go through GORM parameterized queries —
+  SQL metacharacters in usernames/passwords are inert (regression test:
+  `TestPasswordAuthSQLInjectionSafe`).
+- Brute-force throttle: 10 failed logins per username per 15 min → 429 until
+  attempts age out; success resets. In-memory, per-username (IPs are
+  unreliable behind proxies).
+- The login endpoint caps request bodies at 1 MB (it is public, so the
+  authenticated-route body cap doesn't apply to it).
+- `TestAllAPIRoutesAuthenticatedUnlessAllowlisted` asserts every /api route
+  is auth-wrapped unless on the explicit public allowlist (health, the auth
+  flow endpoints themselves).
+
 ## Endpoints
 
 | Endpoint | Notes |

@@ -5,12 +5,84 @@ package app
 
 import (
 	"net/http"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"mealplanner/internal/config"
 	"mealplanner/internal/models"
 )
+
+// Every /api route registered in app.go must be wrapped in auth(...) unless
+// it is on this explicit public allowlist — a new route can't silently ship
+// unauthenticated.
+func TestAllAPIRoutesAuthenticatedUnlessAllowlisted(t *testing.T) {
+	public := map[string]bool{
+		"GET /api/health":               true, // liveness probe
+		"GET /api/auth/methods":         true, // drives the login screen
+		"GET /api/auth/login":           true, // starts the OIDC flow
+		"GET /api/auth/callback":        true, // OIDC return leg
+		"POST /api/auth/logout":         true, // clears own session cookie only
+		"GET /api/auth/me":              true, // returns null when logged out
+		"GET /api/auth/dev-login":       true, // localhost-only registration
+		"POST /api/auth/login/password": true, // the login itself
+	}
+	src, err := os.ReadFile("app.go")
+	if err != nil {
+		t.Fatalf("read app.go: %v", err)
+	}
+	re := regexp.MustCompile(`mux\.HandleFunc\("((?:GET|POST|PUT|PATCH|DELETE) /api/[^"]*)",\s*(auth\()?`)
+	matches := re.FindAllStringSubmatch(string(src), -1)
+	if len(matches) < 50 {
+		t.Fatalf("only %d routes found — regex out of sync with app.go", len(matches))
+	}
+	for _, m := range matches {
+		route, authed := m[1], m[2] != ""
+		if !authed && !public[route] {
+			t.Errorf("route %q is neither auth-wrapped nor on the public allowlist", route)
+		}
+		if authed && public[route] {
+			t.Errorf("route %q is on the public allowlist but auth-wrapped — stale allowlist entry", route)
+		}
+	}
+}
+
+// Regression: credentials and identity lookups must be parameterized — SQL
+// metacharacters in username/password are data, never syntax.
+func TestPasswordAuthSQLInjectionSafe(t *testing.T) {
+	ta := newTestApp(t)
+	ta.POST("/api/auth/password", map[string]any{"password": "correct-horse"})
+
+	inj := `' OR '1'='1'; DROP TABLE user_credentials;--`
+	resp := ta.Anon("POST", "/api/auth/login/password", map[string]any{
+		"username": inj, "password": inj,
+	})
+	if resp.Status != 401 {
+		t.Fatalf("injection login status = %d, want 401: %s", resp.Status, resp.Body)
+	}
+	var count int64
+	if err := ta.App.DB.Model(&models.UserCredential{}).Count(&count).Error; err != nil {
+		t.Fatalf("user_credentials table gone: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("credential rows = %d, want 1", count)
+	}
+
+	// Legitimate quoting round-trips: an apostrophe email works end to end
+	// (through upsertCredential AND resolveIdentity's lower(email) match).
+	email := "o'brien@example.com"
+	cookie := ta.LoginAs("obrien-sub", email, "O'Brien")
+	if resp := ta.do("POST", "/api/auth/password", map[string]any{"password": "long-enough-pw"}, cookie); resp.Status != 200 {
+		t.Fatalf("set password status = %d: %s", resp.Status, resp.Body)
+	}
+	if resp := ta.Anon("POST", "/api/auth/login/password", map[string]any{
+		"username": email, "password": "long-enough-pw",
+	}); resp.Status != 200 || resp.Obj()["sub"] != "obrien-sub" {
+		t.Fatalf("apostrophe login = %d %s", resp.Status, resp.Body)
+	}
+}
 
 func TestAuthMethodsEndpoint(t *testing.T) {
 	ta := newTestApp(t)
@@ -119,10 +191,67 @@ func TestPasswordLoginRejections(t *testing.T) {
 	}
 }
 
+// After maxLoginFailures failures inside the window, even the CORRECT
+// password is rejected with 429 until attempts age out; a successful login
+// clears the counter.
+func TestPasswordLoginRateLimited(t *testing.T) {
+	ta := newTestApp(t)
+	ta.POST("/api/auth/password", map[string]any{"password": "correct-horse"})
+
+	now := time.Now()
+	ta.App.loginLimiter.now = func() time.Time { return now }
+
+	// A success mid-stream resets the counter…
+	for i := 0; i < maxLoginFailures-1; i++ {
+		ta.Anon("POST", "/api/auth/login/password", map[string]any{"username": TestEmail, "password": "wrong"})
+	}
+	if resp := ta.Anon("POST", "/api/auth/login/password", map[string]any{
+		"username": TestEmail, "password": "correct-horse",
+	}); resp.Status != 200 {
+		t.Fatalf("status after %d failures = %d, want 200", maxLoginFailures-1, resp.Status)
+	}
+
+	// …so it takes a full run of failures to block.
+	for i := 0; i < maxLoginFailures; i++ {
+		if resp := ta.Anon("POST", "/api/auth/login/password", map[string]any{
+			"username": TestEmail, "password": "wrong",
+		}); resp.Status != 401 {
+			t.Fatalf("failure %d status = %d, want 401", i, resp.Status)
+		}
+	}
+	resp := ta.Anon("POST", "/api/auth/login/password", map[string]any{
+		"username": TestEmail, "password": "correct-horse",
+	})
+	if resp.Status != 429 {
+		t.Fatalf("status while blocked = %d, want 429: %s", resp.Status, resp.Body)
+	}
+
+	// Only the hammered username is blocked.
+	if resp := ta.Anon("POST", "/api/auth/login/password", map[string]any{
+		"username": "other@example.com", "password": "wrong",
+	}); resp.Status != 401 {
+		t.Fatalf("other username status = %d, want 401 (not blocked)", resp.Status)
+	}
+
+	// Attempts age out of the window.
+	now = now.Add(loginFailureWindow + time.Minute)
+	if resp := ta.Anon("POST", "/api/auth/login/password", map[string]any{
+		"username": TestEmail, "password": "correct-horse",
+	}); resp.Status != 200 {
+		t.Fatalf("status after window = %d, want 200", resp.Status)
+	}
+}
+
 func TestSetPasswordValidation(t *testing.T) {
 	ta := newTestApp(t)
 	if resp := ta.POST("/api/auth/password", map[string]any{"password": "short"}); resp.Status != 400 {
 		t.Fatalf("short password status = %d, want 400", resp.Status)
+	}
+	// bcrypt reads at most 72 bytes — longer must be an explicit 400, not a 500.
+	if resp := ta.POST("/api/auth/password", map[string]any{
+		"password": strings.Repeat("x", 73),
+	}); resp.Status != 400 {
+		t.Fatalf("73-byte password status = %d, want 400", resp.Status)
 	}
 	// A session without an email has no username to key the credential on.
 	cookie := ta.LoginAs("no-email-sub", "", "")

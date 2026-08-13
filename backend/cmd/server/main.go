@@ -116,6 +116,9 @@ func runSetPassword(settings *config.Settings, username string) {
 	if len(password) < 8 {
 		log.Fatal("password must be at least 8 characters")
 	}
+	if len(password) > 72 {
+		log.Fatal("password must be at most 72 characters (bcrypt limit)")
+	}
 	gormDB, err := db.Open(settings)
 	if err != nil {
 		log.Fatalf("database connection failed: %v", err)
