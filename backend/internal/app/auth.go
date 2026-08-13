@@ -6,8 +6,8 @@ import (
 	"encoding/base64"
 	"log"
 	"net/http"
-	"net/url"
 	"sync"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -54,25 +54,54 @@ func randomToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// recordUser mirrors auth.record_user: best-effort upsert into the user
-// directory used by the tracker share picker.
-func (a *App) recordUser(u *session.UserInfo) {
-	if u == nil || u.Sub == "" {
-		return
-	}
-	var existing models.User
-	err := a.DB.Where("sub = ?", u.Sub).First(&existing).Error
-	if err == nil {
-		existing.Email = u.Email
-		existing.Name = u.Name
-		if err := a.DB.Save(&existing).Error; err != nil {
-			log.Printf("record_user update failed: %v", err)
+// resolveIdentity maps a login from ANY source (any OIDC provider, password
+// auth, dev-login) onto the canonical directory user, so identities survive
+// provider switches (docs/auth.md). Email is the linking key: an email match
+// wins over the provider's sub, and the matched row's existing sub becomes
+// the session identity — the new provider's sub never enters the DB. Without
+// a match the login creates a fresh directory row keyed by providerSub.
+func (a *App) resolveIdentity(providerSub string, email, name *string) *session.UserInfo {
+	update := func(row *models.User) *session.UserInfo {
+		if email != nil && *email != "" {
+			row.Email = email
 		}
-		return
+		if name != nil && *name != "" {
+			row.Name = name
+		}
+		if err := a.DB.Save(row).Error; err != nil {
+			log.Printf("resolve_identity update failed: %v", err)
+		}
+		return &session.UserInfo{Sub: row.Sub, Email: row.Email, Name: row.Name}
 	}
-	if err := a.DB.Create(&models.User{Sub: u.Sub, Email: u.Email, Name: u.Name}).Error; err != nil {
-		log.Printf("record_user insert failed: %v", err)
+	var row models.User
+	if email != nil && *email != "" {
+		// Oldest row wins if duplicates exist — that's the original identity.
+		err := a.DB.Where("email IS NOT NULL AND lower(email) = lower(?)", *email).
+			Order("last_seen ASC").First(&row).Error
+		if err == nil {
+			return update(&row)
+		}
 	}
+	if err := a.DB.Where("sub = ?", providerSub).First(&row).Error; err == nil {
+		return update(&row)
+	}
+	if err := a.DB.Create(&models.User{Sub: providerSub, Email: email, Name: name}).Error; err != nil {
+		log.Printf("resolve_identity insert failed: %v", err)
+	}
+	return &session.UserInfo{Sub: providerSub, Email: email, Name: name}
+}
+
+// saveUserSession writes the session cookie for a resolved identity (the
+// exact map shape the Python app stored).
+func (a *App) saveUserSession(w http.ResponseWriter, user *session.UserInfo) {
+	userMap := map[string]any{"sub": user.Sub, "email": nil, "name": nil}
+	if user.Email != nil {
+		userMap["email"] = *user.Email
+	}
+	if user.Name != nil {
+		userMap["name"] = *user.Name
+	}
+	a.Sessions.Save(w, map[string]any{"user": userMap})
 }
 
 func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -143,39 +172,44 @@ func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if name == nil || *name == "" {
 		name = claims.PreferredUsername
 	}
-	user := &session.UserInfo{Sub: claims.Sub, Email: claims.Email, Name: name}
-
-	newSession := map[string]any{"user": map[string]any{}}
-	userMap := map[string]any{"sub": user.Sub}
-	if user.Email != nil {
-		userMap["email"] = *user.Email
-	} else {
-		userMap["email"] = nil
-	}
-	if user.Name != nil {
-		userMap["name"] = *user.Name
-	} else {
-		userMap["name"] = nil
-	}
-	newSession["user"] = userMap
-	a.Sessions.Save(w, newSession)
-	a.recordUser(user)
+	user := a.resolveIdentity(claims.Sub, claims.Email, name)
+	a.saveUserSession(w, user)
 
 	http.Redirect(w, r, a.Settings.FrontendURL, http.StatusFound)
 }
 
+// endSessionEndpoint returns the provider's discovered end_session_endpoint,
+// or "" when discovery fails or the provider doesn't advertise one.
+func (c *oidcClient) endSessionEndpoint(ctx context.Context) string {
+	p, _, err := c.get(ctx)
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		EndSessionEndpoint string `json:"end_session_endpoint"`
+	}
+	if p.Claims(&claims) != nil {
+		return ""
+	}
+	return claims.EndSessionEndpoint
+}
+
 func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	a.Sessions.Clear(w)
-	if a.Settings.OIDCIssuer != "" {
-		if u, err := url.Parse(a.Settings.OIDCIssuer); err == nil {
-			httpx.WriteJSON(w, 200, map[string]string{
-				"status":          "logged out",
-				"end_session_url": u.Scheme + "://" + u.Host + "/if/flow/default-invalidation-flow/",
-			})
-			return
+	resp := map[string]string{"status": "logged out"}
+	// LOGOUT_URL wins (lets the operator end the provider session too, e.g.
+	// Authelia's /logout); else fall back to OIDC discovery. Logout must not
+	// hang or fail on an unreachable provider — short timeout, omit on error.
+	if a.Settings.LogoutURL != "" {
+		resp["end_session_url"] = a.Settings.LogoutURL
+	} else if a.oidc != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if u := a.oidc.endSessionEndpoint(ctx); u != "" {
+			resp["end_session_url"] = u
 		}
 	}
-	httpx.WriteJSON(w, 200, map[string]string{"status": "logged out"})
+	httpx.WriteJSON(w, 200, resp)
 }
 
 func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -189,10 +223,17 @@ func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 	email, name := "dev@localhost", "Dev User"
-	user := &session.UserInfo{Sub: "dev-user", Email: &email, Name: &name}
-	a.Sessions.Save(w, map[string]any{"user": map[string]any{
-		"sub": user.Sub, "email": email, "name": name,
-	}})
-	a.recordUser(user)
+	user := a.resolveIdentity("dev-user", &email, &name)
+	a.saveUserSession(w, user)
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// handleAuthMethods is public: it drives the login screen before any session
+// exists.
+func (a *App) handleAuthMethods(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, 200, map[string]any{
+		"oidc":      a.Settings.OIDCIssuer != "",
+		"oidc_name": a.Settings.OIDCProviderName,
+		"password":  a.Settings.PasswordAuthEnabled,
+	})
 }

@@ -3,6 +3,7 @@ import { Settings } from '../hooks/useSettings';
 import { getCalendarCacheStatus, refreshCalendarCache, CalendarCacheStatus, getHiddenCalendarEvents, unhideCalendarEvent, HiddenCalendarEvent, sendTestPushNotification } from '../api/client';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { isPushSupported, getPushSubscription, enablePush, disablePush } from '../utils/push';
+import { PasswordSetter } from './PasswordSetter';
 import {
   getLocalHiddenEvents,
   saveLocalHiddenEvent,
@@ -1213,6 +1214,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
         </div>
 
         {/* Account */}
+        {onLogout && <PasswordSetter />}
         {onLogout && (
           <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3">
             <span className="text-sm text-gray-500 dark:text-gray-400 truncate">

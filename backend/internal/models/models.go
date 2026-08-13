@@ -290,6 +290,22 @@ type User struct {
 	LastSeen time.Time `gorm:"type:timestamp;autoUpdateTime:false"`
 }
 
+// UserCredential is a username/password login mapped onto a directory user
+// (docs/auth.md). Username is stored lowercase (normally the user's email);
+// Sub points at the canonical users row so password logins share identity
+// with OIDC logins.
+type UserCredential struct {
+	Username     string    `gorm:"type:varchar(255);primaryKey"`
+	Sub          string    `gorm:"type:varchar(255);index;not null"`
+	PasswordHash string    `gorm:"type:text;not null"`
+	UpdatedAt    time.Time `gorm:"type:timestamp;autoUpdateTime:false"`
+}
+
+func (m *UserCredential) BeforeSave(tx *gorm.DB) error {
+	m.UpdatedAt = NowUTC()
+	return nil
+}
+
 func (m *User) BeforeCreate(tx *gorm.DB) error {
 	if m.LastSeen.IsZero() {
 		m.LastSeen = NowUTC()
@@ -518,7 +534,7 @@ func AllModels() []any {
 		&MealIdea{},
 		&CachedCalendarEvent{}, &CalendarCacheMetadata{}, &HiddenCalendarEvent{},
 		&Store{}, &GrocerySection{}, &GroceryItem{}, &ItemDefault{},
-		&UserSettings{}, &User{},
+		&UserSettings{}, &User{}, &UserCredential{},
 		&TrackerList{}, &TrackerShare{}, &TrackerListPosition{}, &TrackerTask{}, &TrackerLog{},
 		&PushSubscription{}, &VapidKeyPair{},
 		&ActivityLog{}, &ActivitySeen{}, &DueDigest{},

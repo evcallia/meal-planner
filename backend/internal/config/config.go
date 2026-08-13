@@ -24,11 +24,21 @@ type Settings struct {
 	AppleCalendarAppPassword string
 	AppleCalendarNames       string // comma-separated list of calendar names to sync
 
-	// OIDC (Authentik)
+	// OIDC (any spec-compliant provider — Authentik, Authelia, Keycloak, …)
 	OIDCIssuer       string
 	OIDCClientID     string
 	OIDCClientSecret string
 	OIDCRedirectURI  string
+	// OIDCProviderName labels the login button ("Sign in with X").
+	OIDCProviderName string
+
+	// PasswordAuthEnabled gates username/password login (default on;
+	// PASSWORD_AUTH_ENABLED=false disables the endpoints and login form).
+	PasswordAuthEnabled bool
+	// LogoutURL, when set, is returned to the frontend as the post-logout
+	// provider URL (e.g. Authelia's /logout) instead of the OIDC discovery
+	// end_session_endpoint.
+	LogoutURL string
 
 	// App
 	SecretKey                string
@@ -146,6 +156,10 @@ func Load(envPath string) *Settings {
 		OIDCClientID:     l.str("OIDC_CLIENT_ID", ""),
 		OIDCClientSecret: l.str("OIDC_CLIENT_SECRET", ""),
 		OIDCRedirectURI:  l.str("OIDC_REDIRECT_URI", "http://localhost:8000/api/auth/callback"),
+		OIDCProviderName: l.str("OIDC_PROVIDER_NAME", "SSO"),
+
+		PasswordAuthEnabled: l.boolean("PASSWORD_AUTH_ENABLED", true),
+		LogoutURL:           l.str("LOGOUT_URL", ""),
 
 		SecretKey:                l.str("SECRET_KEY", "change-me-in-production"),
 		FrontendURL:              l.str("FRONTEND_URL", "http://localhost:8000"),
@@ -174,6 +188,10 @@ func isLocalhostURL(raw string) bool {
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
+// IsLocalFrontend reports whether FRONTEND_URL points at localhost (gates
+// the dev-login endpoint).
+func (s *Settings) IsLocalFrontend() bool { return isLocalhostURL(s.FrontendURL) }
+
 // ValidateSecurity fails fast when running in a non-local environment with
 // insecure defaults (mirrors Settings.validate_security).
 func (s *Settings) ValidateSecurity() error {
@@ -191,8 +209,8 @@ func (s *Settings) ValidateSecurity() error {
 	if !s.SecureCookies {
 		return fmt.Errorf("SECURE_COOKIES must be true for non-local deployments.")
 	}
-	if !usesOIDC {
-		return fmt.Errorf("OIDC_ISSUER must be configured for non-local deployments.")
+	if !usesOIDC && !s.PasswordAuthEnabled {
+		return fmt.Errorf("OIDC_ISSUER or PASSWORD_AUTH_ENABLED must be configured for non-local deployments.")
 	}
 	if s.PostgresPassword == "changeme" {
 		return fmt.Errorf("POSTGRES_PASSWORD must be set to a secure value for non-local deployments.")

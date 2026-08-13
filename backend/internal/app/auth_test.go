@@ -187,19 +187,22 @@ func TestLogoutEndpoint(t *testing.T) {
 	}
 }
 
-// Go-specific extension of test_logout_endpoint: with OIDC configured the
-// response carries authentik's invalidation-flow URL (no discovery needed).
-func TestLogoutEndpointWithOIDC(t *testing.T) {
+// With OIDC configured the end_session_url comes from discovery — when the
+// provider is unreachable, logout still succeeds without one (no hardcoded
+// provider-specific fallback anymore).
+func TestLogoutEndpointWithOIDCDiscoveryUnavailable(t *testing.T) {
 	ta := newTestAppWith(t, func(s *config.Settings) {
-		s.OIDCIssuer = "https://auth.example.com/application/o/meal-planner/"
+		s.OIDCIssuer = "http://127.0.0.1:1" // unreachable, fails fast
 	})
 	resp := ta.POST("/api/auth/logout", nil)
 	if resp.Status != 200 {
 		t.Fatalf("status = %d, want 200: %s", resp.Status, resp.Body)
 	}
-	want := "https://auth.example.com/if/flow/default-invalidation-flow/"
-	if resp.Obj()["end_session_url"] != want {
-		t.Fatalf("end_session_url = %v, want %q", resp.Obj()["end_session_url"], want)
+	if resp.Obj()["status"] != "logged out" {
+		t.Fatalf("status field = %v", resp.Obj()["status"])
+	}
+	if _, ok := resp.Obj()["end_session_url"]; ok {
+		t.Fatalf("unexpected end_session_url in %s", resp.Body)
 	}
 }
 
