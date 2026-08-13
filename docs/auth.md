@@ -41,6 +41,30 @@ Consequences:
   directory row has no email can only be matched by sub.
 - Duplicate emails in `users` resolve to the oldest row (`last_seen ASC`).
 
+## Creating users — no self-registration
+
+The login screen can never create an account or credential. This is
+deliberate and load-bearing: email is the identity-linking key, so an open
+registration form would let anyone bind a password to an arbitrary email and
+inherit that account's data. Every account-creation path is trusted:
+
+| Path | Who's trusted | What happens |
+| --- | --- | --- |
+| First OIDC login | the OIDC provider | `resolveIdentity` auto-creates the directory user |
+| `server -set-password <username>` | the operator (shell/DB access) | creates the credential + a `local:<username>` user if no email match |
+| Settings → "Set password" | the already-authenticated user | credential for their own account only |
+| `/api/auth/dev-login` | localhost-only | fixed `dev-user` account |
+
+**Fresh install checklist:**
+
+1. *With OIDC*: set the `OIDC_*` env vars; each user just signs in — done.
+2. *Password-only* (no `OIDC_ISSUER`): run
+   `docker compose exec app ./server -set-password you@example.com`
+   (prompts for the password, or reads the `PASSWORD` env var; 8–72 chars)
+   once per household member, then sign in through the form. Until the first
+   `-set-password` run, the login form exists but rejects everything.
+3. *Local dev*: hit `/api/auth/dev-login`.
+
 ## Password credentials
 
 `user_credentials` table: `username` (PK, stored lowercase — an email),
