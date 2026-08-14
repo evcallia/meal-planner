@@ -10,6 +10,7 @@ services:
       # this mapping exists solely for local psql access from the host.
       - "127.0.0.1:5432:5432"
     environment:
+      TZ: ${TZ:-America/Los_Angeles}
       POSTGRES_DB: ${POSTGRES_DB:-mealplanner}
       POSTGRES_USER: ${POSTGRES_USER:-mealplanner}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
@@ -28,6 +29,9 @@ services:
     ports:
       - "${APP_PORT:-8000}:8000"
     environment:
+      # Log timestamps only — all DB datetimes are written via models.NowUTC()
+      # and stay UTC regardless of this.
+      TZ: ${TZ:-America/Los_Angeles}
       # Database
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
