@@ -124,16 +124,24 @@ func TestValidateSecurityAllSecure(t *testing.T) {
 	}
 }
 
-func TestValidateSecurityNonLocalRequiresOIDC(t *testing.T) {
+// Non-local deployments need SOME auth method: no OIDC and password auth
+// disabled is rejected, but password auth alone is enough.
+func TestValidateSecurityNonLocalRequiresSomeAuth(t *testing.T) {
 	s := baseSettings()
 	s.FrontendURL = "https://myapp.example.com"
 	s.OIDCIssuer = ""
+	s.PasswordAuthEnabled = false
 	s.SecretKey = "proper-secure-key-here"
 	s.SecureCookies = true
 	s.PostgresPassword = "a-real-password"
 	err := s.ValidateSecurity()
-	if err == nil || !strings.Contains(err.Error(), "OIDC_ISSUER must be configured") {
-		t.Fatalf("ValidateSecurity() = %v, want OIDC_ISSUER error", err)
+	if err == nil || !strings.Contains(err.Error(), "OIDC_ISSUER or PASSWORD_AUTH_ENABLED") {
+		t.Fatalf("ValidateSecurity() = %v, want auth-method error", err)
+	}
+
+	s.PasswordAuthEnabled = true
+	if err := s.ValidateSecurity(); err != nil {
+		t.Fatalf("ValidateSecurity() with password auth = %v, want nil", err)
 	}
 }
 

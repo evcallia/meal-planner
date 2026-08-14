@@ -42,6 +42,9 @@ func testSettings() *config.Settings {
 		FrontendURL:              "http://localhost:3000",
 		StaticDir:                "/nonexistent-static-dir",
 		MealHistoryRetentionDays: 365,
+		// Mirror the config.Load defaults so tests see the prod route table.
+		PasswordAuthEnabled: true,
+		OIDCProviderName:    "SSO",
 	}
 }
 

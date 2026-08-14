@@ -3,6 +3,9 @@ import { render, screen, fireEvent } from '@testing-library/react';
 
 vi.mock('../../api/client', () => ({
   getLoginUrl: () => '/api/auth/login',
+  getAuthMethods: vi.fn(() =>
+    Promise.resolve({ oidc: true, oidc_name: 'SSO', password: true })
+  ),
 }));
 
 import { ReAuthModal } from '../ReAuthModal';

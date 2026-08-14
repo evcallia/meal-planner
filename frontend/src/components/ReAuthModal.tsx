@@ -1,12 +1,29 @@
-import { getLoginUrl } from '../api/client';
+import { useEffect, useState } from 'react';
+import { getAuthMethods, getLoginUrl } from '../api/client';
 
 interface ReAuthModalProps {
   pendingCount: number;
 }
 
 export function ReAuthModal({ pendingCount }: ReAuthModalProps) {
+  // With OIDC the fastest path back is the provider redirect; password-only
+  // deployments instead reload so the app boots into the login screen.
+  const [oidcEnabled, setOidcEnabled] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAuthMethods()
+      .then((m) => { if (!cancelled) setOidcEnabled(m.oidc); })
+      .catch(() => { /* keep the OIDC default */ });
+    return () => { cancelled = true; };
+  }, []);
+
   const handleSignIn = () => {
-    window.location.href = getLoginUrl();
+    if (oidcEnabled) {
+      window.location.href = getLoginUrl();
+    } else {
+      window.location.reload();
+    }
   };
 
   return (

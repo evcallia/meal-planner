@@ -82,6 +82,10 @@ vi.mock('../api/client', () => ({
   getCurrentUser: vi.fn(),
   logout: vi.fn().mockResolvedValue(null),
   getLoginUrl: vi.fn(() => '/api/auth/login'),
+  getAuthMethods: vi.fn(() =>
+    Promise.resolve({ oidc: true, oidc_name: 'SSO', password: true })
+  ),
+  loginWithPassword: vi.fn(),
   getDays: vi.fn(),
   updateNotes: vi.fn(),
   getPantryList: vi.fn(() => Promise.resolve([])),
@@ -200,7 +204,8 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/meal planner/i)).toBeInTheDocument();
-      expect(screen.getByText(/sign in/i)).toBeInTheDocument();
+      expect(screen.getByText('Sign in with SSO')).toBeInTheDocument();
+      expect(screen.getByLabelText('Password')).toBeInTheDocument();
     });
   });
 
@@ -244,7 +249,7 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(mockLogout).toHaveBeenCalled();
-      expect(screen.getByText(/sign in/i)).toBeInTheDocument();
+      expect(screen.getByText('Sign in with SSO')).toBeInTheDocument();
     });
   });
 
@@ -316,7 +321,7 @@ describe('App', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText(/sign in/i)).toBeInTheDocument();
+      expect(screen.getByText('Sign in with SSO')).toBeInTheDocument();
       expect(consoleSpy).toHaveBeenCalledWith('Auth check failed:', expect.any(Error));
     });
 

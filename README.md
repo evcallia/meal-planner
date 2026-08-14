@@ -15,14 +15,14 @@ A mobile-focused Progressive Web App for meal planning that integrates with Appl
 - Offline support - works without internet, syncs when back online
   - Background caching of 1 week past and 3 weeks future for seamless offline access
   - Queued changes sync automatically when back online
-- SSO authentication via OIDC (Authentik)
+- SSO via any OIDC provider (Authelia, Authentik, Keycloak, …) and/or built-in username/password login
 - Optional frontend performance logging (console-gated)
 
 ## Tech Stack
 
 - **Backend**: Go, PostgreSQL, GORM
 - **Frontend**: React, TypeScript, Tailwind CSS, Vite
-- **Auth**: OIDC via Authentik
+- **Auth**: any OIDC provider and/or username/password — see [docs/auth.md](docs/auth.md)
 - **Containerization**: Docker Compose
 
 ## Quick Start (Docker)
@@ -44,6 +44,38 @@ A mobile-focused Progressive Web App for meal planning that integrates with Appl
    ```
 
 4. Visit http://localhost:8000
+
+## Authentication & Creating Users
+
+Full details in [docs/auth.md](docs/auth.md). The short version: there is **no
+self-registration** — this is deliberate. Accounts come into existence one of
+three ways:
+
+- **OIDC (recommended)**: configure `OIDC_ISSUER`/`OIDC_CLIENT_ID`/
+  `OIDC_CLIENT_SECRET` for any spec-compliant provider. Users are created
+  automatically on their first successful login — the provider decides who
+  gets in.
+- **Username/password**: enabled by default (`PASSWORD_AUTH_ENABLED=false` to
+  disable). Credentials are created by the operator, never from the login
+  screen:
+  ```bash
+  # Docker (prompts for the password; or pass PASSWORD=... in the env)
+  docker compose exec app ./server -set-password you@example.com
+
+  # From source
+  go run ./backend/cmd/server -set-password you@example.com
+  ```
+  Signed-in users can also set their own password under
+  **Settings → Password sign-in → Set password** (handy before switching
+  OIDC providers).
+- **Local dev**: with OIDC unset and a localhost `FRONTEND_URL`, visit
+  `/api/auth/dev-login` to sign in as `dev-user` with zero setup.
+
+Accounts are keyed by email across methods: a password login and an OIDC
+login with the same email are the same account, and switching OIDC providers
+keeps all data (see "Identity model" in docs/auth.md). For a fresh
+password-only install, run `-set-password` once per household member, then
+sign in through the login form.
 
 ## Local Development
 
@@ -139,7 +171,7 @@ When enabled, the console will log:
 When developing locally with the frontend on port 5173:
 - Set `OIDC_REDIRECT_URI=http://localhost:8000/api/auth/callback` in `.env`
 - Set `FRONTEND_URL=http://localhost:5173` in `.env`
-- Configure Authentik to allow redirect to `http://localhost:8000/api/auth/callback`
+- Configure your OIDC provider to allow redirect to `http://localhost:8000/api/auth/callback` (or skip OIDC entirely and use dev-login / password auth)
 
 ## Testing
 

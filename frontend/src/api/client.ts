@@ -150,6 +150,46 @@ export function getLoginUrl(): string {
   return `${API_BASE}/auth/login`;
 }
 
+export interface AuthMethods {
+  oidc: boolean;
+  oidc_name: string;
+  password: boolean;
+}
+
+// Public endpoint used by the login screen/re-auth modal — plain fetch (no
+// fetchAPI) so a 401-adjacent state can't recursively trip auth-required.
+export async function getAuthMethods(): Promise<AuthMethods> {
+  const res = await fetch(`${API_BASE}/auth/methods`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to load auth methods');
+  return res.json();
+}
+
+export async function loginWithPassword(username: string, password: string): Promise<UserInfo> {
+  const res = await fetch(`${API_BASE}/auth/login/password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    let detail = 'Sign-in failed';
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      // non-JSON error body — keep the generic message
+    }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+export async function setPassword(password: string): Promise<void> {
+  await fetchAPI<{ status: string }>('/auth/password', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+}
+
 export async function getPantryList(): Promise<PantrySection[]> {
   return fetchAPI<PantrySection[]>('/pantry');
 }

@@ -29,6 +29,8 @@ type App struct {
 	Calendar    *ical.Service
 	Push        *push.Service
 	oidc        *oidcClient
+
+	loginLimiter *loginLimiter
 }
 
 func New(settings *config.Settings, db *gorm.DB) *App {
@@ -39,6 +41,8 @@ func New(settings *config.Settings, db *gorm.DB) *App {
 		Broadcaster: realtime.NewBroadcaster(),
 		Calendar:    ical.NewService(settings, db),
 		Push:        push.New(db, settings.VapidSubject, time.Duration(settings.PushEditWindowMinutes)*time.Minute),
+
+		loginLimiter: newLoginLimiter(),
 	}
 	if settings.OIDCIssuer != "" {
 		a.oidc = newOIDCClient(settings)
@@ -61,16 +65,26 @@ func (a *App) Handler() http.Handler {
 	})
 
 	// Auth
+	mux.HandleFunc("GET /api/auth/methods", a.handleAuthMethods)
 	mux.HandleFunc("GET /api/auth/login", a.handleLogin)
 	mux.HandleFunc("GET /api/auth/callback", a.handleCallback)
 	mux.HandleFunc("POST /api/auth/logout", a.handleLogout)
 	mux.HandleFunc("GET /api/auth/me", a.handleMe)
-	if a.Settings.OIDCIssuer == "" {
+	// Localhost-only: password auth now satisfies ValidateSecurity without
+	// OIDC, so "no OIDC" no longer implies a local deployment.
+	if a.Settings.OIDCIssuer == "" && a.Settings.IsLocalFrontend() {
 		mux.HandleFunc("GET /api/auth/dev-login", a.handleDevLogin)
+	}
+	if a.Settings.PasswordAuthEnabled {
+		mux.HandleFunc("POST /api/auth/login/password", a.handlePasswordLogin)
 	}
 
 	// Authenticated API routes. auth() wraps a handler with the session check.
 	auth := a.requireUser
+
+	if a.Settings.PasswordAuthEnabled {
+		mux.HandleFunc("POST /api/auth/password", auth(a.handleSetPassword))
+	}
 
 	// Realtime (SSE)
 	mux.HandleFunc("GET /api/stream", auth(a.handleStream))

@@ -7,6 +7,7 @@ import { GroceryListView } from './components/GroceryListView';
 import { ListsView } from './components/ListsView';
 import { StatusChip, StatusToast } from './components/StatusBar';
 import { ReAuthModal } from './components/ReAuthModal';
+import { LoginScreen } from './components/LoginScreen';
 import { SettingsModal } from './components/SettingsModal';
 import { ActivityPanel } from './components/ActivityPanel';
 import { UpdateNotification } from './components/UpdateNotification';
@@ -18,7 +19,7 @@ import { useKeyboardOpen } from './hooks/useKeyboardOpen';
 import { useVisualViewportPin } from './hooks/useVisualViewportPin';
 import { useActivity } from './hooks/useActivity';
 import { ensurePushSubscription } from './utils/push';
-import { getCurrentUser, getLoginUrl, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents, refreshCalendarCache, getTrackerLists } from './api/client';
+import { getCurrentUser, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents, refreshCalendarCache, getTrackerLists } from './api/client';
 import { UserInfo, GrocerySection, GroceryItem, PantrySection, PantryItem, Store, MealIdea, ConnectionStatus, TrackerList, TrackerTask } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
@@ -1294,13 +1295,13 @@ function AppContent() {
       const isPWA = window.matchMedia('(display-mode: standalone)').matches
         || (navigator as unknown as { standalone?: boolean }).standalone === true;
       if (isPWA) {
-        // PWA: full-page redirect to authentik's invalidation flow.
+        // PWA: full-page redirect to the provider's logout URL.
         // User will need to navigate back to the app after.
         window.location.href = endSessionUrl;
       } else {
-        // Desktop browser: open invalidation flow in a popup to kill
-        // authentik's session, then close it — user stays on login screen
-        const popup = window.open(endSessionUrl, 'authentik_logout', 'width=1,height=1,left=-100,top=-100');
+        // Desktop browser: open the provider's logout URL in a popup to kill
+        // its session, then close it — user stays on login screen
+        const popup = window.open(endSessionUrl, 'sso_logout', 'width=1,height=1,left=-100,top=-100');
         setTimeout(() => { popup?.close(); }, 3000);
       }
     }
@@ -1320,18 +1321,12 @@ function AppContent() {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-gray-100 dark:bg-transparent flex items-center justify-center p-4">
-        <div className="glass rounded-lg p-8 max-w-sm w-full text-center">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">Meal Planner</h1>
-          <p className="text-gray-600 dark:text-gray-400 mb-6">Plan your weekly meals with ease</p>
-          <a
-            href={getLoginUrl()}
-            className="inline-block w-full py-3 px-4 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition-colors"
-          >
-            Sign in to continue
-          </a>
-        </div>
-      </div>
+      <LoginScreen
+        onLoggedIn={(loggedInUser) => {
+          localStorage.setItem('meal-planner-user', JSON.stringify(loggedInUser));
+          setUser(loggedInUser);
+        }}
+      />
     );
   }
 

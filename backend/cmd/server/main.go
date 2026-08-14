@@ -2,12 +2,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 	// Embed the timezone database so TZID resolution in iCal parsing works
@@ -20,7 +24,21 @@ import (
 )
 
 func main() {
+	setPassword := flag.String("set-password", "",
+		"create/update a password login for this username (password read from the PASSWORD env var or stdin), then exit")
+	setEmail := flag.String("set-email", "",
+		"update the directory email for the user whose current email is this value; the new email is the next argument (usage: -set-email old@x.com new@x.com), then exit")
+	flag.Parse()
+
 	settings := config.Load(".env")
+	if *setPassword != "" {
+		runSetPassword(settings, *setPassword)
+		return
+	}
+	if *setEmail != "" {
+		runSetEmail(settings, *setEmail)
+		return
+	}
 	if err := settings.ValidateSecurity(); err != nil {
 		log.Fatalf("security validation failed: %v", err)
 	}
@@ -86,4 +104,59 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+// runSetPassword handles `server -set-password <username>`: upserts a
+// user_credentials row (linking to an existing directory user by email) so
+// the account can sign in with username/password.
+func runSetPassword(settings *config.Settings, username string) {
+	password := os.Getenv("PASSWORD")
+	if password == "" {
+		fmt.Fprintf(os.Stderr, "Password for %s: ", username)
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if err != nil {
+			log.Fatalf("read password: %v", err)
+		}
+		password = strings.TrimRight(line, "\r\n")
+	}
+	if len(password) < 8 {
+		log.Fatal("password must be at least 8 characters")
+	}
+	if len(password) > 72 {
+		log.Fatal("password must be at most 72 characters (bcrypt limit)")
+	}
+	gormDB, err := db.Open(settings)
+	if err != nil {
+		log.Fatalf("database connection failed: %v", err)
+	}
+	if err := db.CreateAll(gormDB); err != nil {
+		log.Fatalf("create_all failed: %v", err)
+	}
+	sub, err := app.SetPasswordCredential(gormDB, username, password)
+	if err != nil {
+		log.Fatalf("set password failed: %v", err)
+	}
+	fmt.Printf("password set for %s (sub %s)\n", strings.ToLower(strings.TrimSpace(username)), sub)
+}
+
+// runSetEmail handles `server -set-email <old> <new>`: the escape hatch for
+// a user who changed provider AND email before any login could record an
+// identity alias (docs/auth.md).
+func runSetEmail(settings *config.Settings, oldEmail string) {
+	if flag.NArg() != 1 {
+		log.Fatal("usage: server -set-email old@example.com new@example.com")
+	}
+	newEmail := flag.Arg(0)
+	gormDB, err := db.Open(settings)
+	if err != nil {
+		log.Fatalf("database connection failed: %v", err)
+	}
+	if err := db.CreateAll(gormDB); err != nil {
+		log.Fatalf("create_all failed: %v", err)
+	}
+	sub, err := app.SetUserEmail(gormDB, oldEmail, newEmail)
+	if err != nil {
+		log.Fatalf("set email failed: %v", err)
+	}
+	fmt.Printf("email updated %s -> %s (sub %s)\n", oldEmail, newEmail, sub)
 }

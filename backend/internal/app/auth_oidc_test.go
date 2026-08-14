@@ -73,6 +73,7 @@ func newFakeOIDCProvider(t *testing.T, clientID string) *fakeOIDCProvider {
 			"issuer":                                p.server.URL,
 			"authorization_endpoint":                p.server.URL + "/authorize",
 			"token_endpoint":                        p.server.URL + "/token",
+			"end_session_endpoint":                  p.server.URL + "/end-session",
 			"jwks_uri":                              p.server.URL + "/jwks",
 			"response_types_supported":              []string{"code"},
 			"subject_types_supported":               []string{"public"},
@@ -296,6 +297,66 @@ func TestCallbackInvalidNonce(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Invalid nonce") {
 		t.Fatalf("status = %d body = %s, want 400 Invalid nonce", rec.Code, rec.Body.String())
+	}
+}
+
+// The provider-switch scenario (docs/auth.md): a user whose data is keyed by
+// their old provider's sub logs in via a NEW provider issuing a different sub
+// but the same email — the session must resolve to the ORIGINAL sub so no
+// data is orphaned, and the new sub must not enter the directory.
+func TestCallbackLinksIdentityByEmail(t *testing.T) {
+	provider := newFakeOIDCProvider(t, "meal-planner-client")
+	ta := newOIDCTestApp(t, provider)
+
+	email, name := "evan@example.com", "Old Name"
+	if err := ta.App.DB.Create(&models.User{Sub: "authentik-sub-123", Email: &email, Name: &name}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	cookie, state, nonce := startLogin(t, ta)
+	provider.extraClaims = map[string]any{
+		// Different sub, differently-cased same email.
+		"sub": "authelia-sub-456", "email": "Evan@Example.com", "name": "Evan", "nonce": nonce,
+	}
+	req := httptest.NewRequest("GET", "/api/auth/callback?code=fake-code&state="+url.QueryEscape(state), nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	ta.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("callback status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	me := ta.do("GET", "/api/auth/me", nil, rec.Result().Cookies()[0])
+	if me.Obj()["sub"] != "authentik-sub-123" {
+		t.Fatalf("sub = %v, want the original authentik-sub-123", me.Obj()["sub"])
+	}
+
+	// Directory row refreshed in place; the new provider's sub never lands.
+	var row models.User
+	if err := ta.App.DB.Where("sub = ?", "authentik-sub-123").First(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Name == nil || *row.Name != "Evan" {
+		t.Fatalf("name = %v, want refreshed to Evan", row.Name)
+	}
+	var count int64
+	ta.App.DB.Model(&models.User{}).Where("sub = ?", "authelia-sub-456").Count(&count)
+	if count != 0 {
+		t.Fatal("new provider sub leaked into the users table")
+	}
+}
+
+// Logout returns the provider's discovered end_session_endpoint when no
+// LOGOUT_URL override is set.
+func TestLogoutUsesDiscoveredEndSessionEndpoint(t *testing.T) {
+	provider := newFakeOIDCProvider(t, "meal-planner-client")
+	ta := newOIDCTestApp(t, provider)
+	resp := ta.do("POST", "/api/auth/logout", nil, nil)
+	if resp.Status != 200 {
+		t.Fatalf("status = %d: %s", resp.Status, resp.Body)
+	}
+	if resp.Obj()["end_session_url"] != provider.server.URL+"/end-session" {
+		t.Fatalf("end_session_url = %v, want discovered endpoint", resp.Obj()["end_session_url"])
 	}
 }
 

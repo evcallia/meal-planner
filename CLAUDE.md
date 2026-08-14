@@ -252,13 +252,19 @@ The backend is a Go rewrite of the original FastAPI app (same API contract). Lay
 - **Guard SSE during debounce**: The `pantry.updated` SSE handler skips `refreshItems()` when `Object.keys(pendingUpdatesRef.current).length > 0` — prevents stale server state from overwriting optimistic changes during rapid edits
 - **loadTokenRef pattern**: `refreshItems` uses `const token = ++loadTokenRef.current` and checks `token === loadTokenRef.current` after async work. `invalidateLoad()` increments the counter to invalidate in-flight refreshes
 
-## OIDC Logout
-- `POST /api/auth/logout` clears the app session and returns `{ status, end_session_url }` with authentik's invalidation flow URL
+## Auth Providers (docs/auth.md)
+- **Provider-agnostic OIDC**: no provider-specific code — discovery does everything. `OIDC_PROVIDER_NAME` (default "SSO") labels the login button. Empty `OIDC_ISSUER` disables OIDC
+- **Password auth**: `user_credentials` table (lowercase username = email, bcrypt hash, sub FK). `POST /api/auth/login/password` + self-service `POST /api/auth/password` (8–72 chars — bcrypt's byte limit, keyed by session email) + `server -set-password <username>` CLI (password from `PASSWORD` env or stdin). `PASSWORD_AUTH_ENABLED=false` unregisters the routes (404). Unknown-user logins burn a dummy bcrypt compare (timing); per-username rate limit (10 fails/15 min → 429, in-memory `loginLimiter`, injectable `now`); the public login endpoint applies its own `MaxBytesReader`. `TestAllAPIRoutesAuthenticatedUnlessAllowlisted` scans app.go so no /api route ships unauthenticated
+- **Identity linking (`resolveIdentity` in auth.go)**: session sub is canonical. Resolution order: (1) `user_identities` alias (provider_sub → canonical, written on every OIDC login — survives email changes), (2) direct sub match, (3) case-insensitive email match (a provider's first login only; the new provider's sub never enters `users`), (4) create. Oldest row (`last_seen ASC`) wins on duplicate emails. Email changes rename the password credential too (`migrateCredentialUsername`, collision-safe). Escape hatch for provider+email changed before any login: `server -set-email old new`
+- `GET /api/auth/methods` (public): `{oidc, oidc_name, password}` — drives `LoginScreen` (SSO button and/or password form; falls back to showing both if unreachable), `ReAuthModal` (password-only → reload instead of `/api/auth/login`), and `PasswordSetter` in Settings (renders null when password auth disabled)
+- **Dev-login is localhost-only now** (OIDC unset AND `FRONTEND_URL` localhost) — password auth satisfies `ValidateSecurity` without OIDC, so "no OIDC" no longer implies local
+
+## Logout
+- `POST /api/auth/logout` clears the app session and returns `{ status, end_session_url? }`: `LOGOUT_URL` env if set (use it to also end the provider session, e.g. Authelia's `/logout` or authentik's `/if/flow/default-invalidation-flow/`), else the OIDC-discovered `end_session_endpoint` (3s timeout, omitted on failure), else omitted
 - Frontend `logout()` in `api/client.ts` returns the `end_session_url` (or null)
-- `handleLogout(endProviderSession)` in App.tsx: clears local data, then opens authentik's invalidation flow in a popup (desktop) or full redirect (PWA) to kill the authentik session
+- `handleLogout(endProviderSession)` in App.tsx: clears local data, then opens the provider logout URL in a popup (desktop) or full redirect (PWA)
 - PWA detection: `window.matchMedia('(display-mode: standalone)')` or `navigator.standalone`
-- 401s no longer trigger auto-logout — they raise the re-auth modal instead (see PWA Re-Auth Flow); only user-initiated logout triggers authentik invalidation
-- authentik's invalidation flow (`/if/flow/default-invalidation-flow/`) auto-logs out without a confirmation prompt (unlike the OIDC end_session_endpoint which shows an interstitial)
+- 401s no longer trigger auto-logout — they raise the re-auth modal instead (see PWA Re-Auth Flow); only user-initiated logout ends the provider session
 
 ## Preview / Local Dev Auth
 - Backend has a `/api/auth/dev-login` endpoint that's only available when `OIDC_ISSUER` env var is empty. It sets a fake session (`dev-user` / `dev@localhost`) and redirects to `/`
