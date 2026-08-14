@@ -6,6 +6,7 @@ package ical
 
 import (
 	"testing"
+	"time"
 	_ "time/tzdata"
 
 	"mealplanner/internal/httpx"
@@ -68,5 +69,30 @@ END:VCALENDAR
 	}
 	if got := httpx.FormatDateTime(events[1].Event.StartTime); got != "2024-02-15T09:00:00" {
 		t.Fatalf("floating start = %s", got)
+	}
+}
+
+// Regression: dateOf (and therefore todayUTC/CacheRange) must yield the UTC
+// date regardless of the process's local zone. The compose files set
+// TZ=America/Los_Angeles for log timestamps, on the documented invariant
+// that server date logic is TZ-independent — a "fix" that truncated before
+// converting to UTC would shift the cache range by a day during 00:00–07:00
+// UTC.
+func TestDateOfIgnoresLocalZone(t *testing.T) {
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("load zone: %v", err)
+	}
+	// 03:00 UTC on Aug 14 = 20:00 Aug 13 in LA — the danger window where
+	// local and UTC dates disagree.
+	instant := time.Date(2026, 8, 14, 3, 0, 0, 0, time.UTC)
+	got := dateOf(instant.In(la))
+	want := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+	if !got.Equal(want) || got.Location() != time.UTC {
+		t.Fatalf("dateOf(LA evening) = %v, want %v (UTC date, not local)", got, want)
+	}
+	// And the same instant expressed in any zone agrees.
+	if !dateOf(instant).Equal(got) {
+		t.Fatal("dateOf differs across zone representations of one instant")
 	}
 }
