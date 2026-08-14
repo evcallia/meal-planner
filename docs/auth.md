@@ -20,13 +20,37 @@ At least one method must be available for non-local deployments
 All application data is keyed by `sub` (originally the Authentik OIDC subject).
 The `users` table is the identity directory: `sub` (PK), `email`, `name`.
 
-Logins are resolved to a **canonical sub** at login time (`resolveIdentity`):
+Logins are resolved to a **canonical sub** at login time (`resolveIdentity`),
+in an order that mirrors the OIDC trust model — the provider's `sub` is the
+stable identifier, email is only the first-contact bridge:
 
-1. If the login carries an email, look up `users` by case-insensitive email
-   match. Found → the session uses **that row's existing sub** (the provider's
-   sub is discarded; directory name/email are refreshed).
-2. Otherwise look up by the provider's sub. Found → use it.
-3. Otherwise create a new `users` row with the provider's sub.
+1. **Provider-sub alias** (`user_identities`: provider_sub → canonical sub,
+   written on every OIDC login). This survives email changes: once a
+   provider's sub is aliased, the user can change their email freely.
+2. **Direct canonical-sub match** — rows whose sub IS the provider's sub
+   (users who joined via the current provider, `local:` password users).
+3. **Case-insensitive email match** — a provider's FIRST login only. The
+   session adopts the matched row's existing sub (the provider's sub never
+   enters `users`), and an alias is written so email is never needed again
+   for that provider.
+4. Otherwise create a new `users` row keyed by the provider's sub.
+
+Every path refreshes the directory email/name. When the email actually
+changes, any password credential is renamed to the new email
+(`migrateCredentialUsername` — skipped on collision, old login keeps
+working) so users always sign in with their current address.
+
+**Email changes**: handled automatically once the user has logged in at
+least once from the current provider (the alias exists). The one gap is
+changing provider AND email before ever logging in — no alias, no email
+match. Escape hatch:
+
+```bash
+docker compose exec app ./server -set-email old@example.com new@example.com
+```
+
+which updates the directory email (and password credential) so the next
+login email-bridges correctly.
 
 Consequences:
 

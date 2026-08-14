@@ -7,6 +7,7 @@ package app
 // PASSWORD_AUTH_ENABLED (routes are simply not registered when disabled).
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -100,6 +101,52 @@ func upsertCredential(db *gorm.DB, username, sub, password string) error {
 	return db.Create(&models.UserCredential{
 		Username: username, Sub: sub, PasswordHash: string(hash),
 	}).Error
+}
+
+// migrateCredentialUsername renames a password credential when an account's
+// email changes so the user keeps signing in with their CURRENT email.
+// Best-effort: skipped when no credential exists for the old email or when
+// the new username is already taken (logged, never fatal — the old
+// credential still works).
+func migrateCredentialUsername(db *gorm.DB, sub, oldEmail, newEmail string) {
+	oldU := strings.ToLower(strings.TrimSpace(oldEmail))
+	newU := strings.ToLower(strings.TrimSpace(newEmail))
+	if oldU == "" || newU == "" || oldU == newU {
+		return
+	}
+	var cred models.UserCredential
+	if err := db.Where("username = ? AND sub = ?", oldU, sub).First(&cred).Error; err != nil {
+		return
+	}
+	var clash int64
+	db.Model(&models.UserCredential{}).Where("username = ?", newU).Count(&clash)
+	if clash > 0 {
+		log.Printf("credential rename %s -> %s skipped: username already in use", oldU, newU)
+		return
+	}
+	if err := db.Model(&models.UserCredential{}).Where("username = ?", oldU).
+		Updates(map[string]any{"username": newU, "updated_at": models.NowUTC()}).Error; err != nil {
+		log.Printf("credential rename %s -> %s failed: %v", oldU, newU, err)
+	}
+}
+
+// SetUserEmail is the `server -set-email` CLI helper — the escape hatch for
+// a user who changed provider AND email before ever logging in (no alias row
+// and no email match possible). Updates the directory email and renames any
+// password credential to match.
+func SetUserEmail(db *gorm.DB, oldEmail, newEmail string) (string, error) {
+	var user models.User
+	if err := db.Where("email IS NOT NULL AND lower(email) = lower(?)", oldEmail).
+		Order("last_seen ASC").First(&user).Error; err != nil {
+		return "", fmt.Errorf("no user with email %s", oldEmail)
+	}
+	migrateCredentialUsername(db, user.Sub, oldEmail, newEmail)
+	trimmed := strings.TrimSpace(newEmail)
+	user.Email = &trimmed
+	if err := db.Save(&user).Error; err != nil {
+		return "", err
+	}
+	return user.Sub, nil
 }
 
 // SetPasswordCredential creates or updates a password login (used by the

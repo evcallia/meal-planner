@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,15 +55,49 @@ func randomToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// resolveIdentity maps a login from ANY source (any OIDC provider, password
-// auth, dev-login) onto the canonical directory user, so identities survive
-// provider switches (docs/auth.md). Email is the linking key: an email match
-// wins over the provider's sub, and the matched row's existing sub becomes
-// the session identity — the new provider's sub never enters the DB. Without
-// a match the login creates a fresh directory row keyed by providerSub.
+// recordAlias persists providerSub → canonical sub so later logins resolve
+// by the provider's stable identifier even after the email changes.
+// Self-aliases are skipped (the users table covers those directly).
+func (a *App) recordAlias(providerSub, canonicalSub string) {
+	if providerSub == "" || providerSub == canonicalSub {
+		return
+	}
+	var existing models.UserIdentity
+	if err := a.DB.Where("provider_sub = ?", providerSub).First(&existing).Error; err == nil {
+		if existing.Sub != canonicalSub {
+			existing.Sub = canonicalSub
+			if err := a.DB.Save(&existing).Error; err != nil {
+				log.Printf("record_alias update failed: %v", err)
+			}
+		}
+		return
+	}
+	if err := a.DB.Create(&models.UserIdentity{ProviderSub: providerSub, Sub: canonicalSub}).Error; err != nil {
+		log.Printf("record_alias insert failed: %v", err)
+	}
+}
+
+// resolveIdentity maps a login from ANY source (any OIDC provider, dev-login)
+// onto the canonical directory user, so identities survive provider switches
+// AND email changes (docs/auth.md). Resolution order mirrors the OIDC trust
+// model — sub is the stable identifier, email is only the bridge:
+//
+//  1. provider-sub alias (user_identities) — survives email changes
+//  2. direct canonical-sub match — pre-alias rows and local users
+//  3. case-insensitive email match — a provider's FIRST login only; the
+//     matched row's existing sub becomes the session identity and an alias
+//     is written so the provider's sub never needs the email again
+//  4. create a fresh directory row keyed by providerSub
+//
+// Every path refreshes the directory email/name and records the alias.
 func (a *App) resolveIdentity(providerSub string, email, name *string) *session.UserInfo {
-	update := func(row *models.User) *session.UserInfo {
+	refresh := func(row *models.User) *session.UserInfo {
 		if email != nil && *email != "" {
+			if row.Email != nil && !strings.EqualFold(*row.Email, *email) {
+				// Email changed at the provider: keep any password login
+				// usable under the CURRENT email.
+				migrateCredentialUsername(a.DB, row.Sub, *row.Email, *email)
+			}
 			row.Email = email
 		}
 		if name != nil && *name != "" {
@@ -71,19 +106,27 @@ func (a *App) resolveIdentity(providerSub string, email, name *string) *session.
 		if err := a.DB.Save(row).Error; err != nil {
 			log.Printf("resolve_identity update failed: %v", err)
 		}
+		a.recordAlias(providerSub, row.Sub)
 		return &session.UserInfo{Sub: row.Sub, Email: row.Email, Name: row.Name}
 	}
 	var row models.User
+	var ident models.UserIdentity
+	if err := a.DB.Where("provider_sub = ?", providerSub).First(&ident).Error; err == nil {
+		if err := a.DB.Where("sub = ?", ident.Sub).First(&row).Error; err == nil {
+			return refresh(&row)
+		}
+		// Dangling alias (user row gone) — fall through and re-resolve.
+	}
+	if err := a.DB.Where("sub = ?", providerSub).First(&row).Error; err == nil {
+		return refresh(&row)
+	}
 	if email != nil && *email != "" {
 		// Oldest row wins if duplicates exist — that's the original identity.
 		err := a.DB.Where("email IS NOT NULL AND lower(email) = lower(?)", *email).
 			Order("last_seen ASC").First(&row).Error
 		if err == nil {
-			return update(&row)
+			return refresh(&row)
 		}
-	}
-	if err := a.DB.Where("sub = ?", providerSub).First(&row).Error; err == nil {
-		return update(&row)
 	}
 	if err := a.DB.Create(&models.User{Sub: providerSub, Email: email, Name: name}).Error; err != nil {
 		log.Printf("resolve_identity insert failed: %v", err)
