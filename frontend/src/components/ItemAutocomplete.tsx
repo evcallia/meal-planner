@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { toTitleCase } from '../utils/titleCase';
-import type { ItemDefaultEntry } from '../hooks/useGroceryList';
+import type { ItemDefaultEntry } from '../types';
 
 interface ItemAutocompleteProps {
   value: string;
@@ -15,6 +15,9 @@ interface ItemAutocompleteProps {
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   autoFocus?: boolean;
   testId?: string;
+  // The Travel tab derives its suggestions from existing lists rather than a
+  // stored table, so there is nothing to delete there.
+  allowDelete?: boolean;
 }
 
 export function ItemAutocomplete({
@@ -30,6 +33,7 @@ export function ItemAutocomplete({
   onKeyDown: externalOnKeyDown,
   autoFocus,
   testId,
+  allowDelete = true,
 }: ItemAutocompleteProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
@@ -155,7 +159,7 @@ export function ItemAutocomplete({
                 >
                   {displayName}
                 </button>
-                {!isOnList && (
+                {allowDelete && !isOnList && (
                   <button
                     onClick={(e) => handleDelete(e, name)}
                     className="px-2 py-1 mr-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"

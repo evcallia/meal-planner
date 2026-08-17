@@ -185,6 +185,32 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tracker/tasks/{taskId}/skip", auth(a.handleTrackerSkipTask))
 	mux.HandleFunc("DELETE /api/tracker/logs/{logId}", auth(a.handleTrackerDeleteLog))
 
+	// Travel / packing lists
+	mux.HandleFunc("GET /api/packing", auth(a.handlePackingListLists))
+	mux.HandleFunc("POST /api/packing/lists", auth(a.handlePackingCreateList))
+	mux.HandleFunc("POST /api/packing/lists/restore", auth(a.handlePackingRestoreList))
+	mux.HandleFunc("PATCH /api/packing/lists/{listId}", auth(a.handlePackingUpdateList))
+	mux.HandleFunc("DELETE /api/packing/lists/{listId}", auth(a.handlePackingDeleteList))
+	mux.HandleFunc("PATCH /api/packing/reorder-lists", auth(a.handlePackingReorderLists))
+	mux.HandleFunc("POST /api/packing/lists/{listId}/shares", auth(a.handlePackingAddShare))
+	mux.HandleFunc("DELETE /api/packing/lists/{listId}/shares/{shareSub}", auth(a.handlePackingRemoveShare))
+	mux.HandleFunc("POST /api/packing/lists/{listId}/leave", auth(a.handlePackingLeaveList))
+	mux.HandleFunc("POST /api/packing/lists/{listId}/rejoin", auth(a.handlePackingRejoinList))
+	mux.HandleFunc("POST /api/packing/lists/{listId}/check-all", auth(a.handlePackingCheckAll))
+	mux.HandleFunc("POST /api/packing/lists/{listId}/sections", auth(a.handlePackingCreateSection))
+	mux.HandleFunc("PATCH /api/packing/lists/{listId}/reorder-sections", auth(a.handlePackingReorderSections))
+	mux.HandleFunc("PATCH /api/packing/sections/{sectionId}", auth(a.handlePackingUpdateSection))
+	mux.HandleFunc("DELETE /api/packing/sections/{sectionId}", auth(a.handlePackingDeleteSection))
+	mux.HandleFunc("PATCH /api/packing/sections/{sectionId}/reorder-items", auth(a.handlePackingReorderItems))
+	mux.HandleFunc("POST /api/packing/items", auth(a.handlePackingAddItem))
+	mux.HandleFunc("PATCH /api/packing/items/{itemId}", auth(a.handlePackingUpdateItem))
+	mux.HandleFunc("PATCH /api/packing/items/{itemId}/move", auth(a.handlePackingMoveItem))
+	mux.HandleFunc("DELETE /api/packing/items/{itemId}", auth(a.handlePackingDeleteItem))
+	mux.HandleFunc("POST /api/packing/lists/{listId}/bags", auth(a.handlePackingCreateBag))
+	mux.HandleFunc("PATCH /api/packing/lists/{listId}/reorder-bags", auth(a.handlePackingReorderBags))
+	mux.HandleFunc("PATCH /api/packing/bags/{bagId}", auth(a.handlePackingUpdateBag))
+	mux.HandleFunc("DELETE /api/packing/bags/{bagId}", auth(a.handlePackingDeleteBag))
+
 	// Unknown /api paths → 404 JSON (before the SPA catch-all).
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.Detail(w, http.StatusNotFound, "Not Found")
@@ -258,7 +284,7 @@ func (a *App) securityHeaders(next http.Handler) http.Handler {
 }
 
 var noCacheFiles = map[string]bool{
-	"sw.js": true, "push-sw.js": true, "recover.js": true, "index.html": true, "version.json": true, "manifest.webmanifest": true,
+	"sw.js": true, "push-sw.js": true, "recover.js": true, "index.html": true, "manifest.webmanifest": true,
 }
 
 // serveSPA mirrors the FastAPI static-file catch-all: exact file if present

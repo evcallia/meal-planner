@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { GrocerySection, GroceryItem } from '../types';
+import { GrocerySection, GroceryItem, ItemDefaultEntry } from '../types';
 import {
   getGroceryList,
   replaceGroceryList as replaceGroceryListAPI,
@@ -54,11 +54,10 @@ interface GrocerySSEPayload {
 const GROCERY_STORAGE_KEY = 'meal-planner-grocery';
 
 // Remembered defaults for an item name (lowercase) — used to auto-populate
-// the store and quick-add section for previously-used items.
-export interface ItemDefaultEntry {
-  storeId: string | null;
-  sectionName: string | null;
-}
+// the store and quick-add section for previously-used items. Defined in
+// types.ts (the Travel tab uses the same shape for bags); re-exported here for
+// existing importers.
+export type { ItemDefaultEntry };
 
 function saveGroceryToLocalStorage(sections: GrocerySection[]) {
   try {

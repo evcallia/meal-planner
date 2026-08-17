@@ -10,6 +10,7 @@ export interface Settings {
   featurePantry: boolean;
   featureGrocery: boolean;
   featureLists: boolean;
+  featureTravel: boolean;
   showItemizedColumn: boolean;
   showMealIdeas: boolean;
   compactView: boolean;
@@ -28,6 +29,9 @@ export interface Settings {
   notifyGroceryEdits: boolean;
   notifyListEdits: boolean;
   notifyListsDue: boolean;
+  // Travel (packing list) edits. Same per-list override namespace as the
+  // tracker: settings.listNotifyOverrides[listId].edits.
+  notifyTravelEdits: boolean;
   // Re-notify daily (max once per 24h) while a task stays due.
   notifyListsDueRepeat: boolean;
   // Daily digest: ONE summary of everything due at a configured local time,
@@ -53,6 +57,14 @@ export interface Settings {
   groceryGroupBy: 'category' | 'none';
   groceryHideStores: boolean;
   grocerySortBy: 'manual' | 'alphabetical';
+  // Travel display preferences (synced per-user). `packingShowChecked` keeps
+  // packed items visible at the bottom of their section; turning it off hides
+  // them without touching their stored position.
+  packingShowChecked: boolean;
+  packingHideBags: boolean;
+  packingSortBy: 'manual' | 'alphabetical';
+  packingSelectedBagIds: string[];
+  packingExcludedBagIds: string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -60,6 +72,7 @@ export const DEFAULT_SETTINGS: Settings = {
   featurePantry: true,
   featureGrocery: true,
   featureLists: true,
+  featureTravel: true,
   showItemizedColumn: true,
   showMealIdeas: true,
   compactView: false,
@@ -77,6 +90,7 @@ export const DEFAULT_SETTINGS: Settings = {
   notifyGroceryEdits: false,
   notifyListEdits: false,
   notifyListsDue: false,
+  notifyTravelEdits: false,
   notifyListsDueRepeat: false,
   notifyListsDueDigest: false,
   notifyListsDueDigestTime: '08:00',
@@ -88,6 +102,11 @@ export const DEFAULT_SETTINGS: Settings = {
   groceryGroupBy: 'category',
   groceryHideStores: false,
   grocerySortBy: 'manual',
+  packingShowChecked: true,
+  packingHideBags: false,
+  packingSortBy: 'manual',
+  packingSelectedBagIds: [],
+  packingExcludedBagIds: [],
 };
 
 const STORAGE_KEY = 'meal-planner-settings';

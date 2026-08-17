@@ -3,42 +3,20 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import './index.css';
 import { setupPerfLogging } from './utils/perf';
+import { currentFingerprint, watchForAppUpdate } from './utils/appUpdate';
 
-// Track current build in localStorage (informational only — no cache nuking)
-const BUILD_KEY = 'meal-planner-build';
+// Breadcrumb for debugging which bundle a device is actually running.
 try {
-  localStorage.setItem(BUILD_KEY, __APP_BUILD__);
+  localStorage.setItem('meal-planner-build', currentFingerprint());
 } catch { /* localStorage unavailable */ }
 
 setupPerfLogging();
 
-// version.json backup detection for iOS standalone mode
-// Runs outside React so it works even if the React tree is stale
+// Backup update detection for iOS standalone, where the service worker's own
+// update lifecycle is unreliable. Runs outside React so it works even if the
+// React tree is stale. See utils/appUpdate.ts.
 if (import.meta.env.PROD) {
-  let lastVersionCheck = 0;
-  const THROTTLE = 30_000;
-
-  const checkForUpdate = async () => {
-    if ((window as any).__pwaUpdateAvailable) return;
-    const now = Date.now();
-    if (now - lastVersionCheck < THROTTLE) return;
-    lastVersionCheck = now;
-    try {
-      const res = await fetch(`/version.json?t=${now}`, { cache: 'no-store' });
-      if (!res.ok) return;
-      const { build } = await res.json();
-      if (build && build !== __APP_BUILD__) {
-        (window as any).__pwaUpdateAvailable = true;
-        window.dispatchEvent(new Event('pwa-update-available'));
-      }
-    } catch { /* offline */ }
-  };
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') checkForUpdate();
-  });
-  window.addEventListener('focus', () => checkForUpdate());
-  checkForUpdate();
+  watchForAppUpdate();
 }
 
 createRoot(document.getElementById('root')!).render(

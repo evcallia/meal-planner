@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { GroceryListView } from '../GroceryListView';
 
 const mockMergeList = vi.fn();
@@ -359,5 +359,36 @@ describe('GroceryListView', () => {
 
     fireEvent.click(screen.getByText('Back to quick add'));
     expect(screen.getByTestId('quick-add-section')).toBeInTheDocument();
+  });
+});
+
+// Regression: the API sends naive-UTC timestamps ("2026-08-17T18:09:00") while
+// optimistic local updates write a "Z". Read with `new Date`, the two are the
+// viewer's UTC offset apart and the checked list ordered wrongly.
+describe('checked item ordering', () => {
+  const item = (id: string, name: string, updated_at: string) => ({
+    id, section_id: 'sec-1', name, quantity: null, checked: true,
+    position: 0, global_position: 0, store_id: null, updated_at,
+  });
+
+  it('orders most-recently-checked first across both timestamp formats', () => {
+    mockSections = [{
+      id: 'sec-1', name: 'Produce', position: 0,
+      items: [
+        // Server-shaped (naive UTC), an hour ago.
+        item('a', 'Older', '2026-08-17T17:00:00'),
+        // Optimistic (explicit UTC), just now — must sort first.
+        item('b', 'Newest', '2026-08-17T18:00:00.000Z'),
+        // Server-shaped, two hours ago.
+        item('c', 'Oldest', '2026-08-17T16:00:00'),
+      ],
+    }];
+    render(<GroceryListView />);
+
+    const checkedPanel = screen.getByText(/^Checked \(3\)$/).parentElement!;
+    const order = ['Newest', 'Older', 'Oldest']
+      .map(n => within(checkedPanel).getByText(n));
+    const positions = order.map(el => Array.from(checkedPanel.querySelectorAll('*')).indexOf(el));
+    expect(positions).toEqual([...positions].sort((x, y) => x - y));
   });
 });

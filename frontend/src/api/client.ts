@@ -637,6 +637,139 @@ export async function deleteTrackerLog(logId: string): Promise<void> {
   await fetchAPI(`/tracker/logs/${logId}`, { method: 'DELETE' });
 }
 
+// Travel / packing lists API
+import type { PackingList, PackingSection, PackingItem, PackingBag } from '../types';
+
+export async function getPackingLists(): Promise<PackingList[]> {
+  return fetchAPI<PackingList[]>('/packing');
+}
+
+export async function createPackingList(payload: { name: string; icon?: string | null; color?: string | null }): Promise<PackingList> {
+  return fetchAPI<PackingList>('/packing/lists', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export interface PackingListRestorePayload {
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+  position?: number | null;
+  share_subs?: string[];
+  bags?: { name: string; position: number }[];
+  sections?: {
+    name: string;
+    position: number;
+    items: { name: string; quantity: string | null; checked: boolean; position: number; bag_name?: string | null }[];
+  }[];
+}
+
+export async function restorePackingList(payload: PackingListRestorePayload): Promise<PackingList> {
+  return fetchAPI<PackingList>('/packing/lists/restore', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function updatePackingList(listId: string, payload: { name?: string; icon?: string | null; color?: string | null }): Promise<PackingList> {
+  return fetchAPI<PackingList>(`/packing/lists/${listId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+}
+
+export async function deletePackingList(listId: string): Promise<void> {
+  await fetchAPI(`/packing/lists/${listId}`, { method: 'DELETE' });
+}
+
+export async function reorderPackingLists(listIds: string[]): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>('/packing/reorder-lists', {
+    method: 'PATCH', body: JSON.stringify({ list_ids: listIds }),
+  });
+}
+
+export async function addPackingShare(listId: string, payload: { email?: string; sub?: string }): Promise<PackingList> {
+  return fetchAPI<PackingList>(`/packing/lists/${listId}/shares`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function removePackingShare(listId: string, shareSub: string): Promise<PackingList> {
+  return fetchAPI<PackingList>(`/packing/lists/${listId}/shares/${encodeURIComponent(shareSub)}`, { method: 'DELETE' });
+}
+
+export async function leavePackingList(listId: string): Promise<void> {
+  await fetchAPI(`/packing/lists/${listId}/leave`, { method: 'POST' });
+}
+
+export async function rejoinPackingList(listId: string): Promise<PackingList> {
+  return fetchAPI<PackingList>(`/packing/lists/${listId}/rejoin`, { method: 'POST' });
+}
+
+export async function checkAllPackingItems(listId: string, checked: boolean): Promise<PackingList> {
+  return fetchAPI<PackingList>(`/packing/lists/${listId}/check-all`, {
+    method: 'POST', body: JSON.stringify({ checked }),
+  });
+}
+
+export async function createPackingSection(listId: string, name: string, position?: number): Promise<PackingSection> {
+  return fetchAPI<PackingSection>(`/packing/lists/${listId}/sections`, {
+    method: 'POST', body: JSON.stringify({ name, position }),
+  });
+}
+
+export async function renamePackingSection(sectionId: string, name: string): Promise<PackingSection> {
+  return fetchAPI<PackingSection>(`/packing/sections/${sectionId}`, {
+    method: 'PATCH', body: JSON.stringify({ name }),
+  });
+}
+
+export async function deletePackingSection(sectionId: string): Promise<void> {
+  await fetchAPI(`/packing/sections/${sectionId}`, { method: 'DELETE' });
+}
+
+export async function reorderPackingSections(listId: string, sectionIds: string[]): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/packing/lists/${listId}/reorder-sections`, {
+    method: 'PATCH', body: JSON.stringify({ section_ids: sectionIds }),
+  });
+}
+
+export async function reorderPackingItems(sectionId: string, itemIds: string[]): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/packing/sections/${sectionId}/reorder-items`, {
+    method: 'PATCH', body: JSON.stringify({ item_ids: itemIds }),
+  });
+}
+
+export async function addPackingItem(sectionId: string, name: string, quantity: string | null = null, bagId: string | null = null): Promise<PackingItem> {
+  return fetchAPI<PackingItem>('/packing/items', {
+    method: 'POST', body: JSON.stringify({ section_id: sectionId, name, quantity, bag_id: bagId }),
+  });
+}
+
+export async function editPackingItem(itemId: string, updates: { name?: string; quantity?: string | null; checked?: boolean; bag_id?: string | null }): Promise<PackingItem> {
+  return fetchAPI<PackingItem>(`/packing/items/${itemId}`, { method: 'PATCH', body: JSON.stringify(updates) });
+}
+
+export async function deletePackingItem(itemId: string): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/packing/items/${itemId}`, { method: 'DELETE' });
+}
+
+export async function movePackingItem(itemId: string, toSectionId: string, toPosition: number): Promise<PackingItem> {
+  return fetchAPI<PackingItem>(`/packing/items/${itemId}/move`, {
+    method: 'PATCH', body: JSON.stringify({ to_section_id: toSectionId, to_position: toPosition }),
+  });
+}
+
+export async function createPackingBag(listId: string, name: string, position?: number): Promise<PackingBag> {
+  return fetchAPI<PackingBag>(`/packing/lists/${listId}/bags`, {
+    method: 'POST', body: JSON.stringify({ name, position }),
+  });
+}
+
+export async function renamePackingBag(bagId: string, name: string): Promise<PackingBag> {
+  return fetchAPI<PackingBag>(`/packing/bags/${bagId}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+}
+
+export async function deletePackingBag(bagId: string): Promise<void> {
+  await fetchAPI(`/packing/bags/${bagId}`, { method: 'DELETE' });
+}
+
+export async function reorderPackingBags(listId: string, bagIds: string[]): Promise<{ status: string }> {
+  return fetchAPI<{ status: string }>(`/packing/lists/${listId}/reorder-bags`, {
+    method: 'PATCH', body: JSON.stringify({ bag_ids: bagIds }),
+  });
+}
+
 export async function getUsers(): Promise<DirectoryUser[]> {
   return fetchAPI<DirectoryUser[]>('/users');
 }
