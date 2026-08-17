@@ -155,6 +155,8 @@ import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { getDays, updateNotes, getGroceryList } from '../api/client';
 import { __resetCalendarFeedRefreshForTests } from '../App';
 import { queueChange, getLocalNote, saveLocalNote } from '../db';
+import { __setMockRegistration, __resetMockRegistration } from '../test/pwa-register-react';
+import { claimStaleUpdate, __resetStaleUpdateForTests } from '../utils/appUpdate';
 import { scrollToElementWithOffset } from '../utils/scroll';
 
 describe('App', () => {
@@ -556,7 +558,7 @@ describe('Features setting', () => {
     vi.mocked(getCurrentUser).mockResolvedValue(mockUser);
     vi.mocked(useSettings).mockReturnValue({
       settings: {
-        featureMeals: false, featurePantry: true, featureGrocery: false, featureLists: false,
+        featureMeals: false, featurePantry: true, featureGrocery: false, featureLists: false, featureTravel: false,
         showItemizedColumn: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1,
       },
       updateSettings: vi.fn(),
@@ -593,5 +595,51 @@ describe('Features setting', () => {
     expect(nav).toHaveTextContent('Grocery');
     expect(nav).not.toHaveTextContent('Pantry');
     expect(nav).not.toHaveTextContent('Lists');
+  });
+});
+
+
+// A service worker parked in `waiting` re-announces itself on EVERY
+// registration, so before this the update banner came back on every launch of
+// a build that had been stable for days.
+describe('leftover service-worker update', () => {
+  const mockUser = { sub: 'u1', name: 'Test User', email: 'test@example.com' };
+  let cacheKeys: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    __resetMockRegistration();
+    __resetStaleUpdateForTests();
+    vi.mocked(getCurrentUser).mockResolvedValue(mockUser);
+    // applyUpdate's "nuclear" path clears the caches — observable proof it ran.
+    cacheKeys = vi.fn().mockResolvedValue([]);
+    vi.stubGlobal('caches', { keys: cacheKeys, delete: vi.fn().mockResolvedValue(true) });
+  });
+
+  afterEach(() => {
+    __resetMockRegistration();
+    __resetStaleUpdateForTests();
+    vi.unstubAllGlobals();
+  });
+
+  it('applies an update that was already waiting at launch instead of prompting', async () => {
+    __setMockRegistration({ waiting: {}, update: vi.fn().mockResolvedValue(undefined) });
+
+    render(<App />);
+    await waitFor(() => expect(cacheKeys).toHaveBeenCalled());
+    // Taken automatically — never left sitting as a banner for the user.
+    expect(screen.queryByText('A new version is available')).not.toBeInTheDocument();
+    // The once-per-session latch is spent, so a failed activation can't loop.
+    expect(claimStaleUpdate()).toBe(false);
+  });
+
+  it('does nothing when no worker is waiting', async () => {
+    __setMockRegistration({ waiting: null, update: vi.fn().mockResolvedValue(undefined) });
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('calendar-view')).toBeInTheDocument());
+    expect(cacheKeys).not.toHaveBeenCalled();
+    expect(screen.queryByText('A new version is available')).not.toBeInTheDocument();
+    // Latch untouched — a real update later in the session can still claim it.
+    expect(claimStaleUpdate()).toBe(true);
   });
 });

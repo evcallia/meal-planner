@@ -59,7 +59,28 @@ export type ChangeType =
   | 'tracker-task-reorder'
   | 'tracker-log-add'
   | 'tracker-log-delete'
-  | 'tracker-skip';
+  | 'tracker-skip'
+  | 'packing-list-create'
+  | 'packing-list-update'
+  | 'packing-list-delete'
+  | 'packing-list-restore'
+  | 'packing-list-reorder'
+  | 'packing-list-leave'
+  | 'packing-list-rejoin'
+  | 'packing-check-all'
+  | 'packing-section-create'
+  | 'packing-section-rename'
+  | 'packing-section-delete'
+  | 'packing-sections-reorder'
+  | 'packing-items-reorder'
+  | 'packing-item-add'
+  | 'packing-item-edit'
+  | 'packing-item-delete'
+  | 'packing-item-move'
+  | 'packing-bag-create'
+  | 'packing-bag-rename'
+  | 'packing-bag-delete'
+  | 'packing-bags-reorder';
 
 export interface PendingChange {
   id?: number;
@@ -191,6 +212,45 @@ export interface LocalTrackerTask {
   recent_logs?: TrackerLog[]; // cached last-few entries for offline history
 }
 
+// Travel / packing lists. Stored flat (lists / bags / sections / items) so a
+// single item write doesn't rewrite the whole trip, mirroring the grocery cache.
+export interface LocalPackingList {
+  id: string;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  position: number;
+  owner_sub: string;
+  owner_name: string | null;
+  is_owner: boolean;
+  shared_with: LocalTrackerShareUser[];
+}
+
+export interface LocalPackingBag {
+  id: string;
+  list_id: string;
+  name: string;
+  position: number;
+}
+
+export interface LocalPackingSection {
+  id: string;
+  list_id: string;
+  name: string;
+  position: number;
+}
+
+export interface LocalPackingItem {
+  id: string;
+  section_id: string;
+  name: string;
+  quantity: string | null;
+  checked: boolean;
+  position: number;
+  bag_id: string | null;
+  updated_at: string;
+}
+
 class MealPlannerDB extends Dexie {
   mealNotes!: Table<LocalMealNote, string>;
   pendingChanges!: Table<PendingChange, number>;
@@ -206,6 +266,10 @@ class MealPlannerDB extends Dexie {
   itemDefaults!: Table<LocalItemDefault, string>;
   trackerLists!: Table<LocalTrackerList, string>;
   trackerTasks!: Table<LocalTrackerTask, string>;
+  packingLists!: Table<LocalPackingList, string>;
+  packingBags!: Table<LocalPackingBag, string>;
+  packingSections!: Table<LocalPackingSection, string>;
+  packingItems!: Table<LocalPackingItem, string>;
 
   constructor() {
     super('MealPlannerDB');
@@ -303,6 +367,26 @@ class MealPlannerDB extends Dexie {
       trackerLists: 'id',
       trackerTasks: 'id, list_id',
     });
+    this.version(10).stores({
+      mealNotes: 'date',
+      pendingChanges: '++id, date, type',
+      pantryItems: 'id, section_id',
+      pantrySections: 'id',
+      mealIdeas: 'id',
+      tempIdMap: 'tempId',
+      calendarDays: 'date',
+      hiddenCalendarEvents: 'id',
+      grocerySections: 'id',
+      groceryItems: 'id, section_id',
+      stores: 'id',
+      itemDefaults: 'item_name',
+      trackerLists: 'id',
+      trackerTasks: 'id, list_id',
+      packingLists: 'id',
+      packingBags: 'id, list_id',
+      packingSections: 'id, list_id',
+      packingItems: 'id, section_id',
+    });
     // Ensure table properties are initialized for both runtime and tests.
     this.mealNotes = this.table('mealNotes');
     this.pendingChanges = this.table('pendingChanges');
@@ -318,6 +402,10 @@ class MealPlannerDB extends Dexie {
     this.itemDefaults = this.table('itemDefaults');
     this.trackerLists = this.table('trackerLists');
     this.trackerTasks = this.table('trackerTasks');
+    this.packingLists = this.table('packingLists');
+    this.packingBags = this.table('packingBags');
+    this.packingSections = this.table('packingSections');
+    this.packingItems = this.table('packingItems');
   }
 }
 
@@ -632,6 +720,10 @@ export async function clearAllLocalData(): Promise<void> {
     db.itemDefaults.clear(),
     db.trackerLists.clear(),
     db.trackerTasks.clear(),
+    db.packingLists.clear(),
+    db.packingBags.clear(),
+    db.packingSections.clear(),
+    db.packingItems.clear(),
   ]);
 }
 
@@ -702,4 +794,83 @@ export async function putLocalItemDefault(
 
 export async function deleteLocalItemDefault(itemName: string) {
   await db.itemDefaults.delete(itemName);
+}
+
+// ----- Travel / packing local storage -----
+//
+// Written on every state change by usePacking and by App's inactive-tab cache
+// warmer, so the Travel tab is fully usable offline.
+
+export async function saveLocalPackingLists(lists: LocalPackingList[]) {
+  await db.packingLists.clear();
+  if (lists.length > 0) await db.packingLists.bulkPut(lists);
+}
+
+export async function getLocalPackingLists(): Promise<LocalPackingList[]> {
+  return db.packingLists.toArray();
+}
+
+export async function saveLocalPackingList(list: LocalPackingList) {
+  await db.packingLists.put(list);
+}
+
+// Deleting a list takes its whole subtree with it (mirrors the server cascade).
+export async function deleteLocalPackingList(id: string) {
+  const sections = await db.packingSections.where('list_id').equals(id).toArray();
+  await Promise.all(sections.map(s => db.packingItems.where('section_id').equals(s.id).delete()));
+  await db.packingSections.where('list_id').equals(id).delete();
+  await db.packingBags.where('list_id').equals(id).delete();
+  await db.packingLists.delete(id);
+}
+
+export async function saveLocalPackingBags(bags: LocalPackingBag[]) {
+  await db.packingBags.clear();
+  if (bags.length > 0) await db.packingBags.bulkPut(bags);
+}
+
+export async function getLocalPackingBags(): Promise<LocalPackingBag[]> {
+  return db.packingBags.toArray();
+}
+
+export async function saveLocalPackingBag(bag: LocalPackingBag) {
+  await db.packingBags.put(bag);
+}
+
+export async function deleteLocalPackingBag(id: string) {
+  await db.packingBags.delete(id);
+}
+
+export async function saveLocalPackingSections(sections: LocalPackingSection[]) {
+  await db.packingSections.clear();
+  if (sections.length > 0) await db.packingSections.bulkPut(sections);
+}
+
+export async function getLocalPackingSections(): Promise<LocalPackingSection[]> {
+  return db.packingSections.toArray();
+}
+
+export async function saveLocalPackingSection(section: LocalPackingSection) {
+  await db.packingSections.put(section);
+}
+
+export async function deleteLocalPackingSection(id: string) {
+  await db.packingItems.where('section_id').equals(id).delete();
+  await db.packingSections.delete(id);
+}
+
+export async function saveLocalPackingItems(items: LocalPackingItem[]) {
+  await db.packingItems.clear();
+  if (items.length > 0) await db.packingItems.bulkPut(items);
+}
+
+export async function getLocalPackingItems(): Promise<LocalPackingItem[]> {
+  return db.packingItems.toArray();
+}
+
+export async function saveLocalPackingItem(item: LocalPackingItem) {
+  await db.packingItems.put(item);
+}
+
+export async function deleteLocalPackingItem(id: string) {
+  await db.packingItems.delete(id);
 }

@@ -73,6 +73,27 @@ import {
   addTrackerLog as addTrackerLogAPI,
   deleteTrackerLog as deleteTrackerLogAPI,
   skipTrackerTask as skipTrackerTaskAPI,
+  createPackingList as createPackingListAPI,
+  restorePackingList as restorePackingListAPI,
+  updatePackingList as updatePackingListAPI,
+  deletePackingList as deletePackingListAPI,
+  reorderPackingLists as reorderPackingListsAPI,
+  leavePackingList as leavePackingListAPI,
+  rejoinPackingList as rejoinPackingListAPI,
+  checkAllPackingItems as checkAllPackingItemsAPI,
+  createPackingSection as createPackingSectionAPI,
+  renamePackingSection as renamePackingSectionAPI,
+  deletePackingSection as deletePackingSectionAPI,
+  reorderPackingSections as reorderPackingSectionsAPI,
+  reorderPackingItems as reorderPackingItemsAPI,
+  addPackingItem as addPackingItemAPI,
+  editPackingItem as editPackingItemAPI,
+  deletePackingItem as deletePackingItemAPI,
+  movePackingItem as movePackingItemAPI,
+  createPackingBag as createPackingBagAPI,
+  renamePackingBag as renamePackingBagAPI,
+  deletePackingBag as deletePackingBagAPI,
+  reorderPackingBags as reorderPackingBagsAPI,
 } from '../api/client';
 import { ConnectionStatus } from '../types';
 
@@ -735,6 +756,170 @@ export function useSync() {
             else { if (change.id) await removePendingChange(change.id); setPendingCount(prev => prev - 1); continue; }
           }
           await deleteTrackerLogAPI(realId);
+        } else if (change.type.startsWith('packing-')) {
+          // Travel / packing lists. `mapId` resolves a temp id created offline
+          // to the server id useSync recorded when the create synced; a temp id
+          // with no mapping means its create never landed, so the dependent
+          // change is dropped rather than retried forever.
+          const mapId = async (id: string) => (isTempId(id) ? (await getTempIdMapping(id)) ?? null : id);
+          const drop = async () => {
+            if (change.id) await removePendingChange(change.id);
+            setPendingCount(prev => prev - 1);
+          };
+          const p = change.payload as Record<string, any>;
+          let skipped = false;
+          const need = async (id: string): Promise<string> => {
+            const real = await mapId(id);
+            if (real === null) { skipped = true; return ''; }
+            return real;
+          };
+
+          switch (change.type) {
+            case 'packing-list-create': {
+              const created = await createPackingListAPI({ name: p.name, color: p.color });
+              if (isTempId(p.tempId)) await saveTempIdMapping(p.tempId, created.id);
+              break;
+            }
+            case 'packing-list-restore': {
+              const restored = await restorePackingListAPI({
+                name: p.name, icon: p.icon, color: p.color, position: p.position,
+                share_subs: p.share_subs, bags: p.bags, sections: p.sections,
+              });
+              if (isTempId(p.tempListId)) await saveTempIdMapping(p.tempListId, restored.id);
+              // Reissued ids: map the optimistic bag/section/item ids too so
+              // queued follow-ups and undo entries keep resolving.
+              break;
+            }
+            case 'packing-list-update': {
+              const id = await need(p.id);
+              if (!skipped) {
+                const updates: { name?: string; color?: string | null } = {};
+                if (p.name !== undefined) updates.name = p.name;
+                if (p.color !== undefined) updates.color = p.color;
+                await updatePackingListAPI(id, updates);
+              }
+              break;
+            }
+            case 'packing-list-delete': {
+              const id = await need(p.id);
+              if (!skipped) await deletePackingListAPI(id);
+              break;
+            }
+            case 'packing-list-reorder': {
+              const ids = (await Promise.all((p.listIds as string[]).map(mapId))).filter((v): v is string => v !== null);
+              await reorderPackingListsAPI(ids);
+              break;
+            }
+            case 'packing-list-leave': {
+              const id = await need(p.id);
+              if (!skipped) await leavePackingListAPI(id);
+              break;
+            }
+            case 'packing-list-rejoin': {
+              const id = await need(p.id);
+              if (!skipped) await rejoinPackingListAPI(id);
+              break;
+            }
+            case 'packing-check-all': {
+              const id = await need(p.listId);
+              if (!skipped) await checkAllPackingItemsAPI(id, p.checked);
+              break;
+            }
+            case 'packing-section-create': {
+              const listId = await need(p.listId);
+              if (!skipped) {
+                const created = await createPackingSectionAPI(listId, p.name, p.position);
+                if (isTempId(p.tempId)) await saveTempIdMapping(p.tempId, created.id);
+              }
+              break;
+            }
+            case 'packing-section-rename': {
+              const id = await need(p.sectionId);
+              if (!skipped) await renamePackingSectionAPI(id, p.name);
+              break;
+            }
+            case 'packing-section-delete': {
+              const id = await need(p.sectionId);
+              if (!skipped) await deletePackingSectionAPI(id);
+              break;
+            }
+            case 'packing-sections-reorder': {
+              const listId = await need(p.listId);
+              if (!skipped) {
+                const ids = (await Promise.all((p.sectionIds as string[]).map(mapId))).filter((v): v is string => v !== null);
+                await reorderPackingSectionsAPI(listId, ids);
+              }
+              break;
+            }
+            case 'packing-items-reorder': {
+              const sectionId = await need(p.sectionId);
+              if (!skipped) {
+                const ids = (await Promise.all((p.itemIds as string[]).map(mapId))).filter((v): v is string => v !== null);
+                await reorderPackingItemsAPI(sectionId, ids);
+              }
+              break;
+            }
+            case 'packing-item-add': {
+              const sectionId = await need(p.sectionId);
+              if (!skipped) {
+                const bagId = p.bag_id ? await mapId(p.bag_id) : null;
+                const created = await addPackingItemAPI(sectionId, p.name, p.quantity ?? null, bagId);
+                if (isTempId(p.id)) await saveTempIdMapping(p.id, created.id);
+                if (p.checked) await editPackingItemAPI(created.id, { checked: true });
+              }
+              break;
+            }
+            case 'packing-item-edit': {
+              const id = await need(p.id);
+              if (!skipped) {
+                const updates: { name?: string; quantity?: string | null; checked?: boolean; bag_id?: string | null } = {};
+                if (p.name !== undefined) updates.name = p.name;
+                if (p.quantity !== undefined) updates.quantity = p.quantity;
+                if (p.checked !== undefined) updates.checked = p.checked;
+                if (p.bag_id !== undefined) updates.bag_id = p.bag_id ? await mapId(p.bag_id) : null;
+                await editPackingItemAPI(id, updates);
+              }
+              break;
+            }
+            case 'packing-item-delete': {
+              const id = await need(p.id);
+              if (!skipped) await deletePackingItemAPI(id);
+              break;
+            }
+            case 'packing-item-move': {
+              const id = await need(p.id);
+              const toSectionId = skipped ? '' : await need(p.toSectionId);
+              if (!skipped) await movePackingItemAPI(id, toSectionId, p.toPosition);
+              break;
+            }
+            case 'packing-bag-create': {
+              const listId = await need(p.listId);
+              if (!skipped) {
+                const created = await createPackingBagAPI(listId, p.name, p.position);
+                if (isTempId(p.tempId)) await saveTempIdMapping(p.tempId, created.id);
+              }
+              break;
+            }
+            case 'packing-bag-rename': {
+              const id = await need(p.bagId);
+              if (!skipped) await renamePackingBagAPI(id, p.name);
+              break;
+            }
+            case 'packing-bag-delete': {
+              const id = await need(p.bagId);
+              if (!skipped) await deletePackingBagAPI(id);
+              break;
+            }
+            case 'packing-bags-reorder': {
+              const listId = await need(p.listId);
+              if (!skipped) {
+                const ids = (await Promise.all((p.bagIds as string[]).map(mapId))).filter((v): v is string => v !== null);
+                await reorderPackingBagsAPI(listId, ids);
+              }
+              break;
+            }
+          }
+          if (skipped) { await drop(); continue; }
         }
         if (change.id) {
           await removePendingChange(change.id);

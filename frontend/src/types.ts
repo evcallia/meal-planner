@@ -83,6 +83,60 @@ export interface GrocerySection {
   items: GroceryItem[];
 }
 
+// Remembered defaults for an item name (lowercase): which chip (grocery store
+// / packing bag) and which section it usually belongs to. Drives the quick-add
+// autofill and the item-name autocomplete on both checklist tabs.
+export interface ItemDefaultEntry {
+  storeId: string | null;
+  sectionName: string | null;
+}
+
+// ----- Travel / packing lists -----
+
+// Bags are the per-list equivalent of grocery's global stores; the shape
+// matches `Store` so the chip components are shared.
+export interface PackingBag {
+  id: string;
+  list_id: string;
+  name: string;
+  position: number;
+}
+
+export interface PackingItem {
+  id: string;
+  section_id: string;
+  name: string;
+  quantity: string | null;
+  checked: boolean;
+  // Stable across check/uncheck — checked items sort to the bottom of their
+  // section but drop back into this slot when unchecked.
+  position: number;
+  bag_id: string | null;
+  updated_at: string;
+}
+
+export interface PackingSection {
+  id: string;
+  list_id: string;
+  name: string;
+  position: number;
+  items: PackingItem[];
+}
+
+export interface PackingList {
+  id: string;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  position: number;
+  owner_sub: string;
+  owner_name: string | null;
+  is_owner: boolean;
+  shared_with: TrackerShareUser[];
+  bags: PackingBag[];
+  sections: PackingSection[];
+}
+
 // ----- Tracker / Lists -----
 
 export interface TrackerLog {

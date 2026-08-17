@@ -100,6 +100,27 @@ const typeLabels: Record<ChangeType, string> = {
   'tracker-log-add': 'Mark task done',
   'tracker-log-delete': 'Remove completion',
   'tracker-skip': 'Skip task cycle',
+  'packing-list-create': 'Create packing list',
+  'packing-list-update': 'Update packing list',
+  'packing-list-delete': 'Delete packing list',
+  'packing-list-restore': 'Restore packing list',
+  'packing-list-reorder': 'Reorder packing lists',
+  'packing-list-leave': 'Leave packing list',
+  'packing-list-rejoin': 'Rejoin packing list',
+  'packing-check-all': 'Check/uncheck all packing items',
+  'packing-section-create': 'Create packing section',
+  'packing-section-rename': 'Rename packing section',
+  'packing-section-delete': 'Delete packing section',
+  'packing-sections-reorder': 'Reorder packing sections',
+  'packing-items-reorder': 'Reorder packing items',
+  'packing-item-add': 'Add packing item',
+  'packing-item-edit': 'Edit packing item',
+  'packing-item-delete': 'Delete packing item',
+  'packing-item-move': 'Move packing item',
+  'packing-bag-create': 'Create bag',
+  'packing-bag-rename': 'Rename bag',
+  'packing-bag-delete': 'Delete bag',
+  'packing-bags-reorder': 'Reorder bags',
 };
 
 async function enrichPendingChanges(changes: PendingChange[]): Promise<EnrichedPendingChange[]> {
@@ -634,8 +655,9 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               { key: 'featurePantry', label: 'Pantry', description: 'Pantry inventory' },
               { key: 'featureGrocery', label: 'Grocery', description: 'Shared grocery list' },
               { key: 'featureLists', label: 'Lists', description: 'Recency-tracked task lists' },
+              { key: 'featureTravel', label: 'Travel', description: 'Shareable packing lists with bags' },
             ] as const).map(({ key, label, description }) => {
-              const enabledCount = [settings.featureMeals, settings.featurePantry, settings.featureGrocery, settings.featureLists]
+              const enabledCount = [settings.featureMeals, settings.featurePantry, settings.featureGrocery, settings.featureLists, settings.featureTravel]
                 .filter(v => v !== false).length;
               const isOn = settings[key] !== false;
               const isLastOn = isOn && enabledCount <= 1;
@@ -1058,6 +1080,12 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
                   description="When someone updates a List shared with you (mute individual lists from their menus)"
                   checked={settings.notifyListEdits}
                   onChange={() => onUpdate({ notifyListEdits: !settings.notifyListEdits })}
+                />
+                <NotifyToggle
+                  label="Travel edits"
+                  description="When someone updates a packing list shared with you (mute individual trips from their menus)"
+                  checked={settings.notifyTravelEdits}
+                  onChange={() => onUpdate({ notifyTravelEdits: !settings.notifyTravelEdits })}
                 />
                 <NotifyToggle
                   label="List reminders"

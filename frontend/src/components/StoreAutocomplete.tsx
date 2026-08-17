@@ -6,9 +6,15 @@ interface StoreAutocompleteProps {
   selectedStoreId: string | null;
   onSelect: (storeId: string | null) => void;
   onCreate: (name: string) => Promise<Store | null>;
+  // The Travel tab reuses this for bags, so the wording is overridable.
+  placeholder?: string;
+  emptyLabel?: string;
 }
 
-export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate }: StoreAutocompleteProps) {
+export function StoreAutocomplete({
+  stores, selectedStoreId, onSelect, onCreate,
+  placeholder = 'Assign store...', emptyLabel = 'No stores yet',
+}: StoreAutocompleteProps) {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
@@ -123,7 +129,7 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
               open();
             }}
             onBlur={() => close()}
-            placeholder="Assign store..."
+            placeholder={placeholder}
             className="w-full pl-3 pr-7 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           {displayValue && (
@@ -162,7 +168,7 @@ export function StoreAutocomplete({ stores, selectedStoreId, onSelect, onCreate 
             </button>
           )}
           {filtered.length === 0 && !query.trim() && (
-            <div className="px-3 py-2 text-sm text-gray-400">No stores yet</div>
+            <div className="px-3 py-2 text-sm text-gray-400">{emptyLabel}</div>
           )}
         </div>
       )}

@@ -54,6 +54,7 @@ var PrefKeys = map[string]string{
 	"grocery":  "notifyGroceryEdits",
 	"lists":    "notifyListEdits",
 	"list-due": "notifyListsDue",
+	"travel":   "notifyTravelEdits",
 }
 
 // EditEventCategories maps global SSE event types to edit-notification
@@ -341,7 +342,7 @@ func (p NotifyPrefs) Enabled(category, listID string) bool {
 	if listID != "" {
 		field := ""
 		switch category {
-		case "lists":
+		case "lists", "travel":
 			field = "edits"
 		case "list-due":
 			field = "due"
@@ -604,6 +605,14 @@ func (s *Service) SendTestNotification(sub string) []TestResult {
 // detail is an action-specific verb phrase (e.g. `completed “Water plants”`);
 // empty falls back to a generic one. The list name is the title.
 func (s *Service) QueueTrackerEdit(listID, listName string, audience map[string]bool, actorSub, actorName, detail string) {
+	s.QueueListEdit("lists", listID, listName, audience, actorSub, actorName, detail)
+}
+
+// QueueListEdit is the per-list-audience edit batcher shared by every
+// multi-list feature (category "lists" = tracker, "travel" = packing lists).
+// Batches are keyed per (category, list, actor) so two features editing the
+// same-named list never collapse into one notification.
+func (s *Service) QueueListEdit(category, listID, listName string, audience map[string]bool, actorSub, actorName, detail string) {
 	if actorSub == "" {
 		return
 	}
@@ -613,11 +622,11 @@ func (s *Service) QueueTrackerEdit(listID, listName string, audience map[string]
 		subs[k] = v
 	}
 	s.enqueueBatch(editBatch{
-		key:        "lists:" + listID + "|" + actorSub,
-		category:   "lists",
+		key:        category + ":" + listID + "|" + actorSub,
+		category:   category,
 		listID:     listID,
 		title:      listName,
-		tag:        "edit-lists-" + listID,
+		tag:        "edit-" + category + "-" + listID,
 		actorName:  actorName,
 		excludeSub: actorSub,
 		generic:    "updated “" + listName + "”",

@@ -1,31 +1,18 @@
-import { defineConfig, Plugin } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'node:path'
-import fs from 'node:fs'
 
-const buildTimestamp = new Date().toISOString()
-
-function versionPlugin(): Plugin {
-  return {
-    name: 'version-json',
-    apply: 'build',
-    writeBundle(options) {
-      const outDir = options.dir || 'dist';
-      const versionPath = path.resolve(outDir, 'version.json');
-      const content = JSON.stringify({ build: buildTimestamp });
-      fs.writeFileSync(versionPath, content);
-    },
-  };
-}
+// NOTE: nothing here may inject build-time-varying values (timestamps, random
+// ids) into the bundle. Vite hashes assets by content, so any such value makes
+// every rebuild look like a new release — which used to prompt every client
+// with "update available" after a redeploy of identical code. Update detection
+// is content-based instead (src/utils/appUpdate.ts).
 
 export default defineConfig(({ mode }) => {
   const isTest = mode === 'test' || process.env.VITEST === 'true'
 
   return {
-    define: {
-      __APP_BUILD__: JSON.stringify(buildTimestamp),
-    },
     resolve: {
       alias: isTest
         ? [
@@ -36,7 +23,6 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [
       react(),
-      versionPlugin(),
       VitePWA({
         registerType: 'prompt',
         includeAssets: ['favicon.svg', 'apple-touch-icon.png'],

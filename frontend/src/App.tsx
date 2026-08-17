@@ -5,6 +5,7 @@ import { PantryPanel } from './components/PantryPanel';
 import { MealIdeasPanel } from './components/MealIdeasPanel';
 import { GroceryListView } from './components/GroceryListView';
 import { ListsView } from './components/ListsView';
+import { PackingListsView } from './components/PackingListsView';
 import { StatusChip, StatusToast } from './components/StatusBar';
 import { ReAuthModal } from './components/ReAuthModal';
 import { LoginScreen } from './components/LoginScreen';
@@ -19,8 +20,9 @@ import { useKeyboardOpen } from './hooks/useKeyboardOpen';
 import { useVisualViewportPin } from './hooks/useVisualViewportPin';
 import { useActivity } from './hooks/useActivity';
 import { ensurePushSubscription } from './utils/push';
-import { getCurrentUser, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents, refreshCalendarCache, getTrackerLists } from './api/client';
-import { UserInfo, GrocerySection, GroceryItem, PantrySection, PantryItem, Store, MealIdea, ConnectionStatus, TrackerList, TrackerTask } from './types';
+import { claimStaleUpdate } from './utils/appUpdate';
+import { getCurrentUser, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents, refreshCalendarCache, getTrackerLists, getPackingLists } from './api/client';
+import { UserInfo, GrocerySection, GroceryItem, PantrySection, PantryItem, Store, MealIdea, ConnectionStatus, TrackerList, TrackerTask, PackingList, PackingSection, PackingItem, PackingBag } from './types';
 import { scrollToElementWithOffset } from './utils/scroll';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { resetGrocerySessionLoaded, markGrocerySessionLoaded } from './hooks/useGroceryList';
@@ -28,17 +30,19 @@ import { resetPantrySessionLoaded, markPantrySessionLoaded } from './hooks/usePa
 import { resetStoresSessionLoaded, markStoresSessionLoaded } from './hooks/useStores';
 import { resetMealIdeasSessionLoaded, markMealIdeasSessionLoaded } from './hooks/useMealIdeas';
 import { resetTrackerSessionLoaded, markTrackerSessionLoaded } from './hooks/useTracker';
-import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea, saveLocalHiddenEvents, clearLocalHiddenEvents, saveLocalItemDefaults, saveLocalTrackerLists, saveLocalTrackerTasks, saveLocalTrackerList, deleteLocalTrackerList, saveLocalTrackerTask, deleteLocalTrackerTask, getLocalTrackerLists, getLocalTrackerTasks } from './db';
+import { resetPackingSessionLoaded, markPackingSessionLoaded } from './hooks/usePacking';
+import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea, saveLocalHiddenEvents, clearLocalHiddenEvents, saveLocalItemDefaults, saveLocalTrackerLists, saveLocalTrackerTasks, saveLocalTrackerList, deleteLocalTrackerList, saveLocalTrackerTask, deleteLocalTrackerTask, getLocalTrackerLists, getLocalTrackerTasks, saveLocalPackingLists, saveLocalPackingBags, saveLocalPackingSections, saveLocalPackingItems, saveLocalPackingList, saveLocalPackingBag, saveLocalPackingSection, saveLocalPackingItem, deleteLocalPackingList, deleteLocalPackingBag, deleteLocalPackingSection, deleteLocalPackingItem, getLocalPackingSections, getLocalPackingItems, getLocalPackingBags, getLocalPackingLists } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
-type Page = 'meals' | 'pantry' | 'grocery' | 'lists';
+type Page = 'meals' | 'pantry' | 'grocery' | 'lists' | 'travel';
 
-const ALL_PAGES: Page[] = ['meals', 'pantry', 'grocery', 'lists'];
-const PAGE_FEATURE_KEYS: Record<Page, 'featureMeals' | 'featurePantry' | 'featureGrocery' | 'featureLists'> = {
+const ALL_PAGES: Page[] = ['meals', 'pantry', 'grocery', 'lists', 'travel'];
+const PAGE_FEATURE_KEYS: Record<Page, 'featureMeals' | 'featurePantry' | 'featureGrocery' | 'featureLists' | 'featureTravel'> = {
   meals: 'featureMeals',
   pantry: 'featurePantry',
   grocery: 'featureGrocery',
   lists: 'featureLists',
+  travel: 'featureTravel',
 };
 
 // Map tracker objects to their IndexedDB shape (keeps recent_logs so offline
@@ -54,6 +58,19 @@ const trackerTaskToLocal = (t: TrackerTask) => ({
   season_start_day: t.season_start_day, season_end_day: t.season_end_day, snooze_until: t.snooze_until,
   last_done_at: t.last_done_at, last_event_at: t.last_event_at, last_done_by: t.last_done_by, last_note: t.last_note,
   total_count: t.total_count, avg_interval_days: t.avg_interval_days, recent_logs: t.recent_logs,
+});
+
+// Packing lists are cached flat (list / bags / sections / items) so a single
+// item change doesn't rewrite the whole trip.
+const packingListToLocal = (l: PackingList) => ({
+  id: l.id, name: l.name, icon: l.icon, color: l.color, position: l.position,
+  owner_sub: l.owner_sub, owner_name: l.owner_name, is_owner: l.is_owner, shared_with: l.shared_with,
+});
+const packingBagToLocal = (b: PackingBag) => ({ id: b.id, list_id: b.list_id, name: b.name, position: b.position });
+const packingSectionToLocal = (s: PackingSection) => ({ id: s.id, list_id: s.list_id, name: s.name, position: s.position });
+const packingItemToLocal = (i: PackingItem) => ({
+  id: i.id, section_id: i.section_id, name: i.name, quantity: i.quantity,
+  checked: i.checked, position: i.position, bag_id: i.bag_id, updated_at: i.updated_at,
 });
 
 // Throttle server-side iCal feed refreshes triggered on app focus/reconnect
@@ -242,6 +259,22 @@ function BottomNav({ currentPage, onChange, groceryCount, hidden, pages }: { cur
               )}
             </div>
             <span className="text-xs mt-0.5 font-medium">Grocery</span>
+          </button>
+        )}
+        {pages.includes('travel') && (
+          <button
+            onClick={() => onChange('travel')}
+            className={`flex flex-col items-center py-2 transition-colors ${
+              currentPage === 'travel'
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+            }`}
+          >
+            {/* Suitcase icon */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2m-9 0h10a2 2 0 012 2v9a2 2 0 01-2 2H7a2 2 0 01-2-2V9a2 2 0 012-2zm3 3v8m6-8v8" />
+            </svg>
+            <span className="text-xs mt-0.5 font-medium">Travel</span>
           </button>
         )}
         {pages.includes('lists') && (
@@ -491,6 +524,60 @@ function ListsPage({
   );
 }
 
+function TravelPage({
+  user,
+  status,
+  pendingCount,
+  settings,
+  onUpdateSettings,
+  onShowSettings,
+  unseenActivity,
+  onShowActivity,
+  updateAvailable,
+}: {
+  user: UserInfo;
+  status: string;
+  pendingCount: number;
+  settings: ReturnType<typeof import('./hooks/useSettings').useSettings>['settings'];
+  onUpdateSettings: (updates: Partial<ReturnType<typeof import('./hooks/useSettings').useSettings>['settings']>) => void;
+  onShowSettings: () => void;
+  unseenActivity?: number;
+  onShowActivity?: () => void;
+  updateAvailable?: boolean;
+}) {
+  return (
+    <>
+      <PageHeader title="Travel" user={user} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} unseenActivity={unseenActivity} onShowActivity={onShowActivity} />
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
+        <PackingListsView
+          user={user}
+          editHighlightColor={settings.editHighlightColor}
+          showChecked={settings.packingShowChecked}
+          hideBags={settings.packingHideBags}
+          sortBy={settings.packingSortBy}
+          selectedBags={settings.packingSelectedBagIds}
+          excludedBags={settings.packingExcludedBagIds}
+          onUpdateDisplayPrefs={(updates) => onUpdateSettings({
+            ...(updates.showChecked !== undefined ? { packingShowChecked: updates.showChecked } : {}),
+            ...(updates.hideBags !== undefined ? { packingHideBags: updates.hideBags } : {}),
+            ...(updates.sortBy !== undefined ? { packingSortBy: updates.sortBy } : {}),
+            ...(updates.selectedBags !== undefined ? { packingSelectedBagIds: updates.selectedBags } : {}),
+            ...(updates.excludedBags !== undefined ? { packingExcludedBagIds: updates.excludedBags } : {}),
+          })}
+          notifyEditsDefault={settings.notifyTravelEdits}
+          listNotifyOverrides={settings.listNotifyOverrides}
+          onSetListNotify={(listId, changes) => onUpdateSettings({
+            listNotifyOverrides: {
+              ...settings.listNotifyOverrides,
+              [listId]: { ...settings.listNotifyOverrides[listId], ...changes },
+            },
+          })}
+        />
+      </main>
+    </>
+  );
+}
+
 function PantryPage({
   user,
   status,
@@ -537,7 +624,7 @@ function AppContent() {
   const [showActivity, setShowActivity] = useState(false);
   const [currentPage, setCurrentPage] = useState<Page>(() => {
     const saved = sessionStorage.getItem('meal-planner-tab');
-    if (saved === 'meals' || saved === 'pantry' || saved === 'grocery' || saved === 'lists') return saved;
+    if (saved === 'meals' || saved === 'pantry' || saved === 'grocery' || saved === 'lists' || saved === 'travel') return saved;
     return 'meals';
   });
   const [groceryCount, setGroceryCount] = useState(() => {
@@ -589,12 +676,21 @@ function AppContent() {
   const keyboardOpen = useKeyboardOpen();
 
   // PWA update detection (SW lifecycle)
+  // A service worker parked in `waiting` re-announces itself on EVERY
+  // registration — workbox dispatches `waiting` with wasWaitingBeforeRegister,
+  // which vite-plugin-pwa turns into needRefresh. So an update that never
+  // activates (it can't while any client still holds the old worker, common in
+  // an installed PWA) re-raises the banner on every single launch, days after
+  // the deploy. See staleUpdate below.
+  const [staleUpdate, setStaleUpdate] = useState(false);
   const {
     needRefresh: [needRefresh],
     updateServiceWorker,
   } = useRegisterSW({
     onRegistered(registration: ServiceWorkerRegistration | undefined) {
       if (registration) {
+        // Already waiting before this launch — nothing of ours is in flight yet.
+        if (registration.waiting) setStaleUpdate(true);
         // Check for SW updates every 15 minutes
         setInterval(() => registration.update().catch(() => {}), 15 * 60 * 1000);
         // Check on visibility/focus (critical for iOS standalone)
@@ -662,6 +758,18 @@ function AppContent() {
       nuclearUpdate();
     }
   }, [needRefresh, updateServiceWorker]);
+
+  // Take a leftover update instead of asking about it again. At startup there's
+  // no unsaved work to protect and the answer is always "yes", whereas leaving
+  // it waiting means the same prompt on every launch forever. Updates that
+  // appear DURING a session still prompt — the user may be mid-edit.
+  // sessionStorage guards against a reload loop if activation fails.
+  const autoAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!staleUpdate || updating || autoAppliedRef.current) return;
+    autoAppliedRef.current = true;
+    if (claimStaleUpdate()) applyUpdate();
+  }, [staleUpdate, updating, applyUpdate]);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -747,6 +855,17 @@ function AppContent() {
           for (const idea of ideas) await saveLocalMealIdea(idea);
           try { localStorage.setItem('meal-planner-meal-ideas', JSON.stringify(ideas)); } catch { /* full */ }
           markMealIdeasSessionLoaded();
+        }).catch(() => { /* best-effort */ });
+      }
+
+      const hasPackingChanges = pending.some(c => c.type.startsWith('packing-'));
+      if (!hasPackingChanges) {
+        getPackingLists().then(async (packingLists) => {
+          await saveLocalPackingLists(packingLists.map(packingListToLocal));
+          await saveLocalPackingBags(packingLists.flatMap(l => l.bags.map(packingBagToLocal)));
+          await saveLocalPackingSections(packingLists.flatMap(l => l.sections.map(packingSectionToLocal)));
+          await saveLocalPackingItems(packingLists.flatMap(l => l.sections.flatMap(s => s.items.map(packingItemToLocal))));
+          markPackingSessionLoaded();
         }).catch(() => { /* best-effort */ });
       }
 
@@ -866,6 +985,107 @@ function AppContent() {
               resetTrackerSessionLoaded(); // unknown/legacy → refetch on next visit
           }
         } catch { resetTrackerSessionLoaded(); }
+        return;
+      }
+
+      // Travel / packing: same inactive-tab warming as tracker. Events are
+      // already scoped to the list's audience by the server.
+      if (detail.type === 'packing.updated') {
+        if (currentPageRef.current === 'travel') return;
+        try {
+          const pendingP = await getPendingChanges();
+          if (pendingP.some(c => c.type.startsWith('packing-'))) { resetPackingSessionLoaded(); return; }
+          const p = detail.payload as {
+            action?: string; listId?: string; list?: PackingList;
+            section?: PackingSection; sectionId?: string;
+            item?: PackingItem; itemId?: string; toSectionId?: string;
+            bag?: PackingBag; bagId?: string;
+            position?: number;
+            sections?: { id: string; position: number }[];
+            items?: { id: string; position: number }[];
+            bags?: { id: string; position: number }[];
+            name?: string;
+          };
+          switch (p?.action) {
+            case 'list-added': case 'list-updated': case 'list-shared': case 'checked-all':
+              if (p.list) {
+                await saveLocalPackingList(packingListToLocal(p.list));
+                for (const bag of p.list.bags) await saveLocalPackingBag(packingBagToLocal(bag));
+                for (const section of p.list.sections) {
+                  await saveLocalPackingSection(packingSectionToLocal(section));
+                  for (const item of section.items) await saveLocalPackingItem(packingItemToLocal(item));
+                }
+              }
+              break;
+            case 'list-deleted':
+              if (p.listId) await deleteLocalPackingList(p.listId);
+              break;
+            case 'list-reordered':
+              if (p.listId && p.position != null) {
+                const l = (await getLocalPackingLists()).find(x => x.id === p.listId);
+                if (l) await saveLocalPackingList({ ...l, position: p.position });
+              }
+              break;
+            case 'section-added':
+              if (p.section) await saveLocalPackingSection(packingSectionToLocal(p.section));
+              break;
+            case 'section-renamed':
+              if (p.sectionId && p.name) {
+                const sec = (await getLocalPackingSections()).find(x => x.id === p.sectionId);
+                if (sec) await saveLocalPackingSection({ ...sec, name: p.name });
+              }
+              break;
+            case 'section-deleted':
+              if (p.sectionId) await deleteLocalPackingSection(p.sectionId);
+              break;
+            case 'sections-reordered':
+              if (p.sections) {
+                const pos = new Map(p.sections.map(x => [x.id, x.position]));
+                for (const sec of await getLocalPackingSections()) {
+                  const next = pos.get(sec.id);
+                  if (next !== undefined) await saveLocalPackingSection({ ...sec, position: next });
+                }
+              }
+              break;
+            case 'item-added': case 'item-updated': case 'item-moved':
+              if (p.item) await saveLocalPackingItem(packingItemToLocal(p.item));
+              break;
+            case 'item-deleted':
+              if (p.itemId) await deleteLocalPackingItem(p.itemId);
+              break;
+            case 'items-reordered':
+              if (p.items) {
+                const pos = new Map(p.items.map(x => [x.id, x.position]));
+                for (const item of await getLocalPackingItems()) {
+                  const next = pos.get(item.id);
+                  if (next !== undefined) await saveLocalPackingItem({ ...item, position: next });
+                }
+              }
+              break;
+            case 'bag-added': case 'bag-updated':
+              if (p.bag) await saveLocalPackingBag(packingBagToLocal(p.bag));
+              break;
+            case 'bag-deleted':
+              if (p.bagId) {
+                await deleteLocalPackingBag(p.bagId);
+                for (const item of await getLocalPackingItems()) {
+                  if (item.bag_id === p.bagId) await saveLocalPackingItem({ ...item, bag_id: null });
+                }
+              }
+              break;
+            case 'bags-reordered':
+              if (p.bags) {
+                const pos = new Map(p.bags.map(x => [x.id, x.position]));
+                for (const bag of await getLocalPackingBags()) {
+                  const next = pos.get(bag.id);
+                  if (next !== undefined) await saveLocalPackingBag({ ...bag, position: next });
+                }
+              }
+              break;
+            default:
+              resetPackingSessionLoaded(); // unknown/legacy → refetch on next visit
+          }
+        } catch { resetPackingSessionLoaded(); }
         return;
       }
 
@@ -1212,6 +1432,7 @@ function AppContent() {
     resetStoresSessionLoaded();
     resetMealIdeasSessionLoaded();
     resetTrackerSessionLoaded();
+    resetPackingSessionLoaded();
     fetchAllData();
     // Calendar needs a synthetic event since CalendarView manages its own fetch
     window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
@@ -1368,6 +1589,21 @@ function AppContent() {
       {currentPage === 'grocery' && (
         <UndoProvider id="grocery">
           <GroceryPage
+            user={user}
+            status={status}
+            pendingCount={pendingCount}
+            settings={settings}
+            onUpdateSettings={updateSettings}
+            onShowSettings={() => setShowSettings(true)}
+            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            onShowActivity={() => { activity.load(); setShowActivity(true); }}
+            updateAvailable={updateAvailable}
+          />
+        </UndoProvider>
+      )}
+      {currentPage === 'travel' && (
+        <UndoProvider id="travel">
+          <TravelPage
             user={user}
             status={status}
             pendingCount={pendingCount}

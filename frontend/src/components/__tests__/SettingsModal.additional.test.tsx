@@ -164,13 +164,13 @@ describe('Features section', () => {
   };
 
   it('toggles a feature off', async () => {
-    await renderWith({ featureMeals: true, featurePantry: true, featureGrocery: true, featureLists: true });
+    await renderWith({ featureMeals: true, featurePantry: true, featureGrocery: true, featureLists: true, featureTravel: true });
     fireEvent.click(screen.getByRole('switch', { name: /pantry inventory/i }));
     expect(baseProps.onUpdate).toHaveBeenCalledWith({ featurePantry: false });
   });
 
   it('locks the last enabled feature', async () => {
-    await renderWith({ featureMeals: true, featurePantry: false, featureGrocery: false, featureLists: false });
+    await renderWith({ featureMeals: true, featurePantry: false, featureGrocery: false, featureLists: false, featureTravel: false });
     const mealsToggle = screen.getByRole('switch', { name: /at least one tab must stay enabled/i });
     expect(mealsToggle).toBeDisabled();
     expect(screen.getByText('At least one tab must stay enabled')).toBeInTheDocument();

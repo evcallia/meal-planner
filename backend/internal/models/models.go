@@ -462,6 +462,149 @@ func (m *TrackerLog) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+// ----- Travel / packing lists -----
+//
+// A PackingList is the tracker's private-until-shared list model wrapped
+// around the grocery tab's sectioned checklist. Bags are the per-list
+// equivalent of the global `stores` table: two trips can name their bags
+// differently without interfering.
+
+type PackingList struct {
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
+	OwnerSub  string    `gorm:"type:varchar(255);index"`
+	Name      string    `gorm:"type:text"`
+	Icon      *string   `gorm:"type:text"`
+	Color     *string   `gorm:"type:text"`
+	Position  int
+	CreatedAt time.Time `gorm:"type:timestamp;autoCreateTime:false"`
+	UpdatedAt time.Time `gorm:"type:timestamp;autoUpdateTime:false"`
+
+	Sections  []PackingSection      `gorm:"foreignKey:ListID;constraint:OnDelete:CASCADE"`
+	Bags      []PackingBag          `gorm:"foreignKey:ListID;constraint:OnDelete:CASCADE"`
+	Shares    []PackingShare        `gorm:"foreignKey:ListID;constraint:OnDelete:CASCADE"`
+	Positions []PackingListPosition `gorm:"foreignKey:ListID;constraint:OnDelete:CASCADE"`
+}
+
+func (m *PackingList) BeforeCreate(tx *gorm.DB) error {
+	if m.ID == uuid.Nil {
+		m.ID = NewID()
+	}
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt = NowUTC()
+	}
+	if m.UpdatedAt.IsZero() {
+		m.UpdatedAt = NowUTC()
+	}
+	return nil
+}
+
+func (m *PackingList) BeforeUpdate(tx *gorm.DB) error {
+	m.UpdatedAt = NowUTC()
+	return nil
+}
+
+// PackingShare grants a non-owner access to a list. LeftAt is the soft-delete
+// marker set when a member leaves (mirrors TrackerShare).
+type PackingShare struct {
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
+	ListID    uuid.UUID `gorm:"type:uuid"`
+	Sub       string    `gorm:"type:varchar(255);index"`
+	CreatedAt time.Time `gorm:"type:timestamp;autoCreateTime:false"`
+	LeftAt    *time.Time
+}
+
+func (m *PackingShare) BeforeCreate(tx *gorm.DB) error {
+	if m.ID == uuid.Nil {
+		m.ID = NewID()
+	}
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt = NowUTC()
+	}
+	return nil
+}
+
+// PackingListPosition is each user's personal ordering of packing lists.
+type PackingListPosition struct {
+	Sub      string    `gorm:"type:varchar(255);primaryKey"`
+	ListID   uuid.UUID `gorm:"type:uuid;primaryKey"`
+	Position int
+}
+
+func (PackingListPosition) TableName() string { return "packing_list_positions" }
+
+// PackingBag is a per-list destination container ("Carry On", "Toiletry Bag").
+type PackingBag struct {
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
+	ListID    uuid.UUID `gorm:"type:uuid;index"`
+	Name      string    `gorm:"type:text"`
+	Position  int
+	CreatedAt time.Time `gorm:"type:timestamp;autoCreateTime:false"`
+}
+
+func (m *PackingBag) BeforeCreate(tx *gorm.DB) error {
+	if m.ID == uuid.Nil {
+		m.ID = NewID()
+	}
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt = NowUTC()
+	}
+	return nil
+}
+
+type PackingSection struct {
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
+	ListID    uuid.UUID `gorm:"type:uuid;index"`
+	Name      string    `gorm:"type:text"`
+	Position  int
+	CreatedAt time.Time `gorm:"type:timestamp;autoCreateTime:false"`
+
+	Items []PackingItem `gorm:"foreignKey:SectionID;constraint:OnDelete:CASCADE"`
+}
+
+func (m *PackingSection) BeforeCreate(tx *gorm.DB) error {
+	if m.ID == uuid.Nil {
+		m.ID = NewID()
+	}
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt = NowUTC()
+	}
+	return nil
+}
+
+// PackingItem mirrors GroceryItem minus the cross-section global order.
+// Checking an item deliberately leaves Position untouched: the display sorts
+// checked items to the bottom of their section, and unchecking must drop the
+// item back into the slot the user arranged it into.
+type PackingItem struct {
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
+	SectionID uuid.UUID `gorm:"type:uuid;index"`
+	Name      string    `gorm:"type:text"`
+	Quantity  *string   `gorm:"type:text"`
+	Checked   bool
+	Position  int
+	BagID     *uuid.UUID `gorm:"type:uuid"`
+	CreatedAt time.Time  `gorm:"type:timestamp;autoCreateTime:false"`
+	UpdatedAt time.Time  `gorm:"type:timestamp;autoUpdateTime:false"`
+}
+
+func (m *PackingItem) BeforeCreate(tx *gorm.DB) error {
+	if m.ID == uuid.Nil {
+		m.ID = NewID()
+	}
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt = NowUTC()
+	}
+	if m.UpdatedAt.IsZero() {
+		m.UpdatedAt = NowUTC()
+	}
+	return nil
+}
+
+func (m *PackingItem) BeforeUpdate(tx *gorm.DB) error {
+	m.UpdatedAt = NowUTC()
+	return nil
+}
+
 // PushSubscription is a Web Push subscription for one browser/device of a
 // signed-in user.
 type PushSubscription struct {
@@ -553,6 +696,7 @@ func AllModels() []any {
 		&Store{}, &GrocerySection{}, &GroceryItem{}, &ItemDefault{},
 		&UserSettings{}, &User{}, &UserCredential{}, &UserIdentity{},
 		&TrackerList{}, &TrackerShare{}, &TrackerListPosition{}, &TrackerTask{}, &TrackerLog{},
+		&PackingList{}, &PackingShare{}, &PackingListPosition{}, &PackingBag{}, &PackingSection{}, &PackingItem{},
 		&PushSubscription{}, &VapidKeyPair{},
 		&ActivityLog{}, &ActivitySeen{}, &DueDigest{},
 	}

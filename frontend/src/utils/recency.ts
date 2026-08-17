@@ -1,15 +1,13 @@
 // Recency model for the Lists/tracker feature, mirroring lastGLANCE: a task's
 // freshness is how long since it was last done relative to its target interval.
 
+import { parseServerDate } from './serverDate';
+
 export type RecencyLevel = 'none' | 'fresh' | 'ok' | 'soon' | 'due' | 'over';
 
-// The backend serializes naive UTC datetimes (no timezone suffix). JS Date.parse
-// reads a tz-less ISO string as LOCAL time, which would skew "time ago" by the
-// viewer's offset — so treat a suffix-less timestamp as UTC.
-export function parseServerDate(iso: string): number {
-  const hasTz = /([Zz]|[+-]\d{2}:?\d{2})$/.test(iso);
-  return Date.parse(hasTz ? iso : `${iso}Z`);
-}
+// Naive-UTC parsing is shared app-wide now; re-exported so tracker callers
+// keep importing it from here.
+export { parseServerDate } from './serverDate';
 
 export interface Recency {
   level: RecencyLevel;

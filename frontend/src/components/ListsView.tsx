@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTracker, computeStats } from '../hooks/useTracker';
+import { useTabReorder } from '../hooks/useTabReorder';
 import { useUndo } from '../contexts/UndoContext';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { TrackerList, TrackerTask, TrackerLog, DirectoryUser, UserInfo } from '../types';
@@ -10,7 +11,6 @@ import { recency, RECENCY_CLASSES, formatAgo, formatTarget, parseServerDate, pro
 import { getEditHighlight } from '../utils/editHighlightColors';
 
 const firstName = (name: string | null | undefined): string | null => (name ? name.split(' ')[0] : null);
-const preventDefaultTouch = (e: TouchEvent) => e.preventDefault();
 // Recency baseline tracks the latest event of any kind, so a skip resets color/sort too.
 const taskRecency = (t: TrackerTask) => recency(t.last_event_at ?? t.last_done_at, t.target_interval_days);
 
@@ -85,18 +85,6 @@ export function ListsView({
   const [searchOpen, setSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Drag-to-reorder lists (pointer-based; long-press to pick up a tab).
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [dragOrder, setDragOrder] = useState<string[] | null>(null);
-  const dragIdRef = useRef<string | null>(null);
-  const dragOrderRef = useRef<string[] | null>(null);
-  const draggingRef = useRef(false);
-  const justDraggedRef = useRef(false);
-  const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pressStartRef = useRef<{ x: number; y: number } | null>(null);
-  const lastXRef = useRef(0);
-  const lastYRef = useRef(0);
-  const rafRef = useRef<number | null>(null);
 
   // Re-render every minute so relative times / colors stay current.
   const [, setTick] = useState(0);
@@ -167,98 +155,26 @@ export function ListsView({
     if (l) { try { localStorage.setItem(ACTIVE_KEY, l.id); } catch { /* ignore */ } }
   }, [activeIndex, tabs]);
 
-  // ----- drag-to-reorder list tabs -----
-  const hitTest = (x: number, y: number) => {
-    const id = dragIdRef.current;
-    const cur = dragOrderRef.current;
-    if (!id || !cur) return;
-    const el = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest('[data-tab-id]');
-    const overId = el?.getAttribute('data-tab-id');
-    if (!overId || overId === id) return;
-    const from = cur.indexOf(id), to = cur.indexOf(overId);
-    if (from < 0 || to < 0) return;
-    const next = [...cur];
-    next.splice(to, 0, next.splice(from, 1)[0]);
-    dragOrderRef.current = next;
-    setDragOrder(next);
-  };
-  const onDragMove = (e: PointerEvent) => {
-    lastXRef.current = e.clientX;
-    lastYRef.current = e.clientY;
-    hitTest(e.clientX, e.clientY);
-  };
-  // Auto-scroll the strip when the dragged tab nears an edge, so you can keep
-  // dragging all the way to the end even when tabs overflow.
-  const autoScroll = () => {
-    const strip = tabStripRef.current;
-    if (strip && dragIdRef.current) {
-      const rect = strip.getBoundingClientRect();
-      const EDGE = 56, SPEED = 12;
-      const x = lastXRef.current;
-      if (x > rect.right - EDGE && strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1) {
-        strip.scrollLeft += SPEED; hitTest(x, lastYRef.current);
-      } else if (x < rect.left + EDGE && strip.scrollLeft > 0) {
-        strip.scrollLeft -= SPEED; hitTest(x, lastYRef.current);
-      }
-    }
-    rafRef.current = requestAnimationFrame(autoScroll);
-  };
-  const endDrag = () => {
-    document.removeEventListener('pointermove', onDragMove);
-    document.removeEventListener('pointerup', endDrag);
-    document.removeEventListener('touchmove', preventDefaultTouch);
-    if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-    const order = dragOrderRef.current;
-    dragIdRef.current = null; dragOrderRef.current = null; draggingRef.current = false;
-    setDragId(null); setDragOrder(null);
-    justDraggedRef.current = true;
-    setTimeout(() => { justDraggedRef.current = false; }, 60);
-    if (order && order.some((x, i) => x !== tabs[i]?.id)) {
+  // ----- drag-to-reorder list tabs (shared with the Travel tab) -----
+  const tabStripRef = useRef<HTMLDivElement>(null);
+  const { dragId, dragOrder, justDraggedRef, tabHandlers } = useTabReorder({
+    tabIds: tabs.map(l => l.id),
+    stripRef: tabStripRef,
+    onReorder: (order) => {
       // Keep showing the tab we were viewing, not whatever slid into its slot.
       const activeId = tabs[activeIndex]?.id;
-      // Save the Due Soon tab's new slot; reorder the real lists among themselves.
+      // Due Soon is synthetic: remember its new slot, reorder the real lists.
       const dsIdx = order.indexOf(DUE_SOON_ID);
       if (dsIdx >= 0) setDueSoonPosPersist(dsIdx);
       const realIds = order.filter(id => id !== DUE_SOON_ID);
       if (realIds.some((x, i) => x !== lists[i]?.id)) tracker.reorderLists(realIds);
       const newIdx = activeId ? order.indexOf(activeId) : -1;
       if (newIdx >= 0) setActiveIndex(newIdx);
-    }
-  };
-  const beginDrag = (id: string) => {
-    draggingRef.current = true;
-    dragIdRef.current = id;
-    const order = tabs.map(l => l.id);
-    dragOrderRef.current = order;
-    setDragId(id);
-    setDragOrder(order);
-    const rect = tabStripRef.current?.getBoundingClientRect();
-    if (rect) { lastXRef.current = (rect.left + rect.right) / 2; lastYRef.current = (rect.top + rect.bottom) / 2; }
-    document.addEventListener('pointermove', onDragMove);
-    document.addEventListener('pointerup', endDrag);
-    document.addEventListener('touchmove', preventDefaultTouch, { passive: false });
-    rafRef.current = requestAnimationFrame(autoScroll);
-  };
-  const onTabPointerDown = (e: React.PointerEvent, id: string) => {
-    pressStartRef.current = { x: e.clientX, y: e.clientY };
-    if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
-    pressTimerRef.current = setTimeout(() => beginDrag(id), 250);
-  };
-  const onTabPointerMove = (e: React.PointerEvent) => {
-    if (draggingRef.current) return;
-    const s = pressStartRef.current;
-    if (s && Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10 && pressTimerRef.current) {
-      clearTimeout(pressTimerRef.current);
-      pressTimerRef.current = null;
-    }
-  };
-  const onTabPointerUp = () => {
-    if (pressTimerRef.current) { clearTimeout(pressTimerRef.current); pressTimerRef.current = null; }
-  };
+    },
+  });
 
   // Swipe anywhere on the Lists page to cycle (lastGLANCE-style). Listening at
   // the window level makes the whole page swipeable, not just the list card.
-  const tabStripRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let start: { x: number; y: number } | null = null;
     const onStart = (e: TouchEvent) => {
@@ -358,9 +274,7 @@ export function ListsView({
                   <div key={l.id} className="flex flex-col items-stretch shrink-0">
                     <button
                       data-tab-id={l.id}
-                      onPointerDown={e => onTabPointerDown(e, l.id)}
-                      onPointerMove={onTabPointerMove}
-                      onPointerUp={onTabPointerUp}
+                      {...tabHandlers(l.id)}
                       onClick={() => { if (!justDraggedRef.current) goTo(i); }}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors select-none ${dragId === l.id ? 'opacity-60 scale-105 ring-2 ring-blue-400' : ''} ${act ? 'bg-blue-500 text-white' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50'}`}
                     >

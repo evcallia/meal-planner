@@ -26,6 +26,15 @@ var activityGenericDetail = map[string]string{
 	"grocery": "updated the grocery list",
 }
 
+// activityScope narrows a feed entry to one list's audience. The audience is
+// SNAPSHOTTED into the row (not joined) so entries stay correctly private even
+// after the list and its share rows are gone.
+type activityScope struct {
+	id       string
+	name     string
+	audience map[string]bool
+}
+
 // activityEntryJSON is the feed entry shape shared by GET /api/activity and
 // the live `activity.added` SSE event — the two must stay identical so
 // client-appended entries match later fetches. list_id/task_id ride along so
@@ -73,12 +82,22 @@ func (a *App) emitActivity(row *models.ActivityLog, audience map[string]bool, ac
 // deletion with their privacy intact). Best-effort: a failed insert never
 // breaks the mutation.
 func (a *App) logActivity(category, detail string, actor *session.UserInfo, list *models.TrackerList) {
+	var scope *activityScope
+	if list != nil {
+		scope = &activityScope{id: list.ID.String(), name: list.Name, audience: trackerAudience(list)}
+	}
+	a.logActivityScoped(category, detail, actor, scope)
+}
+
+// logActivityScoped is the general form: scope non-nil restricts visibility to
+// that list's audience (tracker lists, packing lists), nil means shared-global.
+func (a *App) logActivityScoped(category, detail string, actor *session.UserInfo, scope *activityScope) {
 	if actor == nil {
 		return
 	}
 	if detail == "" {
-		if list != nil {
-			detail = "updated “" + list.Name + "”"
+		if scope != nil {
+			detail = "updated “" + scope.name + "”"
 		} else {
 			detail = activityGenericDetail[category]
 		}
@@ -90,10 +109,10 @@ func (a *App) logActivity(category, detail string, actor *session.UserInfo, list
 		Detail:    detail,
 	}
 	var audience map[string]bool
-	if list != nil {
-		row.ListName = list.Name
-		row.ListID = list.ID.String()
-		audience = trackerAudience(list)
+	if scope != nil {
+		row.ListName = scope.name
+		row.ListID = scope.id
+		audience = scope.audience
 		snapshot := ""
 		for sub := range audience {
 			snapshot += "|" + sub
