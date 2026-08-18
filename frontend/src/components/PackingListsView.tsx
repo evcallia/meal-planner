@@ -979,20 +979,53 @@ function SectionMenu({ sectionName, itemCount, targets, onCopyTo, onDelete }: {
   const [open, setOpen] = useState(false);
   // Deleting takes the items too, so a non-empty section asks first.
   const [confirming, setConfirming] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // The menu is portalled to <body> and positioned by hand. Anchoring it inside
+  // the card doesn't work: .glass sets backdrop-filter, which makes every
+  // section card its own stacking context — so the menu's z-index only ranked
+  // it against its own card's contents, leaving it painted under the following
+  // sections and under the fixed bottom nav, where it couldn't be clicked.
+  const place = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const right = Math.max(8, window.innerWidth - rect.right);
+    // Flip up when there isn't room below — that's where the nav island sits.
+    const MENU_MAX = 280;
+    if (window.innerHeight - rect.bottom < MENU_MAX) {
+      setPos({ bottom: window.innerHeight - rect.top + 6, right });
+    } else {
+      setPos({ top: rect.bottom + 6, right });
+    }
+  }, []);
 
   useEffect(() => {
     if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) { setOpen(false); setConfirming(false); }
+    place();
+    const close = () => { setOpen(false); setConfirming(false); };
+    const onPointerDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (menuRef.current?.contains(t) || buttonRef.current?.contains(t)) return;
+      close();
     };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [open]);
+    // Keep it glued to the button while the page moves under it.
+    const reposition = () => place();
+    document.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [open, place]);
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={buttonRef}
         type="button"
         aria-label={`Options for ${sectionName}`}
         // The header itself is a drag handle for the section — don't start a
@@ -1006,8 +1039,15 @@ function SectionMenu({ sectionName, itemCount, targets, onCopyTo, onDelete }: {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
         </svg>
       </button>
-      {open && (
-        <div data-testid="section-menu" className="absolute right-0 top-full mt-1 glass-menu rounded-lg py-1 z-30 min-w-[200px]" onClick={e => e.stopPropagation()}>
+      {open && pos && createPortal(
+        <div
+          ref={menuRef}
+          data-testid="section-menu"
+          style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, right: pos.right }}
+          // Above the bottom nav island (z-30) and every card's own context.
+          className="z-[60] glass-menu rounded-lg py-1 min-w-[220px] max-h-[60vh] overflow-y-auto shadow-lg"
+          onClick={e => e.stopPropagation()}
+        >
           <div className="px-4 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
             Copy section to
           </div>
@@ -1048,9 +1088,10 @@ function SectionMenu({ sectionName, itemCount, targets, onCopyTo, onDelete }: {
               Delete section{itemCount > 0 ? ` (${itemCount})` : ''}
             </button>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
 
