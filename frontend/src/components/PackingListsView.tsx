@@ -894,8 +894,10 @@ export function PackingListsView({
                   headerActions={
                     <SectionMenu
                       sectionName={section.name}
+                      itemCount={section.items.length}
                       targets={lists.filter(l => l.id !== listId)}
                       onCopyTo={toListId => handleCopySection(section.id, toListId)}
+                      onDelete={() => packing.deleteSection(listId, section.id)}
                     />
                   }
                   sectionDragHandlers={getSectionDragHandlers(index)}
@@ -967,18 +969,22 @@ export function PackingListsView({
 
 // ----- per-section menu (copy this section into another trip) -----
 
-function SectionMenu({ sectionName, targets, onCopyTo }: {
+function SectionMenu({ sectionName, itemCount, targets, onCopyTo, onDelete }: {
   sectionName: string;
+  itemCount: number;
   targets: PackingList[];
   onCopyTo: (toListId: string) => void;
+  onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Deleting takes the items too, so a non-empty section asks first.
+  const [confirming, setConfirming] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) { setOpen(false); setConfirming(false); }
     };
     document.addEventListener('mousedown', onClick);
     return () => document.removeEventListener('mousedown', onClick);
@@ -1016,6 +1022,32 @@ function SectionMenu({ sectionName, targets, onCopyTo }: {
               {t.name}
             </button>
           ))}
+
+          <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
+          {confirming ? (
+            <div className="px-4 py-2 space-y-2">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Delete “{sectionName}”{itemCount > 0 ? ` and its ${itemCount} item${itemCount === 1 ? '' : 's'}` : ''}?
+              </p>
+              <div className="flex items-center justify-end gap-3">
+                <button onClick={() => setConfirming(false)} className="text-sm text-gray-400">Cancel</button>
+                <button
+                  data-testid="confirm-delete-section"
+                  onClick={() => { setConfirming(false); setOpen(false); onDelete(); }}
+                  className="text-sm font-medium text-red-600 dark:text-red-400"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => (itemCount > 0 ? setConfirming(true) : (setOpen(false), onDelete()))}
+              className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
+            >
+              Delete section{itemCount > 0 ? ` (${itemCount})` : ''}
+            </button>
+          )}
         </div>
       )}
     </div>

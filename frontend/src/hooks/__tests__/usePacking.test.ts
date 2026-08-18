@@ -64,6 +64,8 @@ import {
   deletePackingItem as deletePackingItemAPI,
   checkAllPackingItems as checkAllPackingItemsAPI,
   createPackingSection as createPackingSectionAPI,
+  deletePackingSection as deletePackingSectionAPI,
+  movePackingItem as movePackingItemAPI,
   createPackingBag as createPackingBagAPI,
   reorderPackingItems as reorderPackingItemsAPI,
 } from '../../api/client';
@@ -76,6 +78,8 @@ const mockEditItem = vi.mocked(editPackingItemAPI);
 const mockDeleteItem = vi.mocked(deletePackingItemAPI);
 const mockCheckAll = vi.mocked(checkAllPackingItemsAPI);
 const mockCreateSection = vi.mocked(createPackingSectionAPI);
+const mockDeleteSection = vi.mocked(deletePackingSectionAPI);
+const mockMoveItem = vi.mocked(movePackingItemAPI);
 const mockCreateBag = vi.mocked(createPackingBagAPI);
 const mockReorderItems = vi.mocked(reorderPackingItemsAPI);
 const mockQueueChange = vi.mocked(queueChange);
@@ -453,6 +457,122 @@ describe('copying a section to another trip', () => {
     expect(queued.filter(t => t === 'packing-item-add')).toHaveLength(3);
     const target = result.current.lists.find(l => l.id === 'l2')!;
     expect(target.sections[0].items).toHaveLength(3);
+  });
+});
+
+describe('removing sections', () => {
+  beforeEach(() => {
+    mockDeleteItem.mockResolvedValue({ status: 'deleted' });
+    mockDeleteSection.mockResolvedValue(undefined);
+    mockCreateSection.mockImplementation(async (listId: string, name: string, position?: number) =>
+      ({ id: `sec-${name}`, list_id: listId, name, position: position ?? 0, items: [] }) as any);
+    let n = 0;
+    mockAddItem.mockImplementation(async (sectionId: string, name: string, quantity: string | null, bagId: string | null) =>
+      ({
+        id: `re-${++n}`, section_id: sectionId, name, quantity, checked: false,
+        position: n, bag_id: bagId, updated_at: '2026-01-02T00:00:00',
+      }) as any);
+    mockEditItem.mockResolvedValue({} as any);
+    mockMoveItem.mockResolvedValue({} as any);
+  });
+
+  it('deletes a whole section, items and all', async () => {
+    const { result } = await renderLoaded();
+    await act(async () => { await result.current.deleteSection('l1', 's1'); });
+
+    expect(result.current.lists[0].sections).toHaveLength(0);
+    expect(mockDeleteSection).toHaveBeenCalledWith('s1');
+  });
+
+  it('restores the section and every item on undo', async () => {
+    const { result } = await renderLoaded();
+    await act(async () => { await result.current.deleteSection('l1', 's1'); });
+    await act(async () => { await undoStack.at(-1)!.undo(); });
+
+    const sections = result.current.lists[0].sections;
+    expect(sections).toHaveLength(1);
+    expect(sections[0].name).toBe('Clothes');
+    expect(sections[0].items.map(i => i.name)).toEqual(['Boots', 'Poles', 'Helmet']);
+    // Bag assignments survive the round trip.
+    expect(sections[0].items.find(i => i.name === 'Boots')!.bag_id).toBe('bag1');
+  });
+
+  it('drops the section when its last item is deleted', async () => {
+    const list = buildList();
+    list.sections[0].items = [list.sections[0].items[0]]; // one item left
+    mockGetLists.mockResolvedValue([list]);
+    const { result } = await renderLoaded();
+
+    await act(async () => { await result.current.deleteItem('l1', 'i1'); });
+    expect(result.current.lists[0].sections).toHaveLength(0);
+    // The server prunes it, so no separate section delete is sent.
+    expect(mockDeleteSection).not.toHaveBeenCalled();
+  });
+
+  it('keeps the section while other items remain', async () => {
+    const { result } = await renderLoaded();
+    await act(async () => { await result.current.deleteItem('l1', 'i1'); });
+    expect(result.current.lists[0].sections).toHaveLength(1);
+    expect(result.current.lists[0].sections[0].items).toHaveLength(2);
+  });
+
+  it('undo of that delete brings back the section and the item together', async () => {
+    const list = buildList();
+    list.sections[0].items = [list.sections[0].items[0]];
+    mockGetLists.mockResolvedValue([list]);
+    const { result } = await renderLoaded();
+
+    await act(async () => { await result.current.deleteItem('l1', 'i1'); });
+    await act(async () => { await undoStack.at(-1)!.undo(); });
+
+    const sections = result.current.lists[0].sections;
+    expect(sections).toHaveLength(1);
+    expect(sections[0].name).toBe('Clothes');
+    expect(sections[0].items.map(i => i.name)).toEqual(['Boots']);
+  });
+
+  it('drops the source section when its last item is moved out', async () => {
+    const list = buildList();
+    list.sections.push({
+      id: 's2', list_id: 'l1', name: 'Tech', position: 1,
+      items: [{ id: 'i9', section_id: 's2', name: 'Charger', quantity: null, checked: false, position: 0, bag_id: null, updated_at: '2026-01-01T00:00:00' }],
+    });
+    list.sections[0].items = [list.sections[0].items[0]];
+    mockGetLists.mockResolvedValue([list]);
+    const { result } = await renderLoaded();
+
+    await act(async () => { await result.current.moveItem('l1', 'i1', 's2', 0); });
+    const sections = result.current.lists[0].sections;
+    expect(sections.map(s => s.name)).toEqual(['Tech']);
+    expect(sections[0].items.map(i => i.name)).toEqual(['Boots', 'Charger']);
+  });
+
+  it('undo of that move recreates the source section', async () => {
+    const list = buildList();
+    list.sections.push({
+      id: 's2', list_id: 'l1', name: 'Tech', position: 1,
+      items: [{ id: 'i9', section_id: 's2', name: 'Charger', quantity: null, checked: false, position: 0, bag_id: null, updated_at: '2026-01-01T00:00:00' }],
+    });
+    list.sections[0].items = [list.sections[0].items[0]];
+    mockGetLists.mockResolvedValue([list]);
+    const { result } = await renderLoaded();
+
+    await act(async () => { await result.current.moveItem('l1', 'i1', 's2', 0); });
+    await act(async () => { await undoStack.at(-1)!.undo(); });
+
+    const names = result.current.lists[0].sections.map(s => s.name).sort();
+    expect(names).toEqual(['Clothes', 'Tech']);
+  });
+
+  it('queues the section delete when offline', async () => {
+    const { result, rerender } = await renderLoaded();
+    mockOnline.mockReturnValue(false);
+    rerender();
+    await act(async () => { await result.current.deleteSection('l1', 's1'); });
+
+    expect(mockDeleteSection).not.toHaveBeenCalled();
+    expect(mockQueueChange).toHaveBeenCalledWith('packing-section-delete', '', { sectionId: 's1' });
+    expect(result.current.lists[0].sections).toHaveLength(0);
   });
 });
 

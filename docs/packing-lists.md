@@ -82,6 +82,17 @@ Delete endpoints are idempotent (204 when already gone).
   reorders never notify, and the same phrase feeds `activity_log`
   (audience-snapshotted so entries stay private after a list is deleted).
 
+## Removing sections
+
+A section only exists to group items, so it never outlives them:
+
+* deleting a section deletes its items too (one undo entry restores both);
+* a section is pruned the moment its **last item leaves** — by delete or by
+  move — server-side, with a `section-deleted` broadcast alongside the item
+  event so every client drops the header;
+* a section created **empty** is left alone: quick-add creates one before the
+  first item lands, and pruning there would delete it out from under the add.
+
 ## Copying a section between trips
 
 `usePacking.copySectionToList(fromListId, sectionId, toListId)` is built from

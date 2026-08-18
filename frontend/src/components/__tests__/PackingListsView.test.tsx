@@ -15,6 +15,7 @@ const mockLeaveList = vi.fn();
 const mockUpdateList = vi.fn();
 const mockReorderLists = vi.fn();
 const mockCopySection = vi.fn(() => Promise.resolve({ copied: 3, skipped: 0 }));
+const mockDeleteSection = vi.fn();
 
 let mockLists: PackingList[] = [];
 let mockLoading = false;
@@ -35,7 +36,7 @@ vi.mock('../../hooks/usePacking', () => ({
     addSection: vi.fn(),
     createSection: mockCreateSection,
     renameSection: vi.fn(),
-    deleteSection: vi.fn(),
+    deleteSection: mockDeleteSection,
     reorderSections: vi.fn(),
     addItem: mockAddItem,
     editItem: mockEditItem,
@@ -336,6 +337,40 @@ describe('PackingListsView', () => {
     const menu = screen.getByTestId('section-menu');
     expect(within(menu).queryByRole('button', { name: 'Paris' })).not.toBeInTheDocument();
     expect(within(menu).getByRole('button', { name: 'Dolomites' })).toBeInTheDocument();
+  });
+
+  it('asks before deleting a section that still has items', () => {
+    renderView();
+    fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
+    fireEvent.click(screen.getByText('Delete section (3)'));
+
+    // Confirmation first — deleting takes the items with it.
+    expect(mockDeleteSection).not.toHaveBeenCalled();
+    expect(screen.getByText(/Delete “Clothes” and its 3 items\?/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('confirm-delete-section'));
+    expect(mockDeleteSection).toHaveBeenCalledWith('l1', 's1');
+  });
+
+  it('can back out of the confirmation', () => {
+    renderView();
+    fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
+    fireEvent.click(screen.getByText('Delete section (3)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(mockDeleteSection).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('confirm-delete-section')).not.toBeInTheDocument();
+  });
+
+  it('deletes an empty section without asking', () => {
+    const list = listFixture();
+    list.sections[0].items = [];
+    mockLists = [list];
+    renderView();
+    fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
+    fireEvent.click(screen.getByText('Delete section'));
+
+    expect(mockDeleteSection).toHaveBeenCalledWith('l1', 's1');
   });
 
   it('shows a loading spinner while lists load', () => {

@@ -831,19 +831,21 @@ func (a *App) handlePackingDeleteSection(w http.ResponseWriter, r *http.Request,
 		httpx.WriteError(w, serr)
 		return
 	}
+	// Deleting a section takes its items with it (FK cascade). The client
+	// snapshots them first so undo can put the whole thing back.
 	var itemCount int64
 	a.DB.Model(&models.PackingItem{}).Where("section_id = ?", sectionID).Count(&itemCount)
-	if itemCount > 0 {
-		httpx.Detail(w, http.StatusBadRequest, "Cannot delete section with items")
-		return
-	}
 	if err := a.DB.Delete(&models.PackingSection{}, "id = ?", sectionID).Error; err != nil {
 		httpx.WriteError(w, err)
 		return
 	}
+	detail := "removed the “" + section.Name + "” section"
+	if itemCount > 0 {
+		detail += " (" + countNoun(int(itemCount), "item") + ")"
+	}
 	a.packingBroadcast(lst, "section-deleted", J{
-		"sectionId": sectionID.String(),
-		"pushDetail": "removed the “" + section.Name + "” section",
+		"sectionId":  sectionID.String(),
+		"pushDetail": detail,
 	}, r)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -972,6 +974,29 @@ func (a *App) handlePackingAddItem(w http.ResponseWriter, r *http.Request, user 
 		"pushDetail": "added “" + item.Name + "”",
 	}, r)
 	httpx.WriteJSON(w, 200, data)
+}
+
+// packingPruneEmptySection removes a section that has just lost its last item.
+// A section only exists to group items, so one emptied by a delete or a move
+// disappears with them rather than lingering as a dead header. Returns the
+// section's name when it was removed.
+//
+// This deliberately fires only when items LEAVE: a section created empty
+// (quick-add makes one before the first item lands) is left alone.
+func (a *App) packingPruneEmptySection(sectionID uuid.UUID) (string, bool) {
+	var section models.PackingSection
+	if a.DB.Where("id = ?", sectionID).First(&section).Error != nil {
+		return "", false
+	}
+	var remaining int64
+	a.DB.Model(&models.PackingItem{}).Where("section_id = ?", sectionID).Count(&remaining)
+	if remaining > 0 {
+		return "", false
+	}
+	if a.DB.Delete(&models.PackingSection{}, "id = ?", sectionID).Error != nil {
+		return "", false
+	}
+	return section.Name, true
 }
 
 // packingResolveBag validates that a bag id (if any) belongs to this list.
@@ -1135,6 +1160,15 @@ func (a *App) handlePackingMoveItem(w http.ResponseWriter, r *http.Request, user
 		"item":          packingItemJSON(item),
 		"pushDetail":    "moved “" + item.Name + "” to “" + target.Name + "”",
 	}, r)
+	// Moving the last item out empties the source section.
+	if oldSectionID != toSectionID {
+		if name, pruned := a.packingPruneEmptySection(oldSectionID); pruned {
+			a.packingBroadcast(lst, "section-deleted", J{
+				"sectionId":  oldSectionID.String(),
+				"pushDetail": "removed the now-empty “" + name + "” section",
+			}, r)
+		}
+	}
 	httpx.WriteJSON(w, 200, packingItemJSON(item))
 }
 
@@ -1162,6 +1196,13 @@ func (a *App) handlePackingDeleteItem(w http.ResponseWriter, r *http.Request, us
 		"sectionId": sectionID.String(), "itemId": itemID.String(),
 		"pushDetail": "removed “" + item.Name + "”",
 	}, r)
+	// That may have been the section's last item.
+	if name, pruned := a.packingPruneEmptySection(sectionID); pruned {
+		a.packingBroadcast(lst, "section-deleted", J{
+			"sectionId":  sectionID.String(),
+			"pushDetail": "removed the now-empty “" + name + "” section",
+		}, r)
+	}
 	httpx.WriteJSON(w, 200, J{"status": "deleted"})
 }
 

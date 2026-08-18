@@ -754,23 +754,6 @@ export function usePacking() {
       },
     ), [run, setLists, resolveIdAsync]);
 
-  const deleteSection = useCallback(async (listId: string, sectionId: string) => {
-    const list = findList(listId);
-    const section = list?.sections.find(s => s.id === sectionId);
-    if (!section || section.items.length > 0) return;
-    const ref = { id: sectionId };
-    pushAction({
-      type: 'packing-delete-section',
-      undo: async () => {
-        const restoreRef = { id: generateTempId() };
-        await createSectionCore(resolveId(listId), section.name, section.position, restoreRef);
-        remapId(ref.id, restoreRef.id);
-        ref.id = restoreRef.id;
-      },
-      redo: () => deleteSectionCore(listId, resolveId(ref.id)),
-    });
-    await deleteSectionCore(listId, sectionId);
-  }, [deleteSectionCore, pushAction, createSectionCore, remapId, resolveId]);
 
   const reorderSectionsCore = useCallback((listId: string, orderedIds: string[]) =>
     run(
@@ -842,6 +825,18 @@ export function usePacking() {
     );
   }, [run, setLists, remapId, resolveIdAsync]);
 
+  /**
+   * Drop a section from local state only. The server prunes a section emptied
+   * by an item delete/move on its own, so queueing a delete too would just
+   * fail on a row that's already gone.
+   */
+  const removeSectionLocally = useCallback((listId: string, sectionId: string) => {
+    optimisticVersionRef.current++;
+    setLists(prev => withList(prev, listId, l => ({
+      ...l, sections: l.sections.filter(s => s.id !== sectionId),
+    })));
+  }, [setLists]);
+
   const deleteItemCore = useCallback((listId: string, itemId: string) =>
     run(
       () => setLists(prev => withList(prev, listId, l => ({
@@ -853,6 +848,44 @@ export function usePacking() {
         else await queueChange('packing-item-delete', '', { id: itemId });
       },
     ), [run, setLists, resolveIdAsync]);
+
+  /**
+   * Restore a section and its items (undo of a section delete). Ids are
+   * reissued, so old→new is remapped for both the section and every item and
+   * the caller's refs are updated in place.
+   */
+  const restoreSection = useCallback(async (
+    listId: string, snapshot: PackingSection, sectionRef: { id: string }, itemRefs: { id: string }[],
+  ) => {
+    const restoreRef = { id: generateTempId() };
+    await createSectionCore(resolveId(listId), snapshot.name, snapshot.position, restoreRef);
+    remapId(sectionRef.id, restoreRef.id);
+    sectionRef.id = restoreRef.id;
+    for (let i = 0; i < snapshot.items.length; i++) {
+      const item = snapshot.items[i];
+      const ref = { id: generateTempId() };
+      await addItemCore(listId, resolveId(sectionRef.id), item.name, item.quantity,
+        item.bag_id ? resolveId(item.bag_id) : null, item.position, item.checked, ref);
+      if (itemRefs[i]) remapId(itemRefs[i].id, ref.id);
+      itemRefs[i] = ref;
+    }
+  }, [createSectionCore, addItemCore, remapId, resolveId]);
+
+  /** Delete a section AND everything in it; undo puts the whole thing back. */
+  const deleteSection = useCallback(async (listId: string, sectionId: string) => {
+    const list = findList(listId);
+    const section = list?.sections.find(s => s.id === sectionId);
+    if (!section) return;
+    const snapshot: PackingSection = { ...section, items: orderSectionItems(section.items) };
+    const sectionRef = { id: sectionId };
+    const itemRefs = snapshot.items.map(i => ({ id: i.id }));
+    pushAction({
+      type: 'packing-delete-section',
+      undo: () => restoreSection(listId, snapshot, sectionRef, itemRefs),
+      redo: () => deleteSectionCore(listId, resolveId(sectionRef.id)),
+    });
+    await deleteSectionCore(listId, sectionId);
+  }, [deleteSectionCore, restoreSection, pushAction, resolveId]);
 
   const addItem = useCallback(async (
     listId: string, sectionId: string, name: string,
@@ -937,20 +970,37 @@ export function usePacking() {
     const section = list?.sections.find(s => s.items.some(i => i.id === itemId));
     const item = section?.items.find(i => i.id === itemId);
     if (!section || !item) return;
+    // The server drops a section its last item just left; mirror that locally
+    // and fold both halves into ONE undo entry.
+    const emptiesSection = section.items.length === 1;
     const ref = { id: itemId };
+    const sectionRef = { id: section.id };
+    const snapshot: PackingSection = { ...section, items: [item] };
+
     pushAction({
       type: 'packing-delete-item',
       undo: async () => {
+        if (emptiesSection) {
+          const refs = [ref];
+          await restoreSection(listId, snapshot, sectionRef, refs);
+          ref.id = refs[0].id;
+          return;
+        }
         const restoreRef = { id: generateTempId() };
-        await addItemCore(listId, resolveId(section.id), item.name, item.quantity, item.bag_id,
+        await addItemCore(listId, resolveId(sectionRef.id), item.name, item.quantity, item.bag_id,
           item.position, item.checked, restoreRef);
         remapId(ref.id, restoreRef.id);
         ref.id = restoreRef.id;
       },
-      redo: () => deleteItemCore(listId, resolveId(ref.id)),
+      redo: async () => {
+        await deleteItemCore(listId, resolveId(ref.id));
+        if (emptiesSection) removeSectionLocally(listId, resolveId(sectionRef.id));
+      },
     });
+
     await deleteItemCore(listId, itemId);
-  }, [addItemCore, deleteItemCore, pushAction, remapId, resolveId]);
+    if (emptiesSection) removeSectionLocally(listId, section.id);
+  }, [addItemCore, deleteItemCore, restoreSection, removeSectionLocally, pushAction, remapId, resolveId]);
 
   const reorderItemsCore = useCallback((listId: string, sectionId: string, orderedIds: string[]) => {
     // Items outside the rendered subset (rows hidden by the show-packed or bag
@@ -1018,13 +1068,27 @@ export function usePacking() {
     const item = fromSection?.items.find(i => i.id === itemId);
     if (!fromSection || !item || fromSection.id === toSectionId) return;
     const fromPosition = item.position;
+    // Moving the last item out empties the source, which the server prunes.
+    const emptiesSource = fromSection.items.length === 1;
+    const sourceRef = { id: fromSection.id };
+    const sourceSnapshot: PackingSection = { ...fromSection, items: [] };
+
     await moveItemCore(listId, itemId, toSectionId, toPosition);
+    if (emptiesSource) removeSectionLocally(listId, fromSection.id);
+
     pushAction({
       type: 'packing-move-item',
-      undo: () => moveItemCore(listId, resolveId(itemId), resolveId(fromSection.id), fromPosition),
-      redo: () => moveItemCore(listId, resolveId(itemId), resolveId(toSectionId), toPosition),
+      undo: async () => {
+        // The source is gone — recreate it before moving the item home.
+        if (emptiesSource) await restoreSection(listId, sourceSnapshot, sourceRef, []);
+        await moveItemCore(listId, resolveId(itemId), resolveId(sourceRef.id), fromPosition);
+      },
+      redo: async () => {
+        await moveItemCore(listId, resolveId(itemId), resolveId(toSectionId), toPosition);
+        if (emptiesSource) removeSectionLocally(listId, resolveId(sourceRef.id));
+      },
     });
-  }, [moveItemCore, pushAction, resolveId]);
+  }, [moveItemCore, restoreSection, removeSectionLocally, pushAction, resolveId]);
 
   // ----- bags -----
 
