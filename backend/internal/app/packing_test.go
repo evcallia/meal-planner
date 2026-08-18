@@ -327,24 +327,143 @@ func TestPackingItemRejectsForeignBag(t *testing.T) {
 	}
 }
 
-func TestPackingDeleteSectionWithItemsRejected(t *testing.T) {
+func TestPackingDeleteSectionIsIdempotent(t *testing.T) {
 	ta := newTestApp(t)
 	lst := createPackingList(t, ta, "Paris")
 	sec := createPackingSection(t, ta, lst.ID, "Clothes")
 	addPackingItem(t, ta, sec.ID, "Socks", nil)
 
-	if res := ta.DELETE("/api/packing/sections/" + sec.ID); res.Status != 400 {
-		t.Fatalf("delete non-empty section: %d %s", res.Status, res.Body)
-	}
-	lists := getPackingLists(t, ta, ta.Cookie)
-	itemID := lists[0].Sections[0].Items[0].ID
-	ta.DELETE("/api/packing/items/" + itemID)
+	// Non-empty is fine — the section takes its items with it.
 	if res := ta.DELETE("/api/packing/sections/" + sec.ID); res.Status != 204 {
-		t.Fatalf("delete empty section: %d %s", res.Status, res.Body)
+		t.Fatalf("delete section: %d %s", res.Status, res.Body)
 	}
-	// Idempotent.
 	if res := ta.DELETE("/api/packing/sections/" + sec.ID); res.Status != 204 {
 		t.Fatalf("second delete: %d", res.Status)
+	}
+}
+
+// A section exists only to group items: deleting it takes them along, and one
+// emptied by a delete or a move disappears on its own.
+func TestPackingDeleteSectionTakesItsItems(t *testing.T) {
+	ta := newTestApp(t)
+	lst := createPackingList(t, ta, "Paris")
+	sec := createPackingSection(t, ta, lst.ID, "Clothes")
+	keep := createPackingSection(t, ta, lst.ID, "Tech")
+	addPackingItem(t, ta, sec.ID, "Socks", nil)
+	addPackingItem(t, ta, sec.ID, "Shirt", nil)
+	addPackingItem(t, ta, keep.ID, "Charger", nil)
+
+	if res := ta.DELETE("/api/packing/sections/" + sec.ID); res.Status != 204 {
+		t.Fatalf("delete section with items: %d %s", res.Status, res.Body)
+	}
+	lists := getPackingLists(t, ta, ta.Cookie)
+	if len(lists[0].Sections) != 1 || lists[0].Sections[0].ID != keep.ID {
+		t.Fatalf("sections = %+v", lists[0].Sections)
+	}
+	var orphans int64
+	ta.App.DB.Model(&models.PackingItem{}).Where("section_id = ?", sec.ID).Count(&orphans)
+	if orphans != 0 {
+		t.Fatalf("items outlived their section: %d", orphans)
+	}
+	if len(lists[0].Sections[0].Items) != 1 {
+		t.Fatalf("other section damaged: %+v", lists[0].Sections[0].Items)
+	}
+}
+
+func TestPackingSectionVanishesWhenLastItemDeleted(t *testing.T) {
+	ta := newTestApp(t)
+	lst := createPackingList(t, ta, "Paris")
+	sec := createPackingSection(t, ta, lst.ID, "Clothes")
+	a := addPackingItem(t, ta, sec.ID, "Socks", nil)
+	b := addPackingItem(t, ta, sec.ID, "Shirt", nil)
+
+	ta.DELETE("/api/packing/items/" + a.ID)
+	lists := getPackingLists(t, ta, ta.Cookie)
+	if len(lists[0].Sections) != 1 {
+		t.Fatalf("section removed too early: %+v", lists[0].Sections)
+	}
+
+	ta.DELETE("/api/packing/items/" + b.ID)
+	lists = getPackingLists(t, ta, ta.Cookie)
+	if len(lists[0].Sections) != 0 {
+		t.Fatalf("emptied section survived: %+v", lists[0].Sections)
+	}
+}
+
+func TestPackingSectionVanishesWhenLastItemMovedOut(t *testing.T) {
+	ta := newTestApp(t)
+	lst := createPackingList(t, ta, "Paris")
+	from := createPackingSection(t, ta, lst.ID, "Clothes")
+	to := createPackingSection(t, ta, lst.ID, "Tech")
+	item := addPackingItem(t, ta, from.ID, "Socks", nil)
+	addPackingItem(t, ta, to.ID, "Charger", nil)
+
+	res := ta.PATCH("/api/packing/items/"+item.ID+"/move",
+		map[string]any{"to_section_id": to.ID, "to_position": 0})
+	if res.Status != 200 {
+		t.Fatalf("move: %d %s", res.Status, res.Body)
+	}
+	lists := getPackingLists(t, ta, ta.Cookie)
+	if len(lists[0].Sections) != 1 || lists[0].Sections[0].ID != to.ID {
+		t.Fatalf("source section survived the move: %+v", lists[0].Sections)
+	}
+	if len(lists[0].Sections[0].Items) != 2 {
+		t.Fatalf("target section = %+v", lists[0].Sections[0].Items)
+	}
+}
+
+// A section created empty is left alone — quick-add makes one before the first
+// item lands, and pruning it there would delete the section out from under it.
+func TestPackingEmptySectionIsNotAutoPruned(t *testing.T) {
+	ta := newTestApp(t)
+	lst := createPackingList(t, ta, "Paris")
+	sec := createPackingSection(t, ta, lst.ID, "Clothes")
+	other := createPackingSection(t, ta, lst.ID, "Tech")
+	item := addPackingItem(t, ta, other.ID, "Charger", nil)
+
+	ta.DELETE("/api/packing/items/" + item.ID)
+	lists := getPackingLists(t, ta, ta.Cookie)
+	ids := map[string]bool{}
+	for _, s := range lists[0].Sections {
+		ids[s.ID] = true
+	}
+	if !ids[sec.ID] {
+		t.Fatalf("never-filled section was pruned: %+v", lists[0].Sections)
+	}
+	if ids[other.ID] {
+		t.Fatalf("emptied section survived: %+v", lists[0].Sections)
+	}
+}
+
+// The audience needs the section-deleted event too, or their view keeps a
+// header with nothing under it.
+func TestPackingPruneBroadcastsSectionDeleted(t *testing.T) {
+	ta := newTestApp(t)
+	lst := createPackingList(t, ta, "Paris")
+	sec := createPackingSection(t, ta, lst.ID, "Clothes")
+	item := addPackingItem(t, ta, sec.ID, "Socks", nil)
+
+	c := ta.Collect(TestSub)
+	ta.DELETE("/api/packing/items/" + item.ID)
+
+	var sawItem, sawSection bool
+	for _, e := range c.Events() {
+		if e["type"] != "packing.updated" {
+			continue
+		}
+		p, _ := e["payload"].(map[string]any)
+		switch p["action"] {
+		case "item-deleted":
+			sawItem = true
+		case "section-deleted":
+			sawSection = true
+			if p["sectionId"] != sec.ID {
+				t.Fatalf("wrong section pruned: %v", p["sectionId"])
+			}
+		}
+	}
+	if !sawItem || !sawSection {
+		t.Fatalf("events: item-deleted=%v section-deleted=%v", sawItem, sawSection)
 	}
 }
 

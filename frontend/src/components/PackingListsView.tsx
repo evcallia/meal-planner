@@ -894,8 +894,10 @@ export function PackingListsView({
                   headerActions={
                     <SectionMenu
                       sectionName={section.name}
+                      itemCount={section.items.length}
                       targets={lists.filter(l => l.id !== listId)}
                       onCopyTo={toListId => handleCopySection(section.id, toListId)}
+                      onDelete={() => packing.deleteSection(listId, section.id)}
                     />
                   }
                   sectionDragHandlers={getSectionDragHandlers(index)}
@@ -967,26 +969,63 @@ export function PackingListsView({
 
 // ----- per-section menu (copy this section into another trip) -----
 
-function SectionMenu({ sectionName, targets, onCopyTo }: {
+function SectionMenu({ sectionName, itemCount, targets, onCopyTo, onDelete }: {
   sectionName: string;
+  itemCount: number;
   targets: PackingList[];
   onCopyTo: (toListId: string) => void;
+  onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  // Deleting takes the items too, so a non-empty section asks first.
+  const [confirming, setConfirming] = useState(false);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // The menu is portalled to <body> and positioned by hand. Anchoring it inside
+  // the card doesn't work: .glass sets backdrop-filter, which makes every
+  // section card its own stacking context — so the menu's z-index only ranked
+  // it against its own card's contents, leaving it painted under the following
+  // sections and under the fixed bottom nav, where it couldn't be clicked.
+  const place = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const right = Math.max(8, window.innerWidth - rect.right);
+    // Flip up when there isn't room below — that's where the nav island sits.
+    const MENU_MAX = 280;
+    if (window.innerHeight - rect.bottom < MENU_MAX) {
+      setPos({ bottom: window.innerHeight - rect.top + 6, right });
+    } else {
+      setPos({ top: rect.bottom + 6, right });
+    }
+  }, []);
 
   useEffect(() => {
     if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    place();
+    const close = () => { setOpen(false); setConfirming(false); };
+    const onPointerDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (menuRef.current?.contains(t) || buttonRef.current?.contains(t)) return;
+      close();
     };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [open]);
+    // Keep it glued to the button while the page moves under it.
+    const reposition = () => place();
+    document.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [open, place]);
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={buttonRef}
         type="button"
         aria-label={`Options for ${sectionName}`}
         // The header itself is a drag handle for the section — don't start a
@@ -1000,8 +1039,15 @@ function SectionMenu({ sectionName, targets, onCopyTo }: {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
         </svg>
       </button>
-      {open && (
-        <div data-testid="section-menu" className="absolute right-0 top-full mt-1 glass-menu rounded-lg py-1 z-30 min-w-[200px]" onClick={e => e.stopPropagation()}>
+      {open && pos && createPortal(
+        <div
+          ref={menuRef}
+          data-testid="section-menu"
+          style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, right: pos.right }}
+          // Above the bottom nav island (z-30) and every card's own context.
+          className="z-[60] glass-menu rounded-lg py-1 min-w-[220px] max-h-[60vh] overflow-y-auto shadow-lg"
+          onClick={e => e.stopPropagation()}
+        >
           <div className="px-4 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
             Copy section to
           </div>
@@ -1016,9 +1062,36 @@ function SectionMenu({ sectionName, targets, onCopyTo }: {
               {t.name}
             </button>
           ))}
-        </div>
+
+          <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
+          {confirming ? (
+            <div className="px-4 py-2 space-y-2">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Delete “{sectionName}”{itemCount > 0 ? ` and its ${itemCount} item${itemCount === 1 ? '' : 's'}` : ''}?
+              </p>
+              <div className="flex items-center justify-end gap-3">
+                <button onClick={() => setConfirming(false)} className="text-sm text-gray-400">Cancel</button>
+                <button
+                  data-testid="confirm-delete-section"
+                  onClick={() => { setConfirming(false); setOpen(false); onDelete(); }}
+                  className="text-sm font-medium text-red-600 dark:text-red-400"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => (itemCount > 0 ? setConfirming(true) : (setOpen(false), onDelete()))}
+              className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
+            >
+              Delete section{itemCount > 0 ? ` (${itemCount})` : ''}
+            </button>
+          )}
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
 

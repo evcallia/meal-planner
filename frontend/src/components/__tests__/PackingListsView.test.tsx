@@ -15,6 +15,7 @@ const mockLeaveList = vi.fn();
 const mockUpdateList = vi.fn();
 const mockReorderLists = vi.fn();
 const mockCopySection = vi.fn(() => Promise.resolve({ copied: 3, skipped: 0 }));
+const mockDeleteSection = vi.fn();
 
 let mockLists: PackingList[] = [];
 let mockLoading = false;
@@ -35,7 +36,7 @@ vi.mock('../../hooks/usePacking', () => ({
     addSection: vi.fn(),
     createSection: mockCreateSection,
     renameSection: vi.fn(),
-    deleteSection: vi.fn(),
+    deleteSection: mockDeleteSection,
     reorderSections: vi.fn(),
     addItem: mockAddItem,
     editItem: mockEditItem,
@@ -337,6 +338,90 @@ describe('PackingListsView', () => {
     expect(within(menu).queryByRole('button', { name: 'Paris' })).not.toBeInTheDocument();
     expect(within(menu).getByRole('button', { name: 'Dolomites' })).toBeInTheDocument();
   });
+
+  it('asks before deleting a section that still has items', () => {
+    renderView();
+    fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
+    fireEvent.click(screen.getByText('Delete section (3)'));
+
+    // Confirmation first — deleting takes the items with it.
+    expect(mockDeleteSection).not.toHaveBeenCalled();
+    expect(screen.getByText(/Delete “Clothes” and its 3 items\?/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('confirm-delete-section'));
+    expect(mockDeleteSection).toHaveBeenCalledWith('l1', 's1');
+  });
+
+  it('can back out of the confirmation', () => {
+    renderView();
+    fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
+    fireEvent.click(screen.getByText('Delete section (3)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(mockDeleteSection).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('confirm-delete-section')).not.toBeInTheDocument();
+  });
+
+  it('deletes an empty section without asking', () => {
+    const list = listFixture();
+    list.sections[0].items = [];
+    mockLists = [list];
+    renderView();
+    fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
+    fireEvent.click(screen.getByText('Delete section'));
+
+    expect(mockDeleteSection).toHaveBeenCalledWith('l1', 's1');
+  });
+
+// .glass sets backdrop-filter, so every section card is its own stacking
+// context — an in-card menu was painted under the following sections and under
+// the fixed bottom nav, where it couldn't be clicked.
+describe('section menu placement', () => {
+  const openMenu = () => fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
+
+  it('renders outside the section card, straight on <body>', () => {
+    renderView();
+    openMenu();
+    const menu = screen.getByTestId('section-menu');
+    expect(menu.closest('[data-section-id]')).toBeNull();
+    expect(menu.parentElement).toBe(document.body);
+  });
+
+  it('anchors below the button when there is room', () => {
+    renderView();
+    openMenu();
+    const menu = screen.getByTestId('section-menu');
+    expect(menu.style.position).toBe('fixed');
+    expect(menu.style.top).not.toBe('');
+    expect(menu.style.bottom).toBe('');
+  });
+
+  it('flips upward when the button sits near the bottom island', () => {
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 700, bottom: 730, left: 300, right: 340, width: 40, height: 30, x: 300, y: 700,
+      toJSON: () => ({}),
+    } as DOMRect);
+    try {
+      renderView();
+      openMenu();
+      const menu = screen.getByTestId('section-menu');
+      expect(menu.style.bottom).not.toBe('');
+      expect(menu.style.top).toBe('');
+    } finally {
+      rect.mockRestore();
+    }
+  });
+
+  it('closes on an outside click but not on a click inside itself', () => {
+    renderView();
+    openMenu();
+    fireEvent.mouseDown(screen.getByTestId('section-menu'));
+    expect(screen.getByTestId('section-menu')).toBeInTheDocument();
+
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByTestId('section-menu')).not.toBeInTheDocument();
+  });
+});
 
   it('shows a loading spinner while lists load', () => {
     mockLoading = true;
