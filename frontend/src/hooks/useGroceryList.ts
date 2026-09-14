@@ -55,7 +55,7 @@ const GROCERY_STORAGE_KEY = 'meal-planner-grocery';
 
 // Remembered defaults for an item name (lowercase) — used to auto-populate
 // the store and quick-add section for previously-used items. Defined in
-// types.ts (the Travel tab uses the same shape for bags); re-exported here for
+// types.ts (the Lists tab uses the same shape for tags); re-exported here for
 // existing importers.
 export type { ItemDefaultEntry };
 

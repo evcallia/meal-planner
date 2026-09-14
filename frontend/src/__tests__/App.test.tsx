@@ -581,6 +581,7 @@ describe('Features setting', () => {
     vi.mocked(useSettings).mockReturnValue({
       settings: {
         featureMeals: true, featurePantry: false, featureGrocery: true, featureLists: false,
+        featureTravel: false,
         showItemizedColumn: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1,
       },
       updateSettings: vi.fn(),
@@ -594,7 +595,28 @@ describe('Features setting', () => {
     expect(nav).toHaveTextContent('Meals');
     expect(nav).toHaveTextContent('Grocery');
     expect(nav).not.toHaveTextContent('Pantry');
+    expect(nav).not.toHaveTextContent('Tasks');
     expect(nav).not.toHaveTextContent('Lists');
+  });
+
+  // The nav order is the canonical one; Settings → Features mirrors it.
+  it('renders the tabs in order: Meals, Pantry, Grocery, Lists, Tasks', async () => {
+    const mockUser = { sub: 'u1', name: 'Test User', email: 'test@example.com' };
+    vi.mocked(getCurrentUser).mockResolvedValue(mockUser);
+    vi.mocked(useSettings).mockReturnValue({
+      settings: {
+        showItemizedColumn: true, showMealIdeas: true, compactView: false, textScaleStandard: 1, textScaleCompact: 1,
+      },
+      updateSettings: vi.fn(),
+    } as any);
+
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
+    });
+    const labels = Array.from(screen.getByRole('navigation').querySelectorAll('button span'))
+      .map(el => el.textContent);
+    expect(labels).toEqual(['Meals', 'Pantry', 'Grocery', 'Lists', 'Tasks']);
   });
 });
 

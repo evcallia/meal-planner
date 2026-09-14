@@ -514,7 +514,7 @@ func TestTrackerMembershipPhrasings(t *testing.T) {
 		t.Fatalf("share status %d: %s", res.Status, res.Body)
 	}
 	ta.App.Push.Flush()
-	if b := lastBody(t, c); b != TestName+" shared the list with Sarah" {
+	if b := lastBody(t, c); b != TestName+" shared the group with Sarah" {
 		t.Fatalf("share body %q", b)
 	}
 
@@ -551,7 +551,7 @@ func TestTrackerMembershipPhrasings(t *testing.T) {
 	sends := c.all()
 	found := false
 	for _, s := range sends {
-		if s.Sub == TestSub && s.Payload.Body == "Sarah Smith left the list" {
+		if s.Sub == TestSub && s.Payload.Body == "Sarah Smith left the group" {
 			found = true
 		}
 	}

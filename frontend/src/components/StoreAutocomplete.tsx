@@ -6,7 +6,7 @@ interface StoreAutocompleteProps {
   selectedStoreId: string | null;
   onSelect: (storeId: string | null) => void;
   onCreate: (name: string) => Promise<Store | null>;
-  // The Travel tab reuses this for bags, so the wording is overridable.
+  // The Lists tab reuses this for tags, so the wording is overridable.
   placeholder?: string;
   emptyLabel?: string;
 }

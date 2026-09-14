@@ -91,9 +91,10 @@ export interface ItemDefaultEntry {
   sectionName: string | null;
 }
 
-// ----- Travel / packing lists -----
+// ----- Lists tab (packing lists) -----
 
-// Bags are the per-list equivalent of grocery's global stores; the shape
+// Bags (displayed as "tags") are the per-list equivalent of grocery's
+// global stores; the shape
 // matches `Store` so the chip components are shared.
 export interface PackingBag {
   id: string;
@@ -137,7 +138,7 @@ export interface PackingList {
   sections: PackingSection[];
 }
 
-// ----- Tracker / Lists -----
+// ----- Tasks tab (tracker) -----
 
 export interface TrackerLog {
   id: string;

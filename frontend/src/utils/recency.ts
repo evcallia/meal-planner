@@ -1,7 +1,8 @@
-// Recency model for the Lists/tracker feature, mirroring lastGLANCE: a task's
+// Recency model for the Tasks tab (tracker), mirroring lastGLANCE: a task's
 // freshness is how long since it was last done relative to its target interval.
 
 import { parseServerDate } from './serverDate';
+import type { TrackerTask, TrackerList } from '../types';
 
 export type RecencyLevel = 'none' | 'fresh' | 'ok' | 'soon' | 'due' | 'over';
 
@@ -122,4 +123,33 @@ export function formatTarget(days: number | null): string | null {
   if (days % 30 === 0) return `every ${days / 30}mo`;
   if (days % 7 === 0) return `every ${days / 7}w`;
   return `every ${days}d`;
+}
+
+export interface TaskGroup {
+  list: TrackerList;
+  tasks: TrackerTask[];
+}
+
+/**
+ * Buckets tasks by their group for the Due Soon tab: one entry per group that
+ * has something in it, ordered the way `lists` is ordered — which is the tab
+ * order, so dragging the tab strip reorders these too.
+ *
+ * The order tasks arrive in is preserved inside each bucket, so the caller's
+ * sort (urgency-descending for Due Soon) still decides which task in a group
+ * sits on top. A task whose group is missing is dropped rather than thrown.
+ */
+export function groupTasksByList(tasks: TrackerTask[], lists: TrackerList[]): TaskGroup[] {
+  const byList = new Map<string, TrackerTask[]>();
+  for (const task of tasks) {
+    const bucket = byList.get(task.list_id);
+    if (bucket) bucket.push(task);
+    else byList.set(task.list_id, [task]);
+  }
+  const groups: TaskGroup[] = [];
+  for (const list of lists) {
+    const bucket = byList.get(list.id);
+    if (bucket && bucket.length > 0) groups.push({ list, tasks: bucket });
+  }
+  return groups;
 }

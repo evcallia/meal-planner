@@ -15,7 +15,7 @@ interface ItemAutocompleteProps {
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   autoFocus?: boolean;
   testId?: string;
-  // The Travel tab derives its suggestions from existing lists rather than a
+  // The Lists tab derives its suggestions from existing lists rather than a
   // stored table, so there is nothing to delete there.
   allowDelete?: boolean;
 }

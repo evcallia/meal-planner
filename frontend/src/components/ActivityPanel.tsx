@@ -15,11 +15,14 @@ interface ActivityPanelProps {
   updating?: boolean;
 }
 
+// Keys are the server-side categories; values are the tab names they map to
+// ('lists' is the tracker → Tasks, 'travel' is the packing feature → Lists).
 const CATEGORY_LABELS: Record<string, string> = {
   meals: 'Meals',
   pantry: 'Pantry',
   grocery: 'Grocery',
-  lists: 'Lists',
+  travel: 'Lists',
+  lists: 'Tasks',
   'list-due': 'Due',
 };
 

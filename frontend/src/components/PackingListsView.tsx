@@ -18,10 +18,10 @@ import { bagProgress, visibleSectionItems } from '../utils/packing';
 import { getEditHighlight } from '../utils/editHighlightColors';
 import { toTitleCase } from '../utils/titleCase';
 
-// The Travel tab: multiple shareable packing lists, each a sectioned checklist
-// with a bag per item. Rows, section cards and chips are the same components
+// The Lists tab: multiple shareable checklists, each a sectioned list with a
+// tag per item. Rows, section cards and chips are the same components
 // the Grocery tab uses (see ChecklistParts); what's specific here is the
-// list tabs, the bag-progress header, and the packed-items behaviour.
+// list tabs, the tag-progress header, and the completed-items behaviour.
 
 const ACTIVE_KEY = 'meal-planner-packing-active';
 const TOOLBAR_KEY = 'meal-planner-packing-toolbar';
@@ -86,9 +86,9 @@ export function PackingListsView({
   const [newListColor, setNewListColor] = useState(LIST_COLORS[0].name);
   const [shareOpen, setShareOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [editingTrip, setEditingTrip] = useState(false);
-  const [tripName, setTripName] = useState('');
-  const [tripColor, setTripColor] = useState<string | null>(null);
+  const [editingListMeta, setEditingListMeta] = useState(false);
+  const [listNameDraft, setListNameDraft] = useState('');
+  const [listColorDraft, setListColorDraft] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [toolbarExpanded, setToolbarExpanded] = useState(() => {
     try { return localStorage.getItem(TOOLBAR_KEY) !== 'false'; } catch { return true; }
@@ -130,7 +130,7 @@ export function PackingListsView({
     }
   }, [activeList]);
 
-  // Long-press a trip tab to drag it — the same gesture as the Lists tab.
+  // Long-press a list tab to drag it — the same gesture as the Tasks tab.
   const { dragId, dragOrder, justDraggedRef, tabHandlers } = useTabReorder({
     tabIds: lists.map(l => l.id),
     stripRef: tabStripRef,
@@ -168,7 +168,7 @@ export function PackingListsView({
     };
   }, [sectionDropdownOpen]);
 
-  // ----- bags as chips -----
+  // ----- tags as chips -----
 
   const bags: Store[] = useMemo(
     () => (activeList?.bags ?? []).map(b => ({ id: b.id, name: b.name, position: b.position })),
@@ -251,8 +251,8 @@ export function PackingListsView({
     return names;
   }, [activeList]);
 
-  // Suggestions come from every trip; the bag is remembered by NAME and
-  // resolved against this list's bags.
+  // Suggestions come from every list; the tag is remembered by NAME and
+  // resolved against this list's tags.
   const itemDefaultsMap = useMemo(() => {
     const bagIdByName = new Map(bags.map(b => [b.name.toLowerCase(), b.id]));
     const map = new Map<string, ItemDefaultEntry>();
@@ -396,7 +396,7 @@ export function PackingListsView({
     requestAnimationFrame(() => quickNameRef.current?.focus());
   }, [quickName, quickSection, quickQty, quickBagId, activeList, packing]);
 
-  // Exact-name match fills in the bag and section the item usually goes in.
+  // Exact-name match fills in the tag and section the item usually goes in.
   const applyQuickAddDefaults = useCallback((name: string) => {
     const key = name.trim().toLowerCase();
     if (!key) { setQuickBagId(null); return; }
@@ -436,15 +436,15 @@ export function PackingListsView({
   }, [newListName, newListColor, packing]);
 
   // Name and color save together — one settings round-trip, one undo entry.
-  const saveTrip = useCallback(() => {
-    const name = tripName.trim();
+  const saveListMeta = useCallback(() => {
+    const name = listNameDraft.trim();
     if (!activeList) return;
     const updates: { name?: string; color?: string | null } = {};
     if (name && name !== activeList.name) updates.name = name;
-    if (tripColor !== activeList.color) updates.color = tripColor;
+    if (listColorDraft !== activeList.color) updates.color = listColorDraft;
     if (Object.keys(updates).length > 0) packing.updateList(activeList.id, updates);
-    setEditingTrip(false);
-  }, [tripName, tripColor, activeList, packing]);
+    setEditingListMeta(false);
+  }, [listNameDraft, listColorDraft, activeList, packing]);
 
   const handleCopy = useCallback(() => {
     if (!activeList) return;
@@ -464,7 +464,7 @@ export function PackingListsView({
     setMenuOpen(false);
   }, [activeList, visibleSections]);
 
-  // Copying lands in ANOTHER trip, so nothing visibly changes here — say so.
+  // Copying lands in ANOTHER list, so nothing visibly changes here — say so.
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (flashTimerRef.current) clearTimeout(flashTimerRef.current); }, []);
   const showFlash = useCallback((message: string) => {
@@ -527,7 +527,7 @@ export function PackingListsView({
             ))}
             <button
               onClick={() => setNewListOpen(v => !v)}
-              aria-label="New packing list"
+              aria-label="New list"
               className="shrink-0 px-3 py-1.5 rounded-full text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
             >
               +
@@ -542,7 +542,7 @@ export function PackingListsView({
               value={newListName}
               onChange={e => setNewListName(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleCreateList(); if (e.key === 'Escape') setNewListOpen(false); }}
-              placeholder="Trip name (e.g. Paris)"
+              placeholder="List name (e.g. Home projects)"
               data-testid="new-list-name"
               className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
@@ -651,14 +651,14 @@ export function PackingListsView({
                     </div>
                     {!hideBags && (
                       <div className="flex-1 min-w-0">
-                        <label className="block text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-0.5 ml-1">Bag</label>
+                        <label className="block text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-0.5 ml-1">Tag</label>
                         <StoreAutocomplete
                           stores={bags}
                           selectedStoreId={quickBagId}
                           onSelect={setQuickBagId}
                           onCreate={name => packing.createBag(listId, name)}
-                          placeholder="Assign bag..."
-                          emptyLabel="No bags yet"
+                          placeholder="Assign tag..."
+                          emptyLabel="No tags yet"
                         />
                       </div>
                     )}
@@ -714,7 +714,7 @@ export function PackingListsView({
                           onClick={() => { updatePrefs({ showChecked: !showChecked }); setMenuOpen(false); }}
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
                         >
-                          {showChecked ? 'Hide packed items' : 'Show packed items'}
+                          {showChecked ? 'Hide completed items' : 'Show completed items'}
                         </button>
                         <button
                           onClick={handleCopy}
@@ -731,15 +731,15 @@ export function PackingListsView({
                           onClick={() => { updatePrefs({ hideBags: !hideBags }); setMenuOpen(false); }}
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
                         >
-                          {hideBags ? 'Show bags' : 'Hide bags'}
+                          {hideBags ? 'Show tags' : 'Hide tags'}
                         </button>
 
                         <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
                         <button
                           onClick={() => {
-                            setTripName(activeList.name);
-                            setTripColor(activeList.color);
-                            setEditingTrip(true);
+                            setListNameDraft(activeList.name);
+                            setListColorDraft(activeList.color);
+                            setEditingListMeta(true);
                             setMenuOpen(false);
                           }}
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -757,10 +757,10 @@ export function PackingListsView({
                         <button
                           onClick={() => { onSetListNotify?.(listId, { edits: !notifyEdits }); setMenuOpen(false); }}
                           disabled={!notifyEditsDefault}
-                          title={notifyEditsDefault ? undefined : 'Turn on Travel notifications in Settings first'}
+                          title={notifyEditsDefault ? undefined : 'Turn on List notifications in Settings first'}
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40"
                         >
-                          {notifyEdits ? 'Mute notifications for this trip' : 'Unmute notifications for this trip'}
+                          {notifyEdits ? 'Mute notifications for this list' : 'Unmute notifications for this list'}
                         </button>
 
                         <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
@@ -769,14 +769,14 @@ export function PackingListsView({
                             onClick={() => { packing.deleteList(listId); setMenuOpen(false); }}
                             className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
                           >
-                            Delete trip
+                            Delete list
                           </button>
                         ) : (
                           <button
                             onClick={() => { packing.leaveList(listId); setMenuOpen(false); }}
                             className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
                           >
-                            Leave trip
+                            Leave list
                           </button>
                         )}
                       </div>
@@ -789,7 +789,7 @@ export function PackingListsView({
                       setToolbarExpanded(next);
                       try { localStorage.setItem(TOOLBAR_KEY, String(next)); } catch { /* ignore */ }
                     }}
-                    aria-label={toolbarExpanded ? 'Hide bag progress' : 'Show bag progress'}
+                    aria-label={toolbarExpanded ? 'Hide tag progress' : 'Show tag progress'}
                     className="p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
                   >
                     <svg className={`w-4 h-4 transition-transform ${toolbarExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -800,16 +800,16 @@ export function PackingListsView({
               )}
             </div>
 
-            {editingTrip && (
-              <div className="glass rounded-lg p-3 space-y-2" data-testid="edit-trip">
+            {editingListMeta && (
+              <div className="glass rounded-lg p-3 space-y-2" data-testid="edit-list">
                 <input
                   autoFocus
-                  value={tripName}
-                  data-testid="edit-trip-name"
-                  onChange={e => setTripName(e.target.value)}
+                  value={listNameDraft}
+                  data-testid="edit-list-name"
+                  onChange={e => setListNameDraft(e.target.value)}
                   onKeyDown={e => {
-                    if (e.key === 'Enter') saveTrip();
-                    if (e.key === 'Escape') setEditingTrip(false);
+                    if (e.key === 'Enter') saveListMeta();
+                    if (e.key === 'Escape') setEditingListMeta(false);
                   }}
                   className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
@@ -818,17 +818,17 @@ export function PackingListsView({
                     <button
                       key={c.name}
                       aria-label={`Color ${c.name}`}
-                      onClick={() => setTripColor(c.name)}
-                      className={`w-5 h-5 rounded-full ${c.bar} ${tripColor === c.name ? 'ring-2 ring-offset-1 ring-blue-500 dark:ring-offset-gray-800' : ''}`}
+                      onClick={() => setListColorDraft(c.name)}
+                      className={`w-5 h-5 rounded-full ${c.bar} ${listColorDraft === c.name ? 'ring-2 ring-offset-1 ring-blue-500 dark:ring-offset-gray-800' : ''}`}
                     />
                   ))}
-                  <button onClick={saveTrip} data-testid="edit-trip-save" className="ml-auto text-sm text-blue-500 font-medium">Save</button>
-                  <button onClick={() => setEditingTrip(false)} className="text-sm text-gray-400">Cancel</button>
+                  <button onClick={saveListMeta} data-testid="edit-list-save" className="ml-auto text-sm text-blue-500 font-medium">Save</button>
+                  <button onClick={() => setEditingListMeta(false)} className="text-sm text-gray-400">Cancel</button>
                 </div>
               </div>
             )}
 
-            {/* Trip progress (always) + per-bag rows and chips (unless hidden) */}
+            {/* List progress (always) + per-tag rows and chips (unless hidden) */}
             {toolbarExpanded && (
               <>
                 <BagProgressPanel bags={hideBags ? [] : progress.bags} total={progress.total} />
@@ -865,7 +865,7 @@ export function PackingListsView({
 
       {lists.length === 0 && (
         <div className="glass rounded-lg p-6 text-center text-sm text-gray-500 dark:text-gray-400 mt-4">
-          No packing lists yet. Tap <span className="font-semibold">+</span> to start one for your next trip.
+          No lists yet. Tap <span className="font-semibold">+</span> to start one.
         </div>
       )}
 
@@ -874,7 +874,7 @@ export function PackingListsView({
           {visibleSections.map(({ section, items }, index) => {
             const isBeingDragged = sectionDragState.isDragging && sectionDragState.dragIndex === index;
             const shift = computeShiftTransform(index, sectionDragState);
-            const packed = section.items.filter(i => i.checked).length;
+            const completed = section.items.filter(i => i.checked).length;
             return (
               <div
                 key={section.id}
@@ -890,7 +890,7 @@ export function PackingListsView({
                 <ChecklistSectionCard
                   section={section}
                   visibleItems={items}
-                  headerMeta={`${packed}/${section.items.length} packed`}
+                  headerMeta={`${completed}/${section.items.length} completed`}
                   headerActions={
                     <SectionMenu
                       sectionName={section.name}
@@ -927,7 +927,7 @@ export function PackingListsView({
                   chips={bags}
                   chipIdFor={item => (item as PackingItem).bag_id}
                   onCreateChip={name => packing.createBag(listId, name)}
-                  chipPlaceholder="Assign bag..."
+                  chipPlaceholder="Assign tag..."
                   editingItemId={editingItemId}
                   onEditingItemChange={handleEditingItemChange}
                   commitEditingRef={commitEditingRef}
@@ -947,7 +947,7 @@ export function PackingListsView({
 
           {activeList.sections.length === 0 && (
             <div className="glass rounded-lg p-6 text-center text-sm text-gray-500 dark:text-gray-400">
-              Nothing packed yet. Use <span className="font-semibold">Add items</span> to build the list.
+              Nothing here yet. Use <span className="font-semibold">Add items</span> to build the list.
             </div>
           )}
         </div>
@@ -967,7 +967,7 @@ export function PackingListsView({
   );
 }
 
-// ----- per-section menu (copy this section into another trip) -----
+// ----- per-section menu (copy this section into another list) -----
 
 function SectionMenu({ sectionName, itemCount, targets, onCopyTo, onDelete }: {
   sectionName: string;
@@ -1052,7 +1052,7 @@ function SectionMenu({ sectionName, itemCount, targets, onCopyTo, onDelete }: {
             Copy section to
           </div>
           {targets.length === 0 ? (
-            <div className="px-4 py-2 text-sm text-gray-400">No other trips yet</div>
+            <div className="px-4 py-2 text-sm text-gray-400">No other lists yet</div>
           ) : targets.map(t => (
             <button
               key={t.id}
@@ -1095,7 +1095,7 @@ function SectionMenu({ sectionName, itemCount, targets, onCopyTo, onDelete }: {
   );
 }
 
-// ----- bag progress table (replaces the spreadsheet's "% Pack" column) -----
+// ----- tag progress table (replaces the spreadsheet's "% Pack" column) -----
 
 function BagProgressPanel({ bags, total }: {
   bags: { id: string; name: string; packed: number; total: number; percent: number }[];
@@ -1205,7 +1205,7 @@ function PackingShareModal({ list, isOnline, currentSub, onShare, onUnshare, onC
           <div>
             <div className="text-xs uppercase tracking-wide text-gray-400 mb-1">Add person</div>
             {!isOnline ? (
-              <p className="text-sm text-gray-400">Reconnect to add people to this trip.</p>
+              <p className="text-sm text-gray-400">Reconnect to add people to this list.</p>
             ) : candidates.length === 0 ? (
               <p className="text-sm text-gray-400">No other users available yet — people appear here once they've signed in.</p>
             ) : (
@@ -1223,7 +1223,7 @@ function PackingShareModal({ list, isOnline, currentSub, onShare, onUnshare, onC
             {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
           </div>
 
-          <p className="text-xs text-gray-400">Packing lists are private to you until you share them. People you share with can view and update everything.</p>
+          <p className="text-xs text-gray-400">Lists are private to you until you share them. People you share with can view and update everything.</p>
         </div>
       </div>
     </div>,

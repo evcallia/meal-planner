@@ -169,6 +169,23 @@ describe('Features section', () => {
     expect(baseProps.onUpdate).toHaveBeenCalledWith({ featurePantry: false });
   });
 
+  // Features must be listed in the same order as the bottom-nav tabs.
+  it('lists the features in tab order', async () => {
+    await renderWith({ featureMeals: true, featurePantry: true, featureGrocery: true, featureLists: true, featureTravel: true });
+    // Descriptions are unique, so they identify each feature row unambiguously.
+    const descriptions = [
+      'Weekly meal planning calendar',
+      'Pantry inventory',
+      'Shared grocery list',
+      'Shareable checklists with tags',
+      'Recency-tracked task groups',
+    ];
+    const rendered = Array.from(document.querySelectorAll('p'))
+      .map(el => el.textContent)
+      .filter(t => t && descriptions.includes(t));
+    expect(rendered).toEqual(descriptions);
+  });
+
   it('locks the last enabled feature', async () => {
     await renderWith({ featureMeals: true, featurePantry: false, featureGrocery: false, featureLists: false, featureTravel: false });
     const mealsToggle = screen.getByRole('switch', { name: /at least one tab must stay enabled/i });

@@ -17,7 +17,7 @@ export function entryVisible(entry: ActivityEntry, s: Settings): boolean {
     case 'lists':
       return s.notifyListEdits
         && (entry.list_id ? (s.listNotifyOverrides[entry.list_id]?.edits ?? true) : true);
-    // Travel (packing lists) shares the per-list override namespace with the
+    // The Lists tab (packing) shares the per-list override namespace with the
     // tracker; ids are UUIDs so there's no collision.
     case 'travel':
       return s.notifyTravelEdits

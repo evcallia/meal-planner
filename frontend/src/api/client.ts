@@ -637,7 +637,7 @@ export async function deleteTrackerLog(logId: string): Promise<void> {
   await fetchAPI(`/tracker/logs/${logId}`, { method: 'DELETE' });
 }
 
-// Travel / packing lists API
+// Lists tab (packing) API
 import type { PackingList, PackingSection, PackingItem, PackingBag } from '../types';
 
 export async function getPackingLists(): Promise<PackingList[]> {

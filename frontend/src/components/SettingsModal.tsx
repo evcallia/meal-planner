@@ -86,13 +86,13 @@ const typeLabels: Record<ChangeType, string> = {
   'store-reorder': 'Reorder stores',
   'item-default-delete': 'Delete item default',
   'item-default-put': 'Restore item default',
-  'tracker-list-create': 'Create list',
-  'tracker-list-update': 'Update list',
-  'tracker-list-delete': 'Delete list',
-  'tracker-list-restore': 'Restore list',
-  'tracker-list-reorder': 'Reorder lists',
-  'tracker-list-leave': 'Leave list',
-  'tracker-list-rejoin': 'Rejoin list',
+  'tracker-list-create': 'Create group',
+  'tracker-list-update': 'Update group',
+  'tracker-list-delete': 'Delete group',
+  'tracker-list-restore': 'Restore group',
+  'tracker-list-reorder': 'Reorder groups',
+  'tracker-list-leave': 'Leave group',
+  'tracker-list-rejoin': 'Rejoin group',
   'tracker-task-create': 'Add task',
   'tracker-task-update': 'Update task',
   'tracker-task-delete': 'Delete task',
@@ -100,27 +100,27 @@ const typeLabels: Record<ChangeType, string> = {
   'tracker-log-add': 'Mark task done',
   'tracker-log-delete': 'Remove completion',
   'tracker-skip': 'Skip task cycle',
-  'packing-list-create': 'Create packing list',
-  'packing-list-update': 'Update packing list',
-  'packing-list-delete': 'Delete packing list',
-  'packing-list-restore': 'Restore packing list',
-  'packing-list-reorder': 'Reorder packing lists',
-  'packing-list-leave': 'Leave packing list',
-  'packing-list-rejoin': 'Rejoin packing list',
-  'packing-check-all': 'Check/uncheck all packing items',
-  'packing-section-create': 'Create packing section',
-  'packing-section-rename': 'Rename packing section',
-  'packing-section-delete': 'Delete packing section',
-  'packing-sections-reorder': 'Reorder packing sections',
-  'packing-items-reorder': 'Reorder packing items',
-  'packing-item-add': 'Add packing item',
-  'packing-item-edit': 'Edit packing item',
-  'packing-item-delete': 'Delete packing item',
-  'packing-item-move': 'Move packing item',
-  'packing-bag-create': 'Create bag',
-  'packing-bag-rename': 'Rename bag',
-  'packing-bag-delete': 'Delete bag',
-  'packing-bags-reorder': 'Reorder bags',
+  'packing-list-create': 'Create list',
+  'packing-list-update': 'Update list',
+  'packing-list-delete': 'Delete list',
+  'packing-list-restore': 'Restore list',
+  'packing-list-reorder': 'Reorder lists',
+  'packing-list-leave': 'Leave list',
+  'packing-list-rejoin': 'Rejoin list',
+  'packing-check-all': 'Check/uncheck all items',
+  'packing-section-create': 'Create list section',
+  'packing-section-rename': 'Rename list section',
+  'packing-section-delete': 'Delete list section',
+  'packing-sections-reorder': 'Reorder list sections',
+  'packing-items-reorder': 'Reorder list items',
+  'packing-item-add': 'Add list item',
+  'packing-item-edit': 'Edit list item',
+  'packing-item-delete': 'Delete list item',
+  'packing-item-move': 'Move list item',
+  'packing-bag-create': 'Create tag',
+  'packing-bag-rename': 'Rename tag',
+  'packing-bag-delete': 'Delete tag',
+  'packing-bags-reorder': 'Reorder tags',
 };
 
 async function enrichPendingChanges(changes: PendingChange[]): Promise<EnrichedPendingChange[]> {
@@ -654,8 +654,8 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               { key: 'featureMeals', label: 'Meals', description: 'Weekly meal planning calendar' },
               { key: 'featurePantry', label: 'Pantry', description: 'Pantry inventory' },
               { key: 'featureGrocery', label: 'Grocery', description: 'Shared grocery list' },
-              { key: 'featureLists', label: 'Lists', description: 'Recency-tracked task lists' },
-              { key: 'featureTravel', label: 'Travel', description: 'Shareable packing lists with bags' },
+              { key: 'featureTravel', label: 'Lists', description: 'Shareable checklists with tags' },
+              { key: 'featureLists', label: 'Tasks', description: 'Recency-tracked task groups' },
             ] as const).map(({ key, label, description }) => {
               const enabledCount = [settings.featureMeals, settings.featurePantry, settings.featureGrocery, settings.featureLists, settings.featureTravel]
                 .filter(v => v !== false).length;
@@ -1075,21 +1075,23 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
                   checked={settings.notifyGroceryEdits}
                   onChange={() => onUpdate({ notifyGroceryEdits: !settings.notifyGroceryEdits })}
                 />
+                {/* notifyTravelEdits backs the Lists tab; notifyListEdits /
+                    notifyListsDue back the Tasks tab (keys kept for compat). */}
                 <NotifyToggle
                   label="List edits"
-                  description="When someone updates a List shared with you (mute individual lists from their menus)"
-                  checked={settings.notifyListEdits}
-                  onChange={() => onUpdate({ notifyListEdits: !settings.notifyListEdits })}
-                />
-                <NotifyToggle
-                  label="Travel edits"
-                  description="When someone updates a packing list shared with you (mute individual trips from their menus)"
+                  description="When someone updates a list shared with you (mute individual lists from their menus)"
                   checked={settings.notifyTravelEdits}
                   onChange={() => onUpdate({ notifyTravelEdits: !settings.notifyTravelEdits })}
                 />
                 <NotifyToggle
-                  label="List reminders"
-                  description="When a tracked task is due (mute individual lists or tasks from their menus)"
+                  label="Task edits"
+                  description="When someone updates a task group shared with you (mute individual groups from their menus)"
+                  checked={settings.notifyListEdits}
+                  onChange={() => onUpdate({ notifyListEdits: !settings.notifyListEdits })}
+                />
+                <NotifyToggle
+                  label="Task reminders"
+                  description="When a tracked task is due (mute individual groups or tasks from their menus)"
                   checked={settings.notifyListsDue}
                   onChange={() => onUpdate({ notifyListsDue: !settings.notifyListsDue })}
                 />
@@ -1097,7 +1099,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
                   <NotifyToggle
                     label="Daily summary"
                     description={!settings.notifyListsDue
-                      ? 'Requires List reminders'
+                      ? 'Requires Task reminders'
                       : 'One notification with everything due, instead of alerts through the day'}
                     checked={settings.notifyListsDue && settings.notifyListsDueDigest}
                     disabled={!settings.notifyListsDue}
@@ -1127,7 +1129,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
                   <NotifyToggle
                     label="Repeat daily"
                     description={!settings.notifyListsDue
-                      ? 'Requires List reminders'
+                      ? 'Requires Task reminders'
                       : settings.notifyListsDueDigest
                         ? 'Included in the daily summary'
                         : 'Remind again each day (max once per 24h) while a task stays due'}

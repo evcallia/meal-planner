@@ -212,8 +212,8 @@ export interface LocalTrackerTask {
   recent_logs?: TrackerLog[]; // cached last-few entries for offline history
 }
 
-// Travel / packing lists. Stored flat (lists / bags / sections / items) so a
-// single item write doesn't rewrite the whole trip, mirroring the grocery cache.
+// Lists tab (packing). Stored flat (lists / bags / sections / items) so a
+// single item write doesn't rewrite the whole list, mirroring the grocery cache.
 export interface LocalPackingList {
   id: string;
   name: string;
@@ -727,7 +727,7 @@ export async function clearAllLocalData(): Promise<void> {
   ]);
 }
 
-// Tracker / Lists local storage
+// Tasks tab (tracker) local storage
 export async function saveLocalTrackerLists(lists: LocalTrackerList[]) {
   await db.trackerLists.clear();
   if (lists.length > 0) await db.trackerLists.bulkPut(lists);
@@ -796,10 +796,10 @@ export async function deleteLocalItemDefault(itemName: string) {
   await db.itemDefaults.delete(itemName);
 }
 
-// ----- Travel / packing local storage -----
+// ----- Lists tab (packing) local storage -----
 //
 // Written on every state change by usePacking and by App's inactive-tab cache
-// warmer, so the Travel tab is fully usable offline.
+// warmer, so the Lists tab is fully usable offline.
 
 export async function saveLocalPackingLists(lists: LocalPackingList[]) {
   await db.packingLists.clear();

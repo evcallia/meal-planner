@@ -29,7 +29,7 @@ export interface Settings {
   notifyGroceryEdits: boolean;
   notifyListEdits: boolean;
   notifyListsDue: boolean;
-  // Travel (packing list) edits. Same per-list override namespace as the
+  // Lists tab (packing) edits. Same per-list override namespace as the
   // tracker: settings.listNotifyOverrides[listId].edits.
   notifyTravelEdits: boolean;
   // Re-notify daily (max once per 24h) while a task stays due.
@@ -57,7 +57,7 @@ export interface Settings {
   groceryGroupBy: 'category' | 'none';
   groceryHideStores: boolean;
   grocerySortBy: 'manual' | 'alphabetical';
-  // Travel display preferences (synced per-user). `packingShowChecked` keeps
+  // Lists tab display preferences (synced per-user). `packingShowChecked` keeps
   // packed items visible at the bottom of their section; turning it off hides
   // them without touching their stored position.
   packingShowChecked: boolean;

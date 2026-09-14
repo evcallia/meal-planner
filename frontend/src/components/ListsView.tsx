@@ -7,7 +7,7 @@ import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { TrackerList, TrackerTask, TrackerLog, DirectoryUser, UserInfo } from '../types';
 import { getUsers } from '../api/client';
 import { isTempId } from '../db';
-import { recency, RECENCY_CLASSES, formatAgo, formatTarget, parseServerDate, progressPercent, inSeason, seasonLabel, computeStreak, MONTH_ABBR } from '../utils/recency';
+import { recency, RECENCY_CLASSES, formatAgo, formatTarget, parseServerDate, progressPercent, inSeason, seasonLabel, computeStreak, groupTasksByList, MONTH_ABBR } from '../utils/recency';
 import { getEditHighlight } from '../utils/editHighlightColors';
 
 const firstName = (name: string | null | undefined): string | null => (name ? name.split(' ')[0] : null);
@@ -155,7 +155,7 @@ export function ListsView({
     if (l) { try { localStorage.setItem(ACTIVE_KEY, l.id); } catch { /* ignore */ } }
   }, [activeIndex, tabs]);
 
-  // ----- drag-to-reorder list tabs (shared with the Travel tab) -----
+  // ----- drag-to-reorder group tabs (shared with the Lists tab) -----
   const tabStripRef = useRef<HTMLDivElement>(null);
   const { dragId, dragOrder, justDraggedRef, tabHandlers } = useTabReorder({
     tabIds: tabs.map(l => l.id),
@@ -173,7 +173,7 @@ export function ListsView({
     },
   });
 
-  // Swipe anywhere on the Lists page to cycle (lastGLANCE-style). Listening at
+  // Swipe anywhere on the Tasks page to cycle (lastGLANCE-style). Listening at
   // the window level makes the whole page swipeable, not just the list card.
   useEffect(() => {
     let start: { x: number; y: number } | null = null;
@@ -299,7 +299,7 @@ export function ListsView({
             <button
               onClick={() => setNewListOpen(true)}
               className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-full transition-colors ${newListOpen ? 'bg-blue-500 text-white' : 'text-gray-500 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50'}`}
-              aria-label="New list"
+              aria-label="New group"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
             </button>
@@ -311,7 +311,7 @@ export function ListsView({
                 ref={searchInputRef}
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Search tasks across all lists…"
+                placeholder="Search tasks across all groups…"
                 className="w-full pl-3 pr-9 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-sm"
               />
               <button
@@ -337,9 +337,9 @@ export function ListsView({
 
       {!loading && lists.length === 0 && !newListOpen && (
         <div className="glass rounded-2xl p-8 text-center mt-4">
-          <p className="text-gray-600 dark:text-gray-300 font-medium mb-1">No lists yet</p>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Create a list to track when you last did things — and share it with your household.</p>
-          <button onClick={() => setNewListOpen(true)} className="px-4 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600">New list</button>
+          <p className="text-gray-600 dark:text-gray-300 font-medium mb-1">No groups yet</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Create a group to track when you last did things — and share it with your household.</p>
+          <button onClick={() => setNewListOpen(true)} className="px-4 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600">New group</button>
         </div>
       )}
 
@@ -351,7 +351,7 @@ export function ListsView({
             value={newListName}
             onChange={e => setNewListName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleCreateList(); if (e.key === 'Escape') setNewListOpen(false); }}
-            placeholder="List name (e.g. House upkeep)"
+            placeholder="Group name (e.g. House upkeep)"
             className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none"
           />
           <div className="flex items-center gap-2">
@@ -446,13 +446,15 @@ export function ListsView({
 
 // ----- Due Soon (system) panel: aggregates due/overdue tasks from every list -----
 
-function DueSoonPanel({ tasks, lists, tracker, onOpenTask }: {
+export function DueSoonPanel({ tasks, lists, tracker, onOpenTask }: {
   tasks: TrackerTask[];
   lists: TrackerList[];
   tracker: ReturnType<typeof useTracker>;
   onOpenTask: (listId: string, taskId: string) => void;
 }) {
-  const listName = (id: string) => lists.find(l => l.id === id)?.name ?? '';
+  // One header per group instead of one above every row. `lists` is the same
+  // array that builds the tab strip, so group order tracks tab order for free.
+  const groups = useMemo(() => groupTasksByList(tasks, lists), [tasks, lists]);
   return (
     <div className="glass rounded-2xl p-3">
       <div className="flex items-center gap-2 mb-2">
@@ -460,14 +462,21 @@ function DueSoonPanel({ tasks, lists, tracker, onOpenTask }: {
         <h2 className="flex-1 min-w-0 text-lg font-bold text-gray-900 dark:text-gray-100 truncate">Due Soon</h2>
         {tasks.length > 0 && <span className="text-[11px] text-gray-400 dark:text-gray-500">{tasks.length}</span>}
       </div>
-      {tasks.length === 0 ? (
+      {groups.length === 0 ? (
         <p className="text-sm text-gray-400 dark:text-gray-500 py-6 text-center">Nothing due right now — you're all caught up. 🎉</p>
       ) : (
-        <div className="space-y-1.5">
-          {tasks.map(task => (
-            <div key={task.id}>
-              <div className="text-[10px] uppercase tracking-wide text-gray-400 px-1">{listName(task.list_id)}</div>
-              <TaskRow listId={task.list_id} task={task} tracker={tracker} onOpen={() => onOpenTask(task.list_id, task.id)} />
+        <div className="space-y-3">
+          {groups.map(({ list, tasks: groupTasks }) => (
+            <div key={list.id} data-testid="due-soon-group" data-group-id={list.id}>
+              <div className="flex items-center gap-1.5 px-1 mb-1">
+                <span className={`w-1.5 h-1.5 shrink-0 rounded-full ${colorBar(list.color)}`} />
+                <span className="text-[10px] uppercase tracking-wide text-gray-400 truncate">{list.name}</span>
+              </div>
+              <div className="space-y-1.5">
+                {groupTasks.map(task => (
+                  <TaskRow key={task.id} listId={list.id} task={task} tracker={tracker} onOpen={() => onOpenTask(list.id, task.id)} />
+                ))}
+              </div>
             </div>
           ))}
         </div>
@@ -544,7 +553,7 @@ function ListPanel({ list, tracker, onOpenTask, onShare, notify, notifyLocked, o
         <div className="relative shrink-0" ref={colorRef}>
           <button
             onClick={() => setColorOpen(o => !o)}
-            aria-label="Change list color"
+            aria-label="Change group color"
             title="Change color"
             className={`w-3.5 h-3.5 rounded-full ${colorBar(list.color)} ring-offset-1 dark:ring-offset-gray-900 hover:ring-2 hover:ring-gray-400 ${colorOpen ? 'ring-2 ring-gray-400' : ''}`}
           />
@@ -572,7 +581,7 @@ function ListPanel({ list, tracker, onOpenTask, onShare, notify, notifyLocked, o
         ) : (
           <h2
             onClick={() => { setRenameValue(list.name); setRenaming(true); }}
-            title="Rename list"
+            title="Rename group"
             className="flex-1 min-w-0 text-lg font-bold text-gray-900 dark:text-gray-100 truncate cursor-text hover:text-gray-600 dark:hover:text-gray-300"
           >
             {list.name}
@@ -581,7 +590,7 @@ function ListPanel({ list, tracker, onOpenTask, onShare, notify, notifyLocked, o
         )}
 
         {list.is_owner && (
-          <button onClick={onShare} className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg" aria-label="Share list">
+          <button onClick={onShare} className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg" aria-label="Share group">
             <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" /></svg>
           </button>
         )}
@@ -592,7 +601,7 @@ function ListPanel({ list, tracker, onOpenTask, onShare, notify, notifyLocked, o
         )}
 
         <div className="relative" ref={menuRef}>
-          <button onClick={() => setMenuOpen(v => !v)} className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg" aria-label="List menu">
+          <button onClick={() => setMenuOpen(v => !v)} className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg" aria-label="Group menu">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01" /></svg>
           </button>
           {menuOpen && (
@@ -602,9 +611,9 @@ function ListPanel({ list, tracker, onOpenTask, onShare, notify, notifyLocked, o
                 <button onClick={() => { setMenuOpen(false); setNotifyOpen(true); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">Notifications</button>
               )}
               {list.is_owner ? (
-                <button onClick={() => { setMenuOpen(false); tracker.deleteList(list.id); }} className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">Delete list</button>
+                <button onClick={() => { setMenuOpen(false); tracker.deleteList(list.id); }} className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">Delete group</button>
               ) : (
-                <button onClick={() => { setMenuOpen(false); tracker.leaveList(list.id); }} className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">Leave list</button>
+                <button onClick={() => { setMenuOpen(false); tracker.leaveList(list.id); }} className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">Leave group</button>
               )}
             </div>
           )}
@@ -690,8 +699,8 @@ function ListNotifyModal({ listName, notify, locked, onToggle, onClose }: {
   onClose: () => void;
 }) {
   const rows: { field: 'edits' | 'due'; label: string; description: string; lockedNote: string }[] = [
-    { field: 'edits', label: 'Partner edits', description: 'When someone else updates this list', lockedNote: 'List edits are turned off in Settings' },
-    { field: 'due', label: 'Due reminders', description: 'When a task in this list is due', lockedNote: 'List reminders are turned off in Settings' },
+    { field: 'edits', label: 'Partner edits', description: 'When someone else updates this group', lockedNote: 'Task edits are turned off in Settings' },
+    { field: 'due', label: 'Due reminders', description: 'When a task in this group is due', lockedNote: 'Task reminders are turned off in Settings' },
   ];
   // Portal to <body>: rendered in place, the list card's backdrop-filter makes
   // it the containing block for position:fixed — the overlay would only cover
@@ -700,7 +709,7 @@ function ListNotifyModal({ listName, notify, locked, onToggle, onClose }: {
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="glass-menu w-full max-w-xs rounded-2xl p-4 shadow-xl" onClick={e => e.stopPropagation()}>
         <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Notifications</h3>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">For “{listName}” — only on this account. Defaults for all lists live in Settings.</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">For “{listName}” — only on this account. Defaults for all groups live in Settings.</p>
         <div className="space-y-3">
           {rows.map(({ field, label, description, lockedNote }) => {
             const isLocked = locked?.[field] ?? false;
@@ -1243,7 +1252,7 @@ function TaskDetailModal({ list, task, tracker, user, onClose, notifyDue, notify
                 <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Due reminders</span>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
                   {notifyDueLocked
-                    ? 'List reminders are turned off — enable them in Settings or this list’s menu first'
+                    ? 'Task reminders are turned off — enable them in Settings or this group’s menu first'
                     : 'Notify you when this task is due'}
                 </p>
               </div>
@@ -1476,7 +1485,7 @@ function ShareModal({ list, tracker, onClose }: {
             {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
           </div>
 
-          <p className="text-xs text-gray-400">Lists are private to you until you share them. People you share with can view and update tasks.</p>
+          <p className="text-xs text-gray-400">Groups are private to you until you share them. People you share with can view and update tasks.</p>
         </div>
       </div>
     </div>,

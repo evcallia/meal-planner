@@ -88,7 +88,7 @@ describe('PackingListsView', () => {
   it('shows a prompt when there are no lists yet', () => {
     mockLists = [];
     renderView();
-    expect(screen.getByText(/No packing lists yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/No lists yet/i)).toBeInTheDocument();
   });
 
   it('renders a tab per list and the active list\'s sections', () => {
@@ -100,12 +100,12 @@ describe('PackingListsView', () => {
     expect(screen.getByText('Clothes')).toBeInTheDocument();
   });
 
-  it('shows packed/total in the section header', () => {
+  it('shows completed/total in the section header', () => {
     renderView();
-    expect(screen.getByText('1/3 packed')).toBeInTheDocument();
+    expect(screen.getByText('1/3 completed')).toBeInTheDocument();
   });
 
-  it('renders packed items last, and hides them when showChecked is off', () => {
+  it('renders completed items last, and hides them when showChecked is off', () => {
     const { unmount } = renderView({ showChecked: true });
     const names = screen.getAllByText(/Boots|Socks|Toothbrush/).map(el => el.textContent);
     expect(names.join(' ')).toMatch(/Boots.*Toothbrush.*Socks/s);
@@ -122,7 +122,7 @@ describe('PackingListsView', () => {
     expect(mockToggleItem).toHaveBeenCalledWith('l1', 'i1', true);
   });
 
-  it('unchecks a packed item', () => {
+  it('unchecks a completed item', () => {
     renderView();
     fireEvent.click(screen.getByRole('button', { name: 'Uncheck Socks' }));
     expect(mockToggleItem).toHaveBeenCalledWith('l1', 'i2', false);
@@ -135,7 +135,7 @@ describe('PackingListsView', () => {
     expect(within(panel).getByText('1/2')).toBeInTheDocument();   // Carry On
     expect(within(panel).getByText('0/1')).toBeInTheDocument();   // Toiletry Bag
     expect(within(panel).getByText('Total')).toBeInTheDocument();
-    expect(within(panel).getByText('33.3%')).toBeInTheDocument(); // 1 of 3 packed
+    expect(within(panel).getByText('33.3%')).toBeInTheDocument(); // 1 of 3 completed
   });
 
   it('hides the per-bag rows and chips when bags are hidden', () => {
@@ -144,7 +144,7 @@ describe('PackingListsView', () => {
     expect(screen.queryByText('1/2')).not.toBeInTheDocument();
   });
 
-  it('still shows the overall packed total when bags are hidden', () => {
+  it('still shows the overall completed total when tags are hidden', () => {
     renderView({ hideBags: true });
     const panel = screen.getByTestId('bag-progress');
     expect(within(panel).getByText('Total')).toBeInTheDocument();
@@ -162,17 +162,17 @@ describe('PackingListsView', () => {
     expect(mockSetAllChecked).toHaveBeenCalledWith('l1', false);
   });
 
-  it('toggles the show-packed display preference', () => {
+  it('toggles the show-completed display preference', () => {
     const onUpdateDisplayPrefs = vi.fn();
     renderView({ showChecked: true, onUpdateDisplayPrefs });
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
-    fireEvent.click(screen.getByText('Hide packed items'));
+    fireEvent.click(screen.getByText('Hide completed items'));
     expect(onUpdateDisplayPrefs).toHaveBeenCalledWith({ showChecked: false });
   });
 
   it('creates a list', async () => {
     renderView();
-    fireEvent.click(screen.getByRole('button', { name: /new packing list/i }));
+    fireEvent.click(screen.getByRole('button', { name: /new list/i }));
     fireEvent.change(screen.getByTestId('new-list-name'), { target: { value: 'Dolomites' } });
     fireEvent.click(screen.getByTestId('create-list'));
     expect(mockCreateList).toHaveBeenCalledWith('Dolomites', 'blue');
@@ -189,15 +189,15 @@ describe('PackingListsView', () => {
     expect(mockCreateSection).toHaveBeenCalledWith('l1', 'Tech');
   });
 
-  it('edits a trip\'s name and color together', () => {
+  it('edits a list\'s name and color together', () => {
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
     fireEvent.click(screen.getByText(/Rename & color/));
 
-    const editor = screen.getByTestId('edit-trip');
-    fireEvent.change(within(editor).getByTestId('edit-trip-name'), { target: { value: 'Paris 2027' } });
+    const editor = screen.getByTestId('edit-list');
+    fireEvent.change(within(editor).getByTestId('edit-list-name'), { target: { value: 'Paris 2027' } });
     fireEvent.click(within(editor).getByRole('button', { name: 'Color rose' }));
-    fireEvent.click(screen.getByTestId('edit-trip-save'));
+    fireEvent.click(screen.getByTestId('edit-list-save'));
 
     expect(mockUpdateList).toHaveBeenCalledWith('l1', { name: 'Paris 2027', color: 'rose' });
   });
@@ -206,8 +206,8 @@ describe('PackingListsView', () => {
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
     fireEvent.click(screen.getByText(/Rename & color/));
-    fireEvent.click(within(screen.getByTestId('edit-trip')).getByRole('button', { name: 'Color amber' }));
-    fireEvent.click(screen.getByTestId('edit-trip-save'));
+    fireEvent.click(within(screen.getByTestId('edit-list')).getByRole('button', { name: 'Color amber' }));
+    fireEvent.click(screen.getByTestId('edit-list-save'));
 
     expect(mockUpdateList).toHaveBeenCalledWith('l1', { color: 'amber' });
   });
@@ -216,13 +216,13 @@ describe('PackingListsView', () => {
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
     fireEvent.click(screen.getByText(/Rename & color/));
-    fireEvent.click(screen.getByTestId('edit-trip-save'));
+    fireEvent.click(screen.getByTestId('edit-list-save'));
 
     expect(mockUpdateList).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('edit-trip')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('edit-list')).not.toBeInTheDocument();
   });
 
-  it('reorders trips after a long-press drag on the tab strip', () => {
+  it('reorders lists after a long-press drag on the tab strip', () => {
     vi.useFakeTimers();
     try {
       mockLists = [listFixture(), { ...listFixture(), id: 'l2', name: 'Dolomites', position: 1 }];
@@ -270,22 +270,22 @@ describe('PackingListsView', () => {
     mockLists = [{ ...listFixture(), is_owner: false, owner_sub: 'someone-else' }];
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
-    expect(screen.getByText('Leave trip')).toBeInTheDocument();
-    expect(screen.queryByText('Delete trip')).not.toBeInTheDocument();
+    expect(screen.getByText('Leave list')).toBeInTheDocument();
+    expect(screen.queryByText('Delete list')).not.toBeInTheDocument();
     expect(screen.queryByText(/^Share…/)).not.toBeInTheDocument();
   });
 
-  it('locks the per-trip notification toggle until the global one is on', () => {
+  it('locks the per-list notification toggle until the global one is on', () => {
     renderView({ notifyEditsDefault: false });
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
-    expect(screen.getByText(/Mute notifications for this trip/)).toBeDisabled();
+    expect(screen.getByText(/Mute notifications for this list/)).toBeDisabled();
   });
 
-  it('mutes notifications for one trip when the global toggle is on', () => {
+  it('mutes notifications for one list when the global toggle is on', () => {
     const onSetListNotify = vi.fn();
     renderView({ notifyEditsDefault: true, onSetListNotify });
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
-    fireEvent.click(screen.getByText(/Mute notifications for this trip/));
+    fireEvent.click(screen.getByText(/Mute notifications for this list/));
     expect(onSetListNotify).toHaveBeenCalledWith('l1', { edits: false });
   });
 
@@ -302,7 +302,7 @@ describe('PackingListsView', () => {
     expect(within(panel).getByText('33.3%')).toBeInTheDocument(); // total 1/3
   });
 
-  it('copies a section into another trip and confirms it', async () => {
+  it('copies a section into another list and confirms it', async () => {
     mockLists = [listFixture(), { ...listFixture(), id: 'l2', name: 'Dolomites', position: 1 }];
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
@@ -324,13 +324,13 @@ describe('PackingListsView', () => {
     expect(screen.getByTestId('packing-flash')).toHaveTextContent('already has every item');
   });
 
-  it('offers no copy targets when this is the only trip', () => {
+  it('offers no copy targets when this is the only list', () => {
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
-    expect(screen.getByText('No other trips yet')).toBeInTheDocument();
+    expect(screen.getByText('No other lists yet')).toBeInTheDocument();
   });
 
-  it('does not offer the current trip as a copy target', () => {
+  it('does not offer the current list as a copy target', () => {
     mockLists = [listFixture(), { ...listFixture(), id: 'l2', name: 'Dolomites', position: 1 }];
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
