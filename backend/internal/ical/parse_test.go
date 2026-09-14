@@ -78,9 +78,12 @@ func TestParseICSEventsDateOnly(t *testing.T) {
 	}
 }
 
-// test_parse_ical_date_timezone_aware: tz-aware datetimes are converted to
-// UTC and stored naive.
+// test_parse_ical_date_timezone_aware: a zone-qualified datetime is converted
+// into the local zone and stored naive. The zone is pinned because the result
+// depends on it — left to the machine's zone this passes on a UTC box and
+// fails anywhere else.
 func TestParseICSEventsTimezoneAware(t *testing.T) {
+	withZone(t, "UTC")
 	events := parseICSEvents(ics([]string{
 		"UID:tz-uid",
 		"SUMMARY:UTC Event",

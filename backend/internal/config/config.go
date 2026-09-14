@@ -23,6 +23,12 @@ type Settings struct {
 	AppleCalendarEmail       string
 	AppleCalendarAppPassword string
 	AppleCalendarNames       string // comma-separated list of calendar names to sync
+	// CalendarTimeZone is the HOUSEHOLD's zone (IANA), the one calendar event
+	// times are rendered into before being stored as naive wall clocks. Empty
+	// falls back to the process zone (`TZ`). It is deliberately separate from
+	// `TZ`: `TZ` also controls log timestamps, and an operator changing that
+	// must not silently shift everyone's calendar by the offset.
+	CalendarTimeZone string
 
 	// OIDC (any spec-compliant provider — Authentik, Authelia, Keycloak, …)
 	OIDCIssuer       string
@@ -151,6 +157,7 @@ func Load(envPath string) *Settings {
 		AppleCalendarEmail:       l.str("APPLE_CALENDAR_EMAIL", ""),
 		AppleCalendarAppPassword: l.str("APPLE_CALENDAR_APP_PASSWORD", ""),
 		AppleCalendarNames:       l.str("APPLE_CALENDAR_NAMES", ""),
+		CalendarTimeZone:         l.str("CALENDAR_TIMEZONE", ""),
 
 		OIDCIssuer:       l.str("OIDC_ISSUER", ""),
 		OIDCClientID:     l.str("OIDC_CLIENT_ID", ""),

@@ -781,8 +781,20 @@ func TestInitializeCacheAndShutdown(t *testing.T) {
 	}
 	svc.Shutdown()
 
+	// The fetch hook fires DURING RefreshDBCache; the metadata row is written
+	// after it returns, on the background goroutine. Reading straight away
+	// raced the write — go1.26 happened to lose that race consistently and
+	// go1.27 doesn't — so wait for the post-condition itself.
 	var meta models.CalendarCacheMetadata
-	if err := svc.db.First(&meta).Error; err != nil {
-		t.Fatalf("initial refresh should have written metadata: %v", err)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := svc.db.First(&meta).Error
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("initial refresh should have written metadata: %v", err)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

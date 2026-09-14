@@ -11,9 +11,23 @@ import (
 )
 
 // eventZone is the household's timezone: the zone a zone-qualified event is
-// rendered into before its wall clock is stored. It follows the process TZ
-// (the compose files set TZ=America/Los_Angeles); tests override it.
+// rendered into before its wall clock is stored. Defaults to the process zone
+// and is set explicitly at startup from CALENDAR_TIMEZONE — prod runs with
+// TZ unset (i.e. UTC), so relying on the process zone alone rendered foreign
+// events at a UTC wall clock there. Tests override it via SetEventZone.
 var eventZone = time.Local
+
+// SetEventZone sets the zone used for the conversion above. A nil location is
+// ignored, so a bad config leaves the previous (process) zone in place rather
+// than silently moving every event to UTC.
+func SetEventZone(loc *time.Location) {
+	if loc != nil {
+		eventZone = loc
+	}
+}
+
+// EventZone reports the zone currently in use (for startup logging).
+func EventZone() *time.Location { return eventZone }
 
 // parseICSEvents extracts VEVENTs from raw ICS data, mirroring the icalendar
 // walk in Python: naive datetimes (tz-aware converted then stripped), DATE
