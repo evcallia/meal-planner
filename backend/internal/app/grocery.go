@@ -85,16 +85,26 @@ func grocerySectionsJSON(db *gorm.DB, sections []models.GrocerySection) []J {
 
 // groceryItemJSON and grocerySectionJSON (App methods, below) are
 // single-item/single-section convenience wrappers for the mutation
-// endpoints, which only ever serialize one row —
-// building the whole recipeRefsByKey map for one lookup is a couple of extra
-// queries, not an N+1, and keeps every response shape going through the same
-// serializer.
+// endpoints. They use recipeRefsForKey (targeted per-row queries) rather
+// than the bulk recipeRefsByKey — these are the hottest endpoints in the
+// app (add/update/move item, rename/create section), and a full-table scan
+// of every Recipe Keeper link and recipe on each of them would grow with
+// the size of the whole Recipe Keeper cache instead of with what's actually
+// being returned.
 func (a *App) groceryItemJSON(item *models.GroceryItem) J {
-	return groceryItemJSON(item, recipeRefsByKey(a.DB)[recipekeeper.RowKey(item.Name, item.Checked)])
+	return groceryItemJSON(item, recipeRefsForKey(a.DB, item.Name, item.Checked))
 }
 
 func (a *App) grocerySectionJSON(section *models.GrocerySection) J {
-	return grocerySectionJSON(section, recipeRefsByKey(a.DB))
+	// A section's items are few (a handful, not the ~200-item whole list),
+	// so one targeted query per item still scales with the response, not
+	// with total Recipe Keeper data.
+	refsByKey := make(map[string][]recipekeeper.RecipeRef, len(section.Items))
+	for i := range section.Items {
+		it := &section.Items[i]
+		refsByKey[recipekeeper.RowKey(it.Name, it.Checked)] = recipeRefsForKey(a.DB, it.Name, it.Checked)
+	}
+	return grocerySectionJSON(section, refsByKey)
 }
 
 func (a *App) handleListGrocery(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {

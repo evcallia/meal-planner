@@ -84,6 +84,65 @@ func TestGroceryItemWithMultipleRecipeLinks(t *testing.T) {
 	}
 }
 
+// The bulk (list) and targeted (single-row) recipe-attribution paths must
+// return recipes in the same order for the same grocery row. Both order by
+// rk_position asc — seeded here out of insertion/alphabetical order so an
+// accidental fall-back to insertion order or a map-iteration order would be
+// caught.
+func TestRecipeOrderMatchesBetweenBulkAndSingleRowPaths(t *testing.T) {
+	ta := newTestApp(t)
+	sec := seedGrocerySection(t, ta, "Produce", 0)
+	item := seedGroceryItem(t, ta, sec.ID, "Lemon", 0, false)
+	seedRecipeKeeperLinkAt(t, ta, "Lemon", false, "rk-2", "rec-2", "Lemon Bars", 5)
+	seedRecipeKeeperLinkAt(t, ta, "Lemon", false, "rk-1", "rec-1", "Fig Cocktail", 1)
+	seedRecipeKeeperLinkAt(t, ta, "Lemon", false, "rk-3", "rec-3", "Lemonade", 3)
+
+	listResp := ta.GET("/api/grocery")
+	if listResp.Status != 200 {
+		t.Fatalf("list status = %d: %s", listResp.Status, listResp.Body)
+	}
+	var listOrder []string
+	for _, s := range listResp.List() {
+		items, _ := s.(map[string]any)["items"].([]any)
+		for _, raw := range items {
+			it := raw.(map[string]any)
+			if it["name"] != "Lemon" {
+				continue
+			}
+			for _, r := range it["recipes"].([]any) {
+				listOrder = append(listOrder, r.(map[string]any)["id"].(string))
+			}
+		}
+	}
+
+	// The update endpoint returns the item through the targeted single-row
+	// path (a.groceryItemJSON -> recipeRefsForKey), not the bulk map.
+	singleResp := ta.PATCH("/api/grocery/items/"+item.ID.String(), map[string]any{"quantity": "2"})
+	if singleResp.Status != 200 {
+		t.Fatalf("update status = %d: %s", singleResp.Status, singleResp.Body)
+	}
+	var singleOrder []string
+	for _, r := range singleResp.Obj()["recipes"].([]any) {
+		singleOrder = append(singleOrder, r.(map[string]any)["id"].(string))
+	}
+
+	want := []string{"rec-1", "rec-3", "rec-2"} // rk_position asc: 1, 3, 5
+	if len(listOrder) != len(want) {
+		t.Fatalf("listOrder = %v, want %v", listOrder, want)
+	}
+	if len(singleOrder) != len(want) {
+		t.Fatalf("singleOrder = %v, want %v", singleOrder, want)
+	}
+	for i := range want {
+		if listOrder[i] != want[i] {
+			t.Errorf("list order[%d] = %s, want %s (full: %v)", i, listOrder[i], want[i], listOrder)
+		}
+		if singleOrder[i] != want[i] {
+			t.Errorf("single order[%d] = %s, want %s (full: %v)", i, singleOrder[i], want[i], singleOrder)
+		}
+	}
+}
+
 func TestStatusEndpointReportsDisabled(t *testing.T) {
 	ta := newTestApp(t)
 	// newTestApp never configures RecipeKeeper — App.RecipeKeeper is nil,

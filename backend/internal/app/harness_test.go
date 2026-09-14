@@ -199,6 +199,15 @@ func (c *Collector) Events() []map[string]any {
 // item id — see models.RecipeKeeperLink.
 func seedRecipeKeeperLink(t *testing.T, ta *testApp, itemName string, checked bool, rkItemID, recipeID, title string) {
 	t.Helper()
+	seedRecipeKeeperLinkAt(t, ta, itemName, checked, rkItemID, recipeID, title, 0)
+}
+
+// seedRecipeKeeperLinkAt is seedRecipeKeeperLink with an explicit rk_position,
+// for tests that need to control ordering across multiple links on the same
+// collapse key (recipeRefsByKey/recipeRefsForKey both order by rk_position
+// asc, not insertion order).
+func seedRecipeKeeperLinkAt(t *testing.T, ta *testApp, itemName string, checked bool, rkItemID, recipeID, title string, rkPosition int) {
+	t.Helper()
 	rid := recipeID
 	link := models.RecipeKeeperLink{
 		RKItemID:       rkItemID,
@@ -207,13 +216,17 @@ func seedRecipeKeeperLink(t *testing.T, ta *testApp, itemName string, checked bo
 		RKRecipeID:     &rid,
 		RKName:         itemName,
 		RKChecked:      checked,
+		RKPosition:     rkPosition,
 		RKLastModified: "2026-09-14T00:00:00.0000001Z",
 	}
 	if err := ta.App.DB.Create(&link).Error; err != nil {
 		t.Fatalf("seed recipe keeper link: %v", err)
 	}
+	// RKRecipeID may repeat across links (same recipe, different ingredient
+	// rows) — Save() upserts by primary key so a second call for the same
+	// recipe id is a no-op rather than a duplicate-key error.
 	recipe := models.RecipeKeeperRecipe{RKRecipeID: recipeID, Title: title}
-	if err := ta.App.DB.Create(&recipe).Error; err != nil {
+	if err := ta.App.DB.Save(&recipe).Error; err != nil {
 		t.Fatalf("seed recipe keeper recipe: %v", err)
 	}
 }

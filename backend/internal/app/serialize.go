@@ -133,6 +133,53 @@ func recipeRefsByKey(db *gorm.DB) map[string][]recipekeeper.RecipeRef {
 	return out
 }
 
+// recipeRefsForKey resolves attribution for ONE grocery row. The bulk
+// recipeRefsByKey loads every link for a whole-list response; single-row
+// mutation endpoints (add/update/move item, rename/create section) use this
+// instead so their cost scales with what they actually return, not with the
+// size of the Recipe Keeper cache — a full-table scan on the hottest
+// endpoints in the app grows with total recipes/links regardless of how much
+// of that data is relevant to the one row being serialized.
+//
+// Ordering matches the bulk path (rk_position asc) so the same item lists its
+// recipes in the same order regardless of which endpoint returned it.
+func recipeRefsForKey(db *gorm.DB, name string, checked bool) []recipekeeper.RecipeRef {
+	out := []recipekeeper.RecipeRef{}
+	var links []models.RecipeKeeperLink
+	if err := db.Where("mp_name = ? AND mp_checked = ? AND rk_recipe_id IS NOT NULL",
+		recipekeeper.NormalizeName(name), checked).
+		Order("rk_position asc").Find(&links).Error; err != nil || len(links) == 0 {
+		return out
+	}
+	ids := make([]string, 0, len(links))
+	seenID := map[string]bool{}
+	for _, link := range links {
+		id := *link.RKRecipeID
+		if !seenID[id] {
+			seenID[id] = true
+			ids = append(ids, id)
+		}
+	}
+	var recipes []models.RecipeKeeperRecipe
+	db.Where("rk_recipe_id IN ?", ids).Find(&recipes)
+	titles := make(map[string]string, len(recipes))
+	for _, rec := range recipes {
+		titles[rec.RKRecipeID] = rec.Title
+	}
+	seen := map[string]bool{}
+	for _, link := range links {
+		id := *link.RKRecipeID
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if title, ok := titles[id]; ok {
+			out = append(out, recipekeeper.RecipeRef{ID: id, Title: title})
+		}
+	}
+	return out
+}
+
 func pantryItemJSON(item *models.PantryItem) J {
 	return J{
 		"id":         item.ID.String(),

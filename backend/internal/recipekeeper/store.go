@@ -15,6 +15,11 @@ import (
 // the collapse key and link lookups.
 func normalizeName(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
+// NormalizeName is normalizeName, exported so the app package can query
+// RecipeKeeperLink.MPName directly (a targeted single-row lookup) without
+// duplicating the case/whitespace rule.
+func NormalizeName(s string) string { return normalizeName(s) }
+
 // collapseKey groups grocery rows. Name is compared case-insensitively, and
 // checked is part of the key because MP represents "bought 1, still need 3" as
 // two rows of the same name (see useGroceryList.ts:458).
