@@ -63,6 +63,14 @@ type Settings struct {
 	// StaticDir is where the built React app lives (not part of the Python
 	// Settings class; the Python app derived it from __file__).
 	StaticDir string
+
+	// Recipe Keeper sync (see docs/recipe-keeper-api.md). Disabled unless
+	// RECIPE_KEEPER_ENABLED is true.
+	RecipeKeeperEnabled   bool
+	RecipeKeeperUsername  string
+	RecipeKeeperPassword  string
+	RecipeKeeperListID    string
+	RecipeKeeperReceiptID string
 }
 
 // loadDotEnv parses a .env file of KEY=VALUE lines. Missing file is fine.
@@ -178,6 +186,12 @@ func Load(envPath string) *Settings {
 		PushEditWindowMinutes:    l.integer("PUSH_EDIT_WINDOW_MINUTES", 30),
 
 		StaticDir: l.str("STATIC_DIR", "static"),
+
+		RecipeKeeperEnabled:   l.boolean("RECIPE_KEEPER_ENABLED", false),
+		RecipeKeeperUsername:  l.str("RECIPE_KEEPER_USERNAME", ""),
+		RecipeKeeperPassword:  l.str("RECIPE_KEEPER_PASSWORD", ""),
+		RecipeKeeperListID:    l.str("RECIPE_KEEPER_LIST_ID", ""),
+		RecipeKeeperReceiptID: l.str("RECIPE_KEEPER_RECEIPT_ID", ""),
 	}
 }
 
