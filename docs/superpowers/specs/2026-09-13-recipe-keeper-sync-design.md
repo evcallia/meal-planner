@@ -384,7 +384,7 @@ of running once-only logic that is hard to test and impossible to re-run. The or
 concern — silently adopting a user's item — does not apply, because the MP-only unit
 is never pushed. Ownership is a property of links, and MP-only units have none.
 
-The initial `Recipe` pull is a full 12-bucket sync and is **expensive** — recipe
+The initial `Recipe` pull is **expensive** — recipe
 entities embed base64 photos at roughly 100–300 KB each (see the protocol reference).
 It runs once, in the background, and must not block startup or the first grocery sync.
 Subsequent recipe updates arrive cheaply via the watermark.

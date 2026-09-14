@@ -187,10 +187,10 @@ type RecipeKeeperRecipe struct {
 // PushedAt nil means the delete still needs pushing, and the row's existence
 // stops a not-yet-synced delete from being re-imported on the next pull.
 type RecipeKeeperTombstone struct {
-	RKItemID        string `gorm:"type:text;primaryKey"`
-	DeletedAt       time.Time
-	PushedAt        *time.Time
-	AckLastModified *string `gorm:"type:text"`
+	RKItemID        string     `gorm:"type:text;primaryKey"`
+	DeletedAt       time.Time  `gorm:"type:timestamp"`
+	PushedAt        *time.Time `gorm:"type:timestamp"`
+	AckLastModified *string    `gorm:"type:text"`
 }
 
 // RecipeKeeperState is a key/value bag for sync watermarks, the generated
@@ -428,7 +428,9 @@ func (h Headers) apply(req *http.Request) {
 	req.Header.Set("X-RK-ReceiptId", h.ReceiptID)
 	req.Header.Set("X-RK-Analytics", "")
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Encoding", "gzip, deflate")
+	req.Header.Set("User-Agent", "RecipeKeeper/231 CFNetwork/3860.700.2 Darwin/25.6.0")
+	// Accept-Encoding is deliberately NOT set: net/http decompresses
+	// transparently only when it sets that header itself, and the server gzips.
 }
 
 // DefaultHeaders mirrors the captured iOS client. DeviceID must be stable
@@ -1508,12 +1510,16 @@ func TestInboundRenameSplitsCollapseGroup(t *testing.T) {
 		t.Errorf("quantities = %d / %d, want 1 / 1", quantityOf(lemon), quantityOf(meyer))
 	}
 
-	// The rename came FROM the server, so it must not bounce back as a push.
-	pushes, _ := r.PendingPushes()
-	if len(pushes) != 0 {
-		t.Errorf("inbound rename produced pushes: %+v", pushes)
+	// The link itself must have moved to the new collapse key.
+	var moved models.RecipeKeeperLink
+	db.First(&moved, "rk_item_id = ?", "a-id")
+	if moved.MPName != "meyer lemon" {
+		t.Errorf("link MPName = %q, want %q", moved.MPName, "meyer lemon")
 	}
 }
+
+// NOTE: the companion assertion — that an inbound rename must not bounce back
+// out as a push — lives in Task 5, where PendingPushes exists.
 ```
 
 - [ ] **Step 7: Run tests to verify they pass**
