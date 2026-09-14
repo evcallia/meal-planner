@@ -1,0 +1,30 @@
+{
+  "RecipeSyncEntityRequest": null,
+  "ShoppingListCategorySyncEntityRequest": {
+    "MaxLastModified": "2026-09-13T23:46:07.4493126Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "ShoppingListCategoryItemSyncEntityRequest": {
+    "MaxLastModified": "2026-09-13T23:46:19.0193517Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "ShoppingListSyncEntityRequest": {
+    "MaxLastModified": "2026-09-13T23:45:03.7917441Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "ShoppingListItemSyncEntityRequest": {
+    "MaxLastModified": "2026-09-13T23:46:38.4065131Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "MealSyncEntityRequest": null,
+  "CourseSyncEntityRequest": null,
+  "CategorySyncEntityRequest": null,
+  "CollectionSyncEntityRequest": null,
+  "MealTypeSyncEntityRequest": null,
+  "MealPlannerSyncEntityRequest": null,
+  "CookbookSyncEntityRequest": null
+}
