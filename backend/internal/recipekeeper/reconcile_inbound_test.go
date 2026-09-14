@@ -197,6 +197,40 @@ func TestInboundPartialCheckSplitsRows(t *testing.T) {
 	}
 }
 
+// A server-side rename changes an item's collapse key, so its link must leave
+// the old row (decrementing it) and join the row matching the new name.
+func TestInboundRenameSplitsCollapseGroup(t *testing.T) {
+	db := testDB(t)
+	r := testReconciler(t, db)
+	_, _ = r.ApplyInbound([]ShoppingListItem{
+		rkItem("a-id", "Lemon", withRecipe("r1")),
+		rkItem("b-id", "Lemon", withRecipe("r2")),
+	})
+
+	lm := "2026-09-14T03:00:00.0000001Z"
+	renamed := rkItem("a-id", "Meyer Lemon", withRecipe("r1"))
+	renamed.LastModified = &lm
+	if _, err := r.ApplyInbound([]ShoppingListItem{renamed}); err != nil {
+		t.Fatalf("ApplyInbound: %v", err)
+	}
+
+	lemon := itemByName(t, db, "Lemon", false)
+	meyer := itemByName(t, db, "Meyer Lemon", false)
+	if lemon == nil || meyer == nil {
+		t.Fatal("want both a Lemon and a Meyer Lemon row")
+	}
+	if quantityOf(lemon) != 1 || quantityOf(meyer) != 1 {
+		t.Errorf("quantities = %d / %d, want 1 / 1", quantityOf(lemon), quantityOf(meyer))
+	}
+
+	// The link itself must have moved to the new collapse key.
+	var moved models.RecipeKeeperLink
+	db.First(&moved, "rk_item_id = ?", "a-id")
+	if moved.MPName != "meyer lemon" {
+		t.Errorf("link MPName = %q, want %q", moved.MPName, "meyer lemon")
+	}
+}
+
 // Items belonging to another RK list are not ours.
 func TestInboundIgnoresOtherLists(t *testing.T) {
 	db := testDB(t)
