@@ -534,6 +534,35 @@ describe('PackingListsView per-list completed visibility', () => {
     expect(screen.getByRole('button', { name: /apply to all lists/i })).toBeInTheDocument();
   });
 
+  it('marks sections whose completed items are hidden, and unhides on tap', () => {
+    const onUpdate = vi.fn();
+    renderView({ showChecked: false, showCheckedOverrides: {}, onUpdateDisplayPrefs: onUpdate });
+    // The fixture's one section has a completed item (Socks) that is hidden.
+    expect(screen.queryByText('Socks')).not.toBeInTheDocument();
+    const mark = screen.getByRole('button', { name: /completed items are hidden/i });
+    fireEvent.click(mark);
+    expect(onUpdate).toHaveBeenCalledWith({ showCheckedOverrides: { l1: true } });
+  });
+
+  it('does not mark sections while completed items are visible', () => {
+    renderView({ showChecked: true, showCheckedOverrides: {} });
+    expect(screen.queryByRole('button', { name: /completed items are hidden/i })).not.toBeInTheDocument();
+  });
+
+  it('does not mark a section that has nothing completed to hide', () => {
+    mockLists = [{
+      ...listFixture(),
+      sections: [{
+        id: 's1', list_id: 'l1', name: 'Clothes', position: 0,
+        items: [
+          { id: 'i1', section_id: 's1', name: 'Boots', quantity: null, checked: false, position: 0, bag_id: null, updated_at: '2026-01-01T00:00:00' },
+        ],
+      }],
+    }];
+    renderView({ showChecked: false, showCheckedOverrides: {} });
+    expect(screen.queryByRole('button', { name: /completed items are hidden/i })).not.toBeInTheDocument();
+  });
+
   it('can be dismissed early with the close button', () => {
     renderView({ showChecked: true, showCheckedOverrides: {} });
     openMenu();
