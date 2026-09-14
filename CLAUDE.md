@@ -168,6 +168,14 @@ The backend is a Go rewrite of the original FastAPI app (same API contract). Lay
 - `calendar.hidden`/`calendar.unhidden` SSE go via `BroadcastToUser` (only the hider's other sessions), so the frontend needed no changes — cache warmer/CalendarView/SettingsModal receive only their own events
 - Migration (`db.RunMigrations`): legacy unscoped rows are cloned once per user in the `users` table, then removed — pre-existing hides stay hidden for everyone. `pruneHiddenEvents` (GC of hides whose events vanished) is unchanged and works across all users' rows
 
+## Calendar Event Timezones (`internal/ical/parse.go`)
+- Calendar times are stored **naive, with no zone**, and the frontend renders them as-is (`formatTime` in `DayCard.tsx` uses bare `new Date(...)`, which reads an offset-less string as LOCAL — deliberately different from `parseServerDate`, which is for the naive-**UTC** columns everywhere else)
+- That only reads correctly if the stored wall clock is the VIEWER's, so `parseICalTime` converts any **zone-qualified** value (a `TZID=` param or a trailing `Z`) into `eventZone` (= `time.Local`, from the compose `TZ`, default `America/Los_Angeles`) before stripping the zone. `zoneQualified()` makes the distinction
+- **Floating times and DATE values are deliberately NOT converted**: a floating time already means "this wall clock, wherever you are", and shifting an all-day DATE moves it onto the wrong day
+- Events in the household's own zone are byte-identical to the pre-fix behavior, so `EventKey` (which embeds the wall-clock start), `event_date` bucketing and the `hidden_calendar_events` rows keyed off them do not move. Only foreign-TZID/`Z` events change — this was the "Ev Golf Lesson" bug, where a client on Paris time wrote `DTSTART;TZID=Europe/Paris:20260912T183000` and the app displayed 6:30 PM for a 9:30 AM event
+- `parse.go` imports `_ "time/tzdata"` itself: without the embedded zone database `prop.DateTime` errors on an unknown TZID and the event is **dropped entirely**, not just mistimed
+- The DB cache refresh deletes the whole date range before re-inserting, so a corrected time replaces the old row rather than duplicating it
+
 ## Calendar Holidays
 - US holidays fetched from Google's public iCal feed, cached in-memory (24h TTL) and in DB (`cached_calendar_events` with `calendar_name = "US Holidays"`)
 - `include_holidays` query param on `/api/days/events` and `/api/days` (default `true`)
