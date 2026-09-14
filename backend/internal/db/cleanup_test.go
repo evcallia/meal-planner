@@ -118,6 +118,85 @@ func TestOpenSQLiteMemoryEnforcesForeignKeys(t *testing.T) {
 	}
 }
 
+// ---- Recipe Keeper tombstone pruning ----
+
+func strPtr(s string) *string { return &s }
+
+func TestCleanupPrunesSettledTombstones(t *testing.T) {
+	gdb := newTestDB(t)
+	gdb.Create(&models.RecipeKeeperState{
+		Key: "watermark:ShoppingListItem", Value: "2026-09-14T12:00:00.0000000Z",
+	})
+	now := models.NowUTC()
+
+	// Settled: pushed, and the watermark has moved past the ack — safe to prune,
+	// along with its paired link row.
+	gdb.Create(&models.RecipeKeeperTombstone{
+		RKItemID: "settled", DeletedAt: now, PushedAt: &now,
+		AckLastModified: strPtr("2026-09-14T10:00:00.0000000Z"),
+	})
+	gdb.Create(&models.RecipeKeeperLink{RKItemID: "settled", MPName: "settled item"})
+
+	// Pushed, but the watermark has NOT yet passed the ack — still needed.
+	gdb.Create(&models.RecipeKeeperTombstone{
+		RKItemID: "recent", DeletedAt: now, PushedAt: &now,
+		AckLastModified: strPtr("2026-09-14T13:00:00.0000000Z"),
+	})
+	gdb.Create(&models.RecipeKeeperLink{RKItemID: "recent", MPName: "recent item"})
+
+	// Never pushed — this is a pending delete and must survive.
+	gdb.Create(&models.RecipeKeeperTombstone{RKItemID: "pending", DeletedAt: now})
+
+	CleanupOldData(gdb, 30)
+
+	var ids []string
+	gdb.Model(&models.RecipeKeeperTombstone{}).Pluck("rk_item_id", &ids)
+	if len(ids) != 2 {
+		t.Fatalf("remaining tombstones = %v, want [recent pending]", ids)
+	}
+	for _, id := range ids {
+		if id == "settled" {
+			t.Error("settled tombstone should have been pruned")
+		}
+	}
+
+	var linkIDs []string
+	gdb.Model(&models.RecipeKeeperLink{}).Pluck("rk_item_id", &linkIDs)
+	if len(linkIDs) != 1 || linkIDs[0] != "recent" {
+		t.Fatalf("remaining links = %v, want [recent] (settled's paired link should be pruned too)", linkIDs)
+	}
+}
+
+func TestCleanupDropsOldSettledTombstonesEvenWithoutWatermark(t *testing.T) {
+	gdb := newTestDB(t)
+	old := models.NowUTC().AddDate(0, 0, -31)
+	gdb.Create(&models.RecipeKeeperTombstone{RKItemID: "old-settled", DeletedAt: old, PushedAt: &old})
+
+	CleanupOldData(gdb, 30)
+
+	var ids []string
+	gdb.Model(&models.RecipeKeeperTombstone{}).Pluck("rk_item_id", &ids)
+	if len(ids) != 0 {
+		t.Fatalf("remaining = %v, want none (30-day backstop should have pruned it)", ids)
+	}
+}
+
+func TestCleanupAbandonsStaleUnpushedTombstones(t *testing.T) {
+	gdb := newTestDB(t)
+	stale := models.NowUTC().AddDate(0, 0, -91)
+	recent := models.NowUTC().AddDate(0, 0, -10)
+	gdb.Create(&models.RecipeKeeperTombstone{RKItemID: "abandoned", DeletedAt: stale})
+	gdb.Create(&models.RecipeKeeperTombstone{RKItemID: "still-pending", DeletedAt: recent})
+
+	CleanupOldData(gdb, 30)
+
+	var ids []string
+	gdb.Model(&models.RecipeKeeperTombstone{}).Pluck("rk_item_id", &ids)
+	if len(ids) != 1 || ids[0] != "still-pending" {
+		t.Fatalf("remaining = %v, want [still-pending]", ids)
+	}
+}
+
 func TestCreateAllCreatesTables(t *testing.T) {
 	gdb := newTestDB(t)
 
