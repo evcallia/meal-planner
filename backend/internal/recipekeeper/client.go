@@ -15,6 +15,11 @@ import (
 // own polls.
 const notifyTimeout = 90 * time.Second
 
+// Generous: a full Recipe pull legitimately runs to hundreds of MB because
+// recipe entities embed base64 photos. The cap exists to stop an unbounded
+// or malformed response exhausting memory, not to bound normal traffic.
+const maxSyncBody = 512 << 20 // 512 MiB
+
 // ShoppingListItem is the only entity this integration reads in detail or ever
 // writes. Note there is no quantity field: Recipe Keeper stores one row per
 // recipe-ingredient occurrence instead.
@@ -52,6 +57,8 @@ type AckItem struct {
 }
 
 // RawBucket is used for buckets we pull but do not model in detail.
+// SyncEntities exists for pulling only; ShoppingListItem is the sole entity
+// this integration ever pushes.
 type RawBucket struct {
 	MaxLastModified string            `json:"MaxLastModified"`
 	SyncEntities    []json.RawMessage `json:"SyncEntities"`
@@ -83,6 +90,8 @@ type SyncRequest struct {
 	Cookbook                 *RawBucket  `json:"CookbookSyncEntityRequest"`
 }
 
+// SyncResponse models only the five buckets this integration reads; the other
+// seven are always null and never consumed.
 type SyncResponse struct {
 	Recipe                   *RawBucketResponse  `json:"RecipeSyncEntityResponse"`
 	ShoppingListCategory     *RawBucketResponse  `json:"ShoppingListCategorySyncEntityResponse"`
@@ -136,10 +145,11 @@ func (c *Client) Sync(ctx context.Context, sreq SyncRequest) (*SyncResponse, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil, fmt.Errorf("recipekeeper: sync status %d", resp.StatusCode)
 	}
 	var out SyncResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxSyncBody)).Decode(&out); err != nil {
 		return nil, fmt.Errorf("recipekeeper: decode sync: %w", err)
 	}
 	return &out, nil

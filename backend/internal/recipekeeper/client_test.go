@@ -1,6 +1,7 @@
 package recipekeeper
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -43,11 +44,61 @@ func TestSyncResponseParsesCapturedFixture(t *testing.T) {
 		t.Fatalf("UpdatedServerItems = %d, want 1", len(items))
 	}
 	it := items[0]
-	if it.Name != "sample" || it.ID == "" {
-		t.Errorf("item = %+v", it)
+	if it.Name != "sample" {
+		t.Errorf("Name = %q, want %q", it.Name, "sample")
+	}
+	if it.ID != "1fe8c051-1937-4c8e-b83a-52c42218f1fb" {
+		t.Errorf("ID = %q, want %q", it.ID, "1fe8c051-1937-4c8e-b83a-52c42218f1fb")
+	}
+	if it.ShoppingListID != "123fa458-8676-4a4b-9060-0a932d2dbaa4" {
+		t.Errorf("ShoppingListID = %q, want %q", it.ShoppingListID, "123fa458-8676-4a4b-9060-0a932d2dbaa4")
+	}
+	if it.IsChecked != false {
+		t.Errorf("IsChecked = %v, want false", it.IsChecked)
+	}
+	if it.Position != 565 {
+		t.Errorf("Position = %d, want 565", it.Position)
+	}
+	if it.IsDeleted != false {
+		t.Errorf("IsDeleted = %v, want false", it.IsDeleted)
+	}
+	if it.RecipeID != nil {
+		t.Errorf("RecipeID = %v, want nil", it.RecipeID)
 	}
 	if it.LastModified == nil || (*it.LastModified)[len(*it.LastModified)-1] != 'Z' {
 		t.Errorf("server LastModified must carry Z, got %v", it.LastModified)
+	}
+	if it.LastModified != nil && *it.LastModified != "2026-09-13T23:55:28.3967144Z" {
+		t.Errorf("LastModified = %q, want %q", *it.LastModified, "2026-09-13T23:55:28.3967144Z")
+	}
+}
+
+// Round-tripping a ShoppingListItem with non-nil RecipeID verifies the JSON tag
+// is correct — this field carries the recipe attribution that the whole feature exists for.
+func TestShoppingListItemRecipeIDTag(t *testing.T) {
+	recipe := "abc123"
+	it := ShoppingListItem{
+		Name:      "flour",
+		ID:        "id1",
+		RecipeID:  &recipe,
+		IsChecked: false,
+		IsDeleted: false,
+		Position:  0,
+	}
+	data, err := json.Marshal(it)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// Verify "RecipeId" appears in the JSON (not "RecipeID" or any typo)
+	if !bytes.Contains(data, []byte(`"RecipeId"`)) {
+		t.Errorf("JSON tag mismatch: %s", data)
+	}
+	var parsed ShoppingListItem
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if parsed.RecipeID == nil || *parsed.RecipeID != recipe {
+		t.Errorf("round-trip failed: got %v, want %v", parsed.RecipeID, &recipe)
 	}
 }
 
