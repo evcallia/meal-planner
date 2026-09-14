@@ -20,6 +20,17 @@ func testDB(t *testing.T) *gorm.DB {
 		t.Fatalf("migrate: %v", err)
 	}
 	db.Create(&models.GrocerySection{ID: models.NewID(), Name: "Uncategorized", Position: 0})
+	// A single :memory: SQLite database must not be used from multiple pooled
+	// connections — each pool connection would see its own empty database.
+	// loop.go's background recipe sync now touches this db from a second
+	// goroutine, so this matters here even though earlier tests in this
+	// package were single-goroutine and never hit it (see db.OpenSQLiteMemory
+	// for the same fix on the production path).
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("underlying sql.DB: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
 	return db
 }
 

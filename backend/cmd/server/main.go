@@ -22,7 +22,11 @@ import (
 	"mealplanner/internal/config"
 	"mealplanner/internal/ical"
 	"mealplanner/internal/db"
+	"mealplanner/internal/recipekeeper"
 )
+
+// recipeKeeperBaseURL is the fixed Recipe Keeper API host (docs/recipe-keeper-api.md).
+const recipeKeeperBaseURL = "https://recipekeeper.azurewebsites.net"
 
 func main() {
 	setPassword := flag.String("set-password", "",
@@ -89,6 +93,41 @@ func main() {
 	}
 	go application.Push.RunDueLoop(application.Broadcaster.Done)
 
+	// Recipe Keeper: pulls the shopping list (and, in the background, recipe
+	// titles for attribution) from the Recipe Keeper app. Entirely
+	// best-effort — the loop backs off and records LastError on failure,
+	// never anything that could break the rest of Meal Planner.
+	var cancelRecipeKeeper context.CancelFunc
+	if settings.RecipeKeeperEnabled {
+		if settings.RecipeKeeperListID == "" {
+			log.Printf("recipe keeper: RECIPE_KEEPER_LIST_ID is not set — sync will import nothing until it is")
+		}
+		rkHeaders := recipekeeper.DefaultHeaders(recipekeeper.DeviceID(gormDB), settings.RecipeKeeperReceiptID)
+		rkAuth := &recipekeeper.Authenticator{
+			BaseURL:  recipeKeeperBaseURL,
+			Username: settings.RecipeKeeperUsername,
+			Password: settings.RecipeKeeperPassword,
+			HTTP:     &http.Client{Timeout: 30 * time.Second},
+			Hdr:      rkHeaders,
+		}
+		rkService := &recipekeeper.Service{
+			Client: recipekeeper.NewClient(recipeKeeperBaseURL, rkAuth, rkHeaders),
+			Rec:    &recipekeeper.Reconciler{DB: gormDB, ListID: settings.RecipeKeeperListID},
+			DB:     gormDB,
+			OnChange: func(recipekeeper.Changes) {
+				// The sync loop has no *http.Request to hang a broadcast off
+				// of (unlike application.broadcast), so it publishes directly
+				// with a synthetic, stable source id.
+				application.Broadcaster.BroadcastEvent("grocery.updated",
+					map[string]any{"action": "replaced", "source": "recipe-keeper"},
+					"recipe-keeper")
+			},
+		}
+		var rkCtx context.Context
+		rkCtx, cancelRecipeKeeper = context.WithCancel(context.Background())
+		go rkService.Run(rkCtx)
+	}
+
 	addr := ":8000"
 	if v := os.Getenv("PORT"); v != "" {
 		addr = ":" + v
@@ -111,6 +150,9 @@ func main() {
 		// Unblock SSE streams first so Shutdown doesn't wait on them.
 		application.Broadcaster.Close()
 		application.Calendar.Shutdown()
+		if cancelRecipeKeeper != nil {
+			cancelRecipeKeeper()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = server.Shutdown(ctx)
