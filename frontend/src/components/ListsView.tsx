@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTracker, computeStats } from '../hooks/useTracker';
 import { useTabReorder } from '../hooks/useTabReorder';
@@ -9,6 +9,7 @@ import { getUsers } from '../api/client';
 import { isTempId } from '../db';
 import { recency, RECENCY_CLASSES, formatAgo, formatTarget, parseServerDate, progressPercent, inSeason, seasonLabel, computeStreak, groupTasksByList, MONTH_ABBR } from '../utils/recency';
 import { getEditHighlight } from '../utils/editHighlightColors';
+import { muteState, MutedIcon } from '../utils/notifyMute';
 
 const firstName = (name: string | null | undefined): string | null => (name ? name.split(' ')[0] : null);
 // Recency baseline tracks the latest event of any kind, so a skip resets color/sort too.
@@ -123,6 +124,16 @@ export function ListsView({
     arr.splice(Math.min(Math.max(dueSoonPos, 0), arr.length), 0, dueSoonTab);
     return arr;
   }, [lists, dueSoonTab, dueSoonPos]);
+
+  // A group is only "muted" while the matching global toggle is on — see
+  // muteState. Due Soon is a synthetic aggregate, not a real group, so it is
+  // never marked even if a stray override turns up under its id.
+  const tabMute = useCallback(
+    (id: string) => (id === DUE_SOON_ID
+      ? { muted: false, label: '' }
+      : muteState(listNotifyOverrides[id], { edits: notifyDefaults.edits, due: notifyDefaults.due })),
+    [listNotifyOverrides, notifyDefaults.edits, notifyDefaults.due],
+  );
 
   const activeList = tabs[activeIndex] ?? null;
   const isDueSoonActive = activeList?.id === DUE_SOON_ID;
@@ -279,6 +290,7 @@ export function ListsView({
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors select-none ${dragId === l.id ? 'opacity-60 scale-105 ring-2 ring-blue-400' : ''} ${act ? 'bg-blue-500 text-white' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50'}`}
                     >
                       <span className="max-w-[10rem] truncate pointer-events-none">{l.name}</span>
+                      {tabMute(l.id).muted && <MutedIcon label={tabMute(l.id).label} />}
                       {due > 0 && (
                         <span className={`min-w-[16px] h-4 px-1 inline-flex items-center justify-center text-[10px] font-bold rounded-full pointer-events-none ${act ? 'bg-white/25 text-white' : 'bg-red-500 text-white'}`}>{due}</span>
                       )}

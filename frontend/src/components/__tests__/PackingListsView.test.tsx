@@ -429,3 +429,26 @@ describe('section menu placement', () => {
     expect(screen.getByTestId('packing-loading')).toBeInTheDocument();
   });
 });
+
+// A muted list is marked on its tab, so you can see which lists are silenced
+// without opening each one. The mark is meaningless while the global List-edits
+// toggle is off — nothing notifies then anyway — so it stays hidden.
+describe('PackingListsView muted indicator', () => {
+  const tabs = () => screen.getByTestId('packing-tabs');
+
+  it('marks a muted list when List notifications are enabled', () => {
+    renderView({ notifyEditsDefault: true, listNotifyOverrides: { l1: { edits: false } } });
+    const icon = within(tabs()).getByTestId('muted-icon');
+    expect(icon).toHaveAccessibleName('Edit notifications muted');
+  });
+
+  it('shows nothing when the list is not muted', () => {
+    renderView({ notifyEditsDefault: true, listNotifyOverrides: {} });
+    expect(within(tabs()).queryByTestId('muted-icon')).not.toBeInTheDocument();
+  });
+
+  it('shows nothing when List notifications are globally off', () => {
+    renderView({ notifyEditsDefault: false, listNotifyOverrides: { l1: { edits: false } } });
+    expect(within(tabs()).queryByTestId('muted-icon')).not.toBeInTheDocument();
+  });
+});

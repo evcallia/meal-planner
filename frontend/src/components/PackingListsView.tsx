@@ -15,6 +15,7 @@ import {
   NONE_STORE_ID,
 } from './ChecklistParts';
 import { bagProgress, visibleSectionItems } from '../utils/packing';
+import { muteState, MutedIcon } from '../utils/notifyMute';
 import { getEditHighlight } from '../utils/editHighlightColors';
 import { toTitleCase } from '../utils/titleCase';
 
@@ -486,6 +487,11 @@ export function PackingListsView({
   }, [lists, listId, packing, showFlash]);
 
   const notifyEdits = listNotifyOverrides[listId]?.edits ?? true;
+  // A list is only "muted" while the global List-edits toggle is on — see muteState.
+  const tabMute = useCallback(
+    (id: string) => muteState(listNotifyOverrides[id], { edits: notifyEditsDefault }),
+    [listNotifyOverrides, notifyEditsDefault],
+  );
 
   if (loading) {
     return (
@@ -523,6 +529,7 @@ export function PackingListsView({
               >
                 <span className={`w-1.5 h-1.5 rounded-full pointer-events-none ${colorBar(l.color)}`} />
                 <span className="pointer-events-none">{l.name}</span>
+                {tabMute(l.id).muted && <MutedIcon label={tabMute(l.id).label} />}
               </button>
             ))}
             <button
