@@ -75,9 +75,10 @@ fields threaded through existing code. An item with no links is an ordinary MP i
 and every current code path keeps working.
 
 ```
-recipe_keeper_links              -- the FK. One row per RK row; many per grocery item.
+recipe_keeper_links              -- the FK. One row per RK row; many per grocery row.
   rk_item_id        text PK      -- RK's stable GUID
-  grocery_item_id   uuid         -- FK → grocery_items, ON DELETE CASCADE
+  mp_name           text         -- normalized collapse key: which MP row this
+  mp_checked        bool         --   link belongs to. NOT a grocery_items FK.
   rk_recipe_id      text NULL    -- the attribution
   rk_name           text         -- last known RK state, for outbound diffing
   rk_checked        bool         -- last known RK state, for outbound diffing
@@ -105,6 +106,10 @@ Created by GORM `AutoMigrate` on startup, consistent with the rest of the projec
 **The link table is the entire "FK intact" requirement.** Collapse is a `GROUP BY` on
 normalized name; quantity is `COUNT(links)`; recipe names are a join through
 `rk_recipe_id`.
+
+**Links deliberately do not reference `grocery_items.id`.** See
+[Undo, redo, and id churn](#undo-redo-and-id-churn) — a FK there is not merely
+inconvenient, it silently destroys the table on the first undo.
 
 ## Sync rules
 
@@ -180,12 +185,15 @@ A tombstone is needed only until RK can no longer re-send that row — precisely
 the delete is acknowledged **and** our watermark has advanced past the ack. After that
 the row can never reappear in `UpdatedServerItems`.
 
-Pruned in the existing `db.CleanupOldData`, alongside activity-log retention:
+Pruned in the existing `db.CleanupOldData`, alongside activity-log retention — and the
+link is pruned with it, since the link is kept alive after the delete push purely so
+[an undo](#undo-redo-and-id-churn) can rebuild the entity:
 
 ```sql
 DELETE FROM recipe_keeper_tombstones
  WHERE pushed_at IS NOT NULL
    AND ack_last_modified <= <watermark:ShoppingListItem>
+-- and the matching recipe_keeper_links rows
 ```
 
 Steady-state count is effectively zero — tombstones live seconds, not forever. Two
@@ -212,6 +220,60 @@ always writes both sides.
 its collapse key. That link must detach from the `Lemon` item (decrementing its
 quantity) and attach to — or create — the item matching its new name. The reverse also
 holds: a rename that makes two groups match merges them.
+
+### Undo, redo, and id churn
+
+Meal Planner's undo for item delete and for clear replays a full list snapshot
+through `PUT /api/grocery` (`replaceGroceryListAPI`). That handler deletes **every**
+section and recreates the list with **fresh ids** (`grocery.go:191-192`).
+
+A link holding `grocery_item_id` with `ON DELETE CASCADE` would therefore be destroyed
+en masse by a single undo: the whole table cascades away, the entire grocery list
+silently becomes MP-only, and the tombstones left behind block everything from being
+re-imported. It is a failure that shows up days later as "sync stopped working", with
+no event to trace it back to.
+
+So a link stores `(mp_name, mp_checked)` — the collapse key the model already groups
+on — instead of a row id. Ids may churn freely; links re-resolve by key afterwards.
+This stores what the model actually keys on rather than a proxy for it, and removes
+the cascade hazard rather than defending against it.
+
+Consequences:
+
+- **Replace never creates tombstones.** It is an id churn, not a deletion. Only the
+  explicit delete and clear endpoints tombstone.
+- **Undo of a delete is handled by the same declarative pass.** If a tombstone exists
+  and its collapse key resolves to a live row again, the item is back: drop the
+  tombstone if it was never pushed, or push `IsDeleted: false` if it was. Recipe
+  Keeper's deletes are soft, so un-deleting is an ordinary field update — no snapshot
+  restore path and no special-case undo endpoint.
+- **Links outlive the delete push.** `ApplyAcks` marks the tombstone rather than
+  deleting the link, so an undo arriving after the push still has the entity to
+  rebuild from. Link and tombstone are pruned together once settled.
+- **An unresolvable link with no tombstone is an orphan**, logged and cleaned up but
+  **never** pushed as a delete. Deletion is only ever expressed by a tombstone.
+
+### Offline behaviour
+
+Two independent offline domains, and only the first is new to this project:
+
+```
+client ──(IndexedDB queue, existing)──▶ MP backend ──(declarative reconcile)──▶ RK
+```
+
+A client being offline has no bearing on the RK connection, which lives in the
+backend. Queued changes drain into the backend as usual and the next reconcile pushes
+whatever now differs. **No offline-specific machinery is required** — because outbound
+is a diff of current state rather than a queue of events, it does not matter when or
+in what order changes arrived. A 4 → 3 → 2 decrement replayed from the queue converges
+on the same push set as a single 4 → 2.
+
+The one hazard is that Recipe Keeper is a writer the client cannot see. A queued edit
+may land on a row that RK has since deleted or split. This is not a new class of
+problem — another household member can already do it — but RK does it more often than
+a person would, so **item-update handlers must treat a missing row as already-applied**
+rather than returning 404. A 404 burns all 20 `MAX_SYNC_ATTEMPTS` retries before the
+change is discarded, turning a benign race into a stuck queue.
 
 ### Echo suppression
 

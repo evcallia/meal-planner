@@ -79,10 +79,10 @@ func TestRecipeKeeperLinkRoundTrip(t *testing.T) {
 	if err := db.AutoMigrate(models.AllModels()...); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	itemID := models.NewID()
 	link := models.RecipeKeeperLink{
 		RKItemID:       "284055d7-f534-4aff-affd-0a0cc13a6fcf",
-		GroceryItemID:  itemID,
+		MPName:         "fig",
+		MPChecked:      false,
 		RKRecipeID:     ptr("59b86e5d-4126-48bb-9d15-b3cd82d8df08"),
 		RKName:         "Fig",
 		RKChecked:      false,
@@ -96,8 +96,37 @@ func TestRecipeKeeperLinkRoundTrip(t *testing.T) {
 	if err := db.First(&got, "rk_item_id = ?", link.RKItemID).Error; err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if got.GroceryItemID != itemID || *got.RKRecipeID != *link.RKRecipeID {
+	if got.MPName != "fig" || *got.RKRecipeID != *link.RKRecipeID {
 		t.Errorf("round trip mismatch: %+v", got)
+	}
+}
+
+// The link must NOT reference grocery_items: PUT /api/grocery recreates every row
+// with a new id, and a cascading FK would destroy the whole table on the first undo.
+func TestRecipeKeeperLinkSurvivesGroceryIDChurn(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err := db.AutoMigrate(models.AllModels()...); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	sec := models.GrocerySection{ID: models.NewID(), Name: "Produce"}
+	db.Create(&sec)
+	item := models.GroceryItem{ID: models.NewID(), SectionID: sec.ID, Name: "Fig"}
+	db.Create(&item)
+	db.Create(&models.RecipeKeeperLink{
+		RKItemID: "rk-1", MPName: "fig", RKName: "Fig",
+		RKLastModified: "2026-09-13T23:24:53.7115541Z",
+	})
+
+	// Simulate what undo-of-delete does: wipe everything, recreate with new ids.
+	db.Where("1 = 1").Delete(&models.GrocerySection{})
+	sec2 := models.GrocerySection{ID: models.NewID(), Name: "Produce"}
+	db.Create(&sec2)
+	db.Create(&models.GroceryItem{ID: models.NewID(), SectionID: sec2.ID, Name: "Fig"})
+
+	var n int64
+	db.Model(&models.RecipeKeeperLink{}).Count(&n)
+	if n != 1 {
+		t.Fatalf("links after id churn = %d, want 1 — a cascading FK would have wiped them", n)
 	}
 }
 
@@ -122,18 +151,25 @@ import (
 	"gorm.io/gorm"
 )
 
-// RecipeKeeperLink ties one Recipe Keeper shopping-list row to the grocery item
-// that represents it. Many links may point at one grocery item: Recipe Keeper
-// stores a separate row per recipe-ingredient occurrence, so "Lemon" needed by
-// six recipes is six RK rows collapsed into one grocery item.
+// RecipeKeeperLink ties one Recipe Keeper shopping-list row to the grocery row
+// that represents it. Many links may share a grocery row: Recipe Keeper stores a
+// separate row per recipe-ingredient occurrence, so "Lemon" needed by six
+// recipes is six RK rows collapsed into one grocery row.
+//
+// MPName/MPChecked are the COLLAPSE KEY, deliberately not a grocery_items FK.
+// PUT /api/grocery (used by undo of delete and clear) deletes every section and
+// recreates the list with fresh ids, so a real FK with ON DELETE CASCADE would
+// wipe this entire table on the first undo. Keying by (name, checked) — what the
+// model already groups on — survives that id churn.
 //
 // RKName/RKChecked cache the last known server state so the outbound reconcile
 // can diff against it without a network round trip.
 type RecipeKeeperLink struct {
-	RKItemID       string    `gorm:"type:text;primaryKey"`
-	GroceryItemID  uuid.UUID `gorm:"type:uuid;index"`
-	RKRecipeID     *string   `gorm:"type:text;index"`
-	RKName         string    `gorm:"type:text"`
+	RKItemID       string `gorm:"type:text;primaryKey"`
+	MPName         string `gorm:"type:text;index"` // normalized: lowercased, trimmed
+	MPChecked      bool   `gorm:"index"`
+	RKRecipeID     *string `gorm:"type:text;index"`
+	RKName         string  `gorm:"type:text"`
 	RKChecked      bool
 	RKLastModified string `gorm:"type:text"`
 	RKPosition     int
@@ -990,7 +1026,7 @@ func TestInboundCollapsesDuplicatesByName(t *testing.T) {
 		t.Errorf("quantity = %v, want 6", it.Quantity)
 	}
 	var links int64
-	db.Model(&models.RecipeKeeperLink{}).Where("grocery_item_id = ?", it.ID).Count(&links)
+	db.Model(&models.RecipeKeeperLink{}).Where("mp_name = ?", "lemon").Count(&links)
 	if links != 6 {
 		t.Errorf("links = %d, want 6", links)
 	}
@@ -1173,9 +1209,19 @@ func setQuantity(item *models.GroceryItem, n int) {
 	item.Quantity = &s
 }
 
-func linkCount(db *gorm.DB, itemID uuid.UUID) int {
+// linksFor returns the links belonging to a grocery row, addressed by collapse
+// key rather than id — grocery ids churn on every replace (see the model docs).
+func linksFor(db *gorm.DB, name string, checked bool) []models.RecipeKeeperLink {
+	var links []models.RecipeKeeperLink
+	db.Order("rk_position asc").
+		Find(&links, "mp_name = ? AND mp_checked = ?", normalizeName(name), checked)
+	return links
+}
+
+func linkCount(db *gorm.DB, name string, checked bool) int {
 	var n int64
-	db.Model(&models.RecipeKeeperLink{}).Where("grocery_item_id = ?", itemID).Count(&n)
+	db.Model(&models.RecipeKeeperLink{}).
+		Where("mp_name = ? AND mp_checked = ?", normalizeName(name), checked).Count(&n)
 	return int(n)
 }
 
@@ -1183,9 +1229,9 @@ func linkCount(db *gorm.DB, itemID uuid.UUID) int {
 func findRow(db *gorm.DB, name string, checked bool) *models.GroceryItem {
 	var items []models.GroceryItem
 	db.Where("checked = ?", checked).Find(&items)
-	want := collapseKey(name, checked)
+	want := normalizeName(name)
 	for i := range items {
-		if collapseKey(items[i].Name, items[i].Checked) == want {
+		if normalizeName(items[i].Name) == want {
 			return &items[i]
 		}
 	}
@@ -1282,10 +1328,11 @@ func (r *Reconciler) applyOne(in ShoppingListItem, ch *Changes) error {
 // detachLink drops a link and decrements its row, deleting the row when the
 // last link goes and no MP-only units remain.
 func (r *Reconciler) detachLink(link *models.RecipeKeeperLink, ch *Changes) error {
-	var item models.GroceryItem
-	if err := r.DB.First(&item, "id = ?", link.GroceryItemID).Error; err != nil {
+	row := findRow(r.DB, link.MPName, link.MPChecked)
+	if row == nil {
 		return r.DB.Delete(link).Error
 	}
+	item := *row
 	if err := r.DB.Delete(link).Error; err != nil {
 		return err
 	}
@@ -1342,7 +1389,8 @@ func (r *Reconciler) attachNew(in ShoppingListItem, ch *Changes) error {
 
 	return r.DB.Create(&models.RecipeKeeperLink{
 		RKItemID:       in.ID,
-		GroceryItemID:  row.ID,
+		MPName:         normalizeName(row.Name),
+		MPChecked:      row.Checked,
 		RKRecipeID:     in.RecipeID,
 		RKName:         in.Name,
 		RKChecked:      in.IsChecked,
@@ -1494,7 +1542,7 @@ git commit -m "Recipe Keeper: inbound reconcile with collapse and partial checks
 - Produces:
   - `func (r *Reconciler) PendingPushes() ([]ShoppingListItem, error)`
   - `func (r *Reconciler) ApplyAcks(acks []AckItem) error`
-  - `func (r *Reconciler) TombstoneLinks(itemID uuid.UUID) error`
+  - `func (r *Reconciler) TombstoneLinks(name string, checked bool) error`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1623,7 +1671,7 @@ func TestTombstoneLinksOnDelete(t *testing.T) {
 	})
 	item := itemByName(t, db, "Lemon", false)
 
-	if err := r.TombstoneLinks(item.ID); err != nil {
+	if err := r.TombstoneLinks(item.Name, item.Checked); err != nil {
 		t.Fatalf("TombstoneLinks: %v", err)
 	}
 	var n int64
@@ -1664,14 +1712,31 @@ func stripZ(s string) string { return strings.TrimSuffix(s, "Z") }
 func (r *Reconciler) PendingPushes() ([]ShoppingListItem, error) {
 	var out []ShoppingListItem
 
-	// Deletes first: tombstones that have not been pushed yet.
+	// Tombstones: either a delete to push, or an undo to reverse.
 	var tombs []models.RecipeKeeperTombstone
-	if err := r.DB.Find(&tombs, "pushed_at IS NULL").Error; err != nil {
+	if err := r.DB.Find(&tombs).Error; err != nil {
 		return nil, err
 	}
 	for _, tomb := range tombs {
 		var link models.RecipeKeeperLink
-		if err := r.DB.First(&link, "rk_item_id = ?", tomb.RKItemID).Error; err != nil {
+		hasLink := r.DB.First(&link, "rk_item_id = ?", tomb.RKItemID).Error == nil
+
+		// Undo: the row is back. Recipe Keeper's deletes are soft, so reversing
+		// one is an ordinary field update rather than a restore path.
+		if hasLink && findRow(r.DB, link.MPName, link.MPChecked) != nil {
+			if tomb.PushedAt == nil {
+				// The delete never went out — just forget it.
+				r.DB.Delete(&tomb)
+				continue
+			}
+			out = append(out, r.entityFor(link, link.RKName, link.RKChecked, false))
+			continue
+		}
+
+		if tomb.PushedAt != nil {
+			continue // already deleted on the server
+		}
+		if !hasLink {
 			// Link already gone; synthesize the minimum the server needs.
 			out = append(out, ShoppingListItem{
 				ID: tomb.RKItemID, ShoppingListID: r.ListID, IsDeleted: true,
@@ -1687,14 +1752,22 @@ func (r *Reconciler) PendingPushes() ([]ShoppingListItem, error) {
 		return nil, err
 	}
 	for _, link := range links {
-		var item models.GroceryItem
-		if err := r.DB.First(&item, "id = ?", link.GroceryItemID).Error; err != nil {
+		if isTombstoned(r.DB, link.RKItemID) {
+			continue // handled above
+		}
+		row := findRow(r.DB, link.MPName, link.MPChecked)
+		if row == nil {
+			// An unresolvable link with no tombstone is an orphan. Log and drop
+			// it: deletion is only ever expressed by a tombstone, never inferred.
+			log.Printf("recipekeeper: orphan link %s (%s/%v), dropping",
+				link.RKItemID, link.MPName, link.MPChecked)
+			r.DB.Delete(&models.RecipeKeeperLink{}, "rk_item_id = ?", link.RKItemID)
 			continue
 		}
-		if strings.EqualFold(item.Name, link.RKName) && item.Checked == link.RKChecked {
+		if strings.EqualFold(row.Name, link.RKName) && row.Checked == link.RKChecked {
 			continue
 		}
-		out = append(out, r.entityFor(link, item.Name, item.Checked, false))
+		out = append(out, r.entityFor(link, row.Name, row.Checked, false))
 	}
 	return out, nil
 }
@@ -1731,26 +1804,39 @@ func (r *Reconciler) entityFor(link models.RecipeKeeperLink, name string, checke
 func (r *Reconciler) ApplyAcks(acks []AckItem) error {
 	now := r.now()
 	for _, ack := range acks {
+		var link models.RecipeKeeperLink
+		hasLink := r.DB.First(&link, "rk_item_id = ?", ack.ID).Error == nil
+
 		var tomb models.RecipeKeeperTombstone
 		if err := r.DB.First(&tomb, "rk_item_id = ?", ack.ID).Error; err == nil {
+			// An un-delete: the row came back, so the tombstone is spent.
+			if hasLink && findRow(r.DB, link.MPName, link.MPChecked) != nil {
+				if err := r.DB.Delete(&tomb).Error; err != nil {
+					return err
+				}
+				link.RKLastModified = ack.LastModified
+				if err := r.DB.Save(&link).Error; err != nil {
+					return err
+				}
+				continue
+			}
 			tomb.PushedAt = &now
 			lm := ack.LastModified
 			tomb.AckLastModified = &lm
 			if err := r.DB.Save(&tomb).Error; err != nil {
 				return err
 			}
-			r.DB.Delete(&models.RecipeKeeperLink{}, "rk_item_id = ?", ack.ID)
+			// The link is KEPT until the tombstone is pruned, so an undo arriving
+			// after the push still has an entity to rebuild from.
 			continue
 		}
 
-		var link models.RecipeKeeperLink
-		if err := r.DB.First(&link, "rk_item_id = ?", ack.ID).Error; err != nil {
+		if !hasLink {
 			continue
 		}
-		var item models.GroceryItem
-		if err := r.DB.First(&item, "id = ?", link.GroceryItemID).Error; err == nil {
-			link.RKName = item.Name
-			link.RKChecked = item.Checked
+		if row := findRow(r.DB, link.MPName, link.MPChecked); row != nil {
+			link.RKName = row.Name
+			link.RKChecked = row.Checked
 		}
 		link.RKLastModified = ack.LastModified
 		if err := r.DB.Save(&link).Error; err != nil {
@@ -1760,14 +1846,11 @@ func (r *Reconciler) ApplyAcks(acks []AckItem) error {
 	return nil
 }
 
-// TombstoneLinks records that a grocery item was deleted locally, so each of its
-// RK rows gets a delete push and can never be re-imported.
-func (r *Reconciler) TombstoneLinks(itemID uuid.UUID) error {
-	var links []models.RecipeKeeperLink
-	if err := r.DB.Find(&links, "grocery_item_id = ?", itemID).Error; err != nil {
-		return err
-	}
-	for _, link := range links {
+// TombstoneLinks records that a grocery row was deleted locally, so each of its
+// RK rows gets a delete push and cannot be re-imported meanwhile. Addressed by
+// collapse key, since the row may already be gone by the time this runs.
+func (r *Reconciler) TombstoneLinks(name string, checked bool) error {
+	for _, link := range linksFor(r.DB, name, checked) {
 		tomb := models.RecipeKeeperTombstone{RKItemID: link.RKItemID, DeletedAt: r.now()}
 		if err := r.DB.Where("rk_item_id = ?", link.RKItemID).
 			FirstOrCreate(&tomb).Error; err != nil {
@@ -1861,7 +1944,7 @@ func TestDeleteRoundTripSettles(t *testing.T) {
 	_, _ = r.ApplyInbound([]ShoppingListItem{rkItem("a-id", "Fig", withRecipe("r1"))})
 	item := itemByName(t, db, "Fig", false)
 
-	if err := r.TombstoneLinks(item.ID); err != nil {
+	if err := r.TombstoneLinks(item.Name, item.Checked); err != nil {
 		t.Fatalf("TombstoneLinks: %v", err)
 	}
 	db.Delete(item)
@@ -1888,12 +1971,136 @@ func TestDeleteRoundTripSettles(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the tests**
+- [ ] **Step 2: Add the undo tests**
 
-Run: `cd backend && go test ./internal/recipekeeper/ -run 'Echo|RoundTrip' -v`
+Append to `reconcile_echo_test.go`. These are the reason links are keyed by collapse key rather than by grocery id — see the model comment in Task 1.
+
+```go
+// Undo of a delete, BEFORE the delete was pushed: the tombstone is simply
+// forgotten and nothing goes to Recipe Keeper.
+func TestUndoDeleteBeforePushCancelsIt(t *testing.T) {
+	db := testDB(t)
+	r := testReconciler(t, db)
+	_, _ = r.ApplyInbound([]ShoppingListItem{rkItem("a-id", "Fig", withRecipe("r1"))})
+	item := itemByName(t, db, "Fig", false)
+
+	if err := r.TombstoneLinks(item.Name, item.Checked); err != nil {
+		t.Fatalf("TombstoneLinks: %v", err)
+	}
+	db.Delete(item)
+
+	// Undo replays a snapshot through PUT /api/grocery: the row returns with a
+	// brand-new id, which the link must not care about.
+	db.Create(&models.GroceryItem{
+		ID: models.NewID(), SectionID: item.SectionID, Name: "Fig",
+		CreatedAt: models.NowUTC(), UpdatedAt: models.NowUTC(),
+	})
+
+	pushes, err := r.PendingPushes()
+	if err != nil {
+		t.Fatalf("PendingPushes: %v", err)
+	}
+	if len(pushes) != 0 {
+		t.Errorf("undo before push must send nothing, got %+v", pushes)
+	}
+	var n int64
+	db.Model(&models.RecipeKeeperTombstone{}).Count(&n)
+	if n != 0 {
+		t.Errorf("tombstone should be gone, %d remain", n)
+	}
+}
+
+// Undo of a delete AFTER the push: Recipe Keeper's deletes are soft, so the fix
+// is to push IsDeleted:false rather than to recreate anything.
+func TestUndoDeleteAfterPushUndeletes(t *testing.T) {
+	db := testDB(t)
+	r := testReconciler(t, db)
+	_, _ = r.ApplyInbound([]ShoppingListItem{rkItem("a-id", "Fig", withRecipe("r1"))})
+	item := itemByName(t, db, "Fig", false)
+
+	_ = r.TombstoneLinks(item.Name, item.Checked)
+	db.Delete(item)
+	pushes, _ := r.PendingPushes()
+	if len(pushes) != 1 || !pushes[0].IsDeleted {
+		t.Fatalf("want one delete push, got %+v", pushes)
+	}
+	if err := r.ApplyAcks([]AckItem{{ID: "a-id", LastModified: "2026-09-14T08:00:00.1111111Z"}}); err != nil {
+		t.Fatalf("ApplyAcks: %v", err)
+	}
+
+	// Now undo.
+	db.Create(&models.GroceryItem{
+		ID: models.NewID(), SectionID: item.SectionID, Name: "Fig",
+		CreatedAt: models.NowUTC(), UpdatedAt: models.NowUTC(),
+	})
+
+	after, err := r.PendingPushes()
+	if err != nil {
+		t.Fatalf("PendingPushes: %v", err)
+	}
+	if len(after) != 1 || after[0].IsDeleted {
+		t.Fatalf("want one un-delete push, got %+v", after)
+	}
+	if err := r.ApplyAcks([]AckItem{{ID: "a-id", LastModified: "2026-09-14T09:00:00.2222222Z"}}); err != nil {
+		t.Fatalf("ApplyAcks: %v", err)
+	}
+	var n int64
+	db.Model(&models.RecipeKeeperTombstone{}).Count(&n)
+	if n != 0 {
+		t.Errorf("tombstone should be spent after un-delete, %d remain", n)
+	}
+	settled, _ := r.PendingPushes()
+	if len(settled) != 0 {
+		t.Errorf("un-delete did not settle: %+v", settled)
+	}
+}
+
+// A full list replace (merge, clear-undo, redo) churns every grocery id. Links
+// must survive it — this is the failure that would silently detach the whole
+// list from Recipe Keeper.
+func TestReplaceStyleIDChurnPreservesLinks(t *testing.T) {
+	db := testDB(t)
+	r := testReconciler(t, db)
+	_, _ = r.ApplyInbound([]ShoppingListItem{
+		rkItem("a-id", "Lemon", withRecipe("r1")),
+		rkItem("b-id", "Lemon", withRecipe("r2")),
+	})
+
+	// Exactly what handleReplaceGrocery does.
+	var sections []models.GrocerySection
+	db.Find(&sections)
+	db.Where("1 = 1").Delete(&models.GrocerySection{})
+	newSec := models.GrocerySection{ID: models.NewID(), Name: "Produce", CreatedAt: models.NowUTC()}
+	db.Create(&newSec)
+	qty := "2"
+	db.Create(&models.GroceryItem{
+		ID: models.NewID(), SectionID: newSec.ID, Name: "Lemon", Quantity: &qty,
+		CreatedAt: models.NowUTC(), UpdatedAt: models.NowUTC(),
+	})
+
+	if n := linkCount(db, "Lemon", false); n != 2 {
+		t.Fatalf("links after replace = %d, want 2", n)
+	}
+	pushes, err := r.PendingPushes()
+	if err != nil {
+		t.Fatalf("PendingPushes: %v", err)
+	}
+	if len(pushes) != 0 {
+		t.Errorf("an id churn must not push anything, got %+v", pushes)
+	}
+	refs, _ := r.RecipeTitles("Lemon", false)
+	if len(refs) != 0 && len(refs) != 2 {
+		t.Errorf("attribution should be intact, got %+v", refs)
+	}
+}
+```
+
+- [ ] **Step 3: Run the tests**
+
+Run: `cd backend && go test ./internal/recipekeeper/ -run 'Echo|RoundTrip|Undo|Churn' -v`
 Expected: PASS. If either fails, **stop and fix the reconciler** — do not adjust the test. A failure here means the running system would push in a loop.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add backend/internal/recipekeeper/reconcile_echo_test.go
@@ -1913,7 +2120,7 @@ git commit -m "Recipe Keeper: echo round-trip guard"
 - Consumes: `Client`, `Reconciler`.
 - Produces:
   - `func (r *Reconciler) StoreRecipes(raw []json.RawMessage) error`
-  - `func (r *Reconciler) RecipeTitles(itemID uuid.UUID) ([]RecipeRef, error)`
+  - `func (r *Reconciler) RecipeTitles(name string, checked bool) ([]RecipeRef, error)`
   - `type RecipeRef struct { ID, Title string }`
   - `func (r *Reconciler) StoreCategories(cats, catItems []json.RawMessage) error`
 
@@ -1989,7 +2196,7 @@ func TestRecipeTitlesForCollapsedItem(t *testing.T) {
 	}
 
 	item := itemByName(t, db, "Lemon", false)
-	refs, err := r.RecipeTitles(item.ID)
+	refs, err := r.RecipeTitles(item.Name, item.Checked)
 	if err != nil {
 		t.Fatalf("RecipeTitles: %v", err)
 	}
@@ -2061,9 +2268,11 @@ func (r *Reconciler) StoreRecipes(raw []json.RawMessage) error {
 // RecipeTitles returns the distinct recipes a grocery item came from. A
 // collapsed item legitimately has several; an unknown id is skipped rather than
 // rendered as a bare GUID.
-func (r *Reconciler) RecipeTitles(itemID uuid.UUID) ([]RecipeRef, error) {
+func (r *Reconciler) RecipeTitles(name string, checked bool) ([]RecipeRef, error) {
 	var links []models.RecipeKeeperLink
-	if err := r.DB.Find(&links, "grocery_item_id = ? AND rk_recipe_id IS NOT NULL", itemID).Error; err != nil {
+	if err := r.DB.Order("rk_position asc").Find(&links,
+		"mp_name = ? AND mp_checked = ? AND rk_recipe_id IS NOT NULL",
+		normalizeName(name), checked).Error; err != nil {
 		return nil, err
 	}
 	seen := map[string]bool{}
@@ -2612,7 +2821,8 @@ func TestGroceryItemCarriesRecipes(t *testing.T) {
 
 	sec := h.createGrocerySection("Produce")
 	item := h.createGroceryItem(sec, "Lemon")
-	h.linkRecipeKeeper(item, "rk-1", "rec-1", "Fig Cocktail")
+	_ = item
+	h.linkRecipeKeeper("Lemon", false, "rk-1", "rec-1", "Fig Cocktail")
 
 	resp := h.get("/api/grocery")
 	if resp.Code != http.StatusOK {
@@ -2685,12 +2895,15 @@ func TestStatusEndpointReportsDisabled(t *testing.T) {
 Add the two harness helpers to `backend/internal/app/harness_test.go`, matching the style of the existing helpers there:
 
 ```go
-func (h *harness) linkRecipeKeeper(itemID uuid.UUID, rkItemID, recipeID, title string) {
+func (h *harness) linkRecipeKeeper(itemName string, checked bool, rkItemID, recipeID, title string) {
 	h.t.Helper()
 	rid := recipeID
 	h.DB.Create(&models.RecipeKeeperLink{
-		RKItemID: rkItemID, GroceryItemID: itemID, RKRecipeID: &rid,
-		RKName: "Lemon", RKLastModified: "2026-09-14T00:00:00.0000001Z",
+		RKItemID:  rkItemID,
+		MPName:    strings.ToLower(strings.TrimSpace(itemName)),
+		MPChecked: checked,
+		RKRecipeID: &rid, RKName: itemName,
+		RKLastModified: "2026-09-14T00:00:00.0000001Z",
 	})
 	h.DB.Create(&models.RecipeKeeperRecipe{RKRecipeID: recipeID, Title: title})
 }
@@ -2730,12 +2943,14 @@ func groceryItemJSON(item *models.GroceryItem, recipes []recipekeeper.RecipeRef)
 To avoid an N+1 query per item, load the whole map once per response. Add to `serialize.go`:
 
 ```go
-// recipeRefsByItem loads recipe attributions for a whole response in two
-// queries rather than two per item.
-func recipeRefsByItem(db *gorm.DB) map[uuid.UUID][]recipekeeper.RecipeRef {
-	out := map[uuid.UUID][]recipekeeper.RecipeRef{}
+// recipeRefsByKey loads recipe attributions for a whole response in two queries
+// rather than two per item. Keyed by collapse key, matching how links address
+// grocery rows.
+func recipeRefsByKey(db *gorm.DB) map[string][]recipekeeper.RecipeRef {
+	out := map[string][]recipekeeper.RecipeRef{}
 	var links []models.RecipeKeeperLink
-	if err := db.Find(&links, "rk_recipe_id IS NOT NULL").Error; err != nil {
+	if err := db.Order("rk_position asc").
+		Find(&links, "rk_recipe_id IS NOT NULL").Error; err != nil {
 		return out
 	}
 	var recipes []models.RecipeKeeperRecipe
@@ -2747,23 +2962,29 @@ func recipeRefsByItem(db *gorm.DB) map[uuid.UUID][]recipekeeper.RecipeRef {
 	seen := map[string]bool{}
 	for _, link := range links {
 		id := *link.RKRecipeID
-		key := link.GroceryItemID.String() + "|" + id
-		if seen[key] {
+		rowKey := recipekeeper.RowKey(link.MPName, link.MPChecked)
+		if seen[rowKey+"|"+id] {
 			continue
 		}
-		seen[key] = true
+		seen[rowKey+"|"+id] = true
 		title, ok := titles[id]
 		if !ok {
 			continue
 		}
-		out[link.GroceryItemID] = append(out[link.GroceryItemID],
-			recipekeeper.RecipeRef{ID: id, Title: title})
+		out[rowKey] = append(out[rowKey], recipekeeper.RecipeRef{ID: id, Title: title})
 	}
 	return out
 }
 ```
 
-Thread the map through `grocerySectionJSON` and its callers.
+Export the key helper from `store.go` so `app` can build the same key:
+
+```go
+// RowKey is the collapse key linking a Recipe Keeper row to a grocery row.
+func RowKey(name string, checked bool) string { return collapseKey(name, checked) }
+```
+
+Thread the map through `grocerySectionJSON` and its callers, looking each item up with `recipekeeper.RowKey(item.Name, item.Checked)`.
 
 - [ ] **Step 4: Write the endpoints**
 
@@ -2889,11 +3110,19 @@ Add to `CleanupOldData`, after the existing retention work. The string compariso
 ```go
 	// Recipe Keeper tombstones exist only until a delete is acknowledged AND the
 	// sync watermark has moved past it — after that the row can never come back
-	// in UpdatedServerItems, so the guard is no longer needed.
+	// in UpdatedServerItems, so the guard is no longer needed. The link is kept
+	// alive alongside the tombstone purely so an undo can rebuild the entity, so
+	// the two are pruned together.
 	var wm models.RecipeKeeperState
 	if err := db.First(&wm, "key = ?", "watermark:ShoppingListItem").Error; err == nil {
-		db.Where("pushed_at IS NOT NULL AND ack_last_modified IS NOT NULL AND ack_last_modified <= ?", wm.Value).
-			Delete(&models.RecipeKeeperTombstone{})
+		var settled []string
+		db.Model(&models.RecipeKeeperTombstone{}).
+			Where("pushed_at IS NOT NULL AND ack_last_modified IS NOT NULL AND ack_last_modified <= ?", wm.Value).
+			Pluck("rk_item_id", &settled)
+		if len(settled) > 0 {
+			db.Where("rk_item_id IN ?", settled).Delete(&models.RecipeKeeperLink{})
+			db.Where("rk_item_id IN ?", settled).Delete(&models.RecipeKeeperTombstone{})
+		}
 	}
 	// Backstops: drop settled tombstones after 30 days regardless of watermark
 	// bookkeeping, and give up on deletes that have been undeliverable for 90.
@@ -2978,7 +3207,7 @@ func TestConsumeUnitsSpendsLocalUnitsFirst(t *testing.T) {
 	if quantityOf(item) != 2 {
 		t.Errorf("quantity = %d, want 2", quantityOf(item))
 	}
-	if n := linkCount(db, item.ID); n != 2 {
+	if n := linkCount(db, item.Name, item.Checked); n != 2 {
 		t.Errorf("links = %d, want 2 — no link should have moved", n)
 	}
 	pushes, _ := r.PendingPushes()
@@ -3015,7 +3244,7 @@ func TestConsumeUnitsChecksLinksWhenLocalExhausted(t *testing.T) {
 	// The lowest-position link (a-id) is the one that moved.
 	var moved models.RecipeKeeperLink
 	db.First(&moved, "rk_item_id = ?", "a-id")
-	if moved.GroceryItemID != checkedRow.ID {
+	if moved.MPName != "lemon" || !moved.MPChecked {
 		t.Error("lowest-position link should have moved to the checked row")
 	}
 
@@ -3069,11 +3298,7 @@ func (r *Reconciler) ConsumeUnits(itemID uuid.UUID, n int) error {
 	if err := r.DB.First(&item, "id = ?", itemID).Error; err != nil {
 		return err
 	}
-	var links []models.RecipeKeeperLink
-	if err := r.DB.Order("rk_position asc").
-		Find(&links, "grocery_item_id = ?", itemID).Error; err != nil {
-		return err
-	}
+	links := linksFor(r.DB, item.Name, item.Checked)
 
 	qty := quantityOf(&item)
 	if n > qty {
@@ -3149,7 +3374,8 @@ func (r *Reconciler) checkedRowFor(src models.GroceryItem) (*models.GroceryItem,
 }
 
 func (r *Reconciler) moveLinkToRow(link models.RecipeKeeperLink, dest *models.GroceryItem) error {
-	link.GroceryItemID = dest.ID
+	link.MPName = normalizeName(dest.Name)
+	link.MPChecked = dest.Checked
 	return r.DB.Save(&link).Error
 }
 ```
@@ -3167,13 +3393,17 @@ In `backend/internal/app/grocery.go`, add calls at four sites. Guard every one w
 
 ```go
 	if a.RecipeKeeper != nil {
-		if err := a.RecipeKeeper.Rec.TombstoneLinks(item.ID); err != nil {
+		if err := a.RecipeKeeper.Rec.TombstoneLinks(item.Name, item.Checked); err != nil {
 			log.Printf("recipekeeper: tombstone on delete: %v", err)
 		}
 	}
 ```
 
-2. **Clear checked** and 3. **Clear all** — loop the items being removed and call `TombstoneLinks` for each, before deletion. The spec is explicit that bulk clears propagate: a local-only delete would resurrect on the next pull.
+2. **Clear checked** and 3. **Clear all** (`handleClearGroceryItems`) — loop the items being removed and call `TombstoneLinks(item.Name, item.Checked)` for each, before deletion. The spec is explicit that bulk clears propagate: a local-only delete would resurrect on the next pull.
+
+3a. **Delete section** (`handleDeleteGrocerySection`) — the section's items cascade away with it, so tombstone each of them first, or their links become orphans and the rows silently stay in Recipe Keeper.
+
+**`handleReplaceGrocery` must NOT tombstone anything.** It is an id churn, not a deletion — merge, and undo/redo of delete and clear, all route through it. Tombstoning there would delete the user's entire Recipe Keeper list the first time they undo.
 
 4. **Quantity decrease** in the item PATCH handler — when the new quantity is lower than the old:
 
@@ -3184,6 +3414,8 @@ In `backend/internal/app/grocery.go`, add calls at four sites. Guard every one w
 		}
 	}
 ```
+
+5. **Tolerate a missing row on update.** Recipe Keeper is a writer the client cannot see, so a change queued while a device was offline may land on a row RK has since deleted or split. In `handleUpdateGroceryItem`, a missing row must be treated as already-applied (return success) rather than 404 — a 404 burns all 20 `MAX_SYNC_ATTEMPTS` retries before the change is discarded, turning a benign race into a stuck sync queue. Offline changes otherwise need no special handling: they drain into the backend as usual, and the declarative diff pushes whatever differs regardless of when it arrived.
 
 After any of these, kick a reconcile so the push goes out promptly rather than waiting for the safety timer:
 
