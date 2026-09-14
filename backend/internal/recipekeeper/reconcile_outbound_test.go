@@ -22,7 +22,7 @@ func TestPendingPushesOnLocalCheck(t *testing.T) {
 	// Meal Planner checks an item by flipping a flag on the same row; links
 	// are keyed by (name, checked), so retargeting is what makes the row
 	// still resolvable rather than an orphan.
-	if err := r.RetargetLinks("Lemon", false, true); err != nil {
+	if err := r.RetargetLinks("Lemon", false, "Lemon", true); err != nil {
 		t.Fatalf("RetargetLinks: %v", err)
 	}
 
@@ -67,7 +67,11 @@ func TestPendingPushesEmptyWhenInSync(t *testing.T) {
 	}
 }
 
-// A rename propagates to every link of the row.
+// A rename propagates to every link of the row. The rename itself strands the
+// link exactly like a checked flip does (links resolve by collapse key, not
+// row id) — RetargetLinks is what a rename handler (Task 11) must call to
+// keep it resolvable, so this exercises the real code path rather than a
+// hand-rolled simulation of it.
 func TestPendingPushesOnRename(t *testing.T) {
 	db := testDB(t)
 	r := testReconciler(t, db)
@@ -76,18 +80,52 @@ func TestPendingPushesOnRename(t *testing.T) {
 	item := itemByName(t, db, "Lemon", false)
 	item.Name = "Meyer Lemon"
 	db.Save(item)
-	// A direct MP rename strands the link exactly like a checked flip does
-	// (links resolve by collapse key, not row id) — retargeting it is future
-	// wiring (a rename handler, symmetric to RetargetLinks) that doesn't
-	// exist yet. Simulate what it will do so this test exercises the diff
-	// logic itself rather than the orphan path.
-	db.Model(&models.RecipeKeeperLink{}).
-		Where("mp_name = ? AND mp_checked = ?", "lemon", false).
-		Update("mp_name", "meyer lemon")
+	if err := r.RetargetLinks("Lemon", false, "Meyer Lemon", false); err != nil {
+		t.Fatalf("RetargetLinks: %v", err)
+	}
 
 	pushes, _ := r.PendingPushes()
 	if len(pushes) != 1 || pushes[0].Name != "Meyer Lemon" {
 		t.Errorf("pushes = %+v, want one rename to Meyer Lemon", pushes)
+	}
+}
+
+// The rename must retarget the link (not orphan it) and the row's link count
+// must be untouched — one push, carrying the new name, is the entire outcome
+// of a rename. If RetargetLinks were skipped, PendingPushes would instead log
+// an orphan and silently drop the link.
+func TestRenameRetargetsLinkInsteadOfOrphaning(t *testing.T) {
+	db := testDB(t)
+	r := testReconciler(t, db)
+	_, _ = r.ApplyInbound([]ShoppingListItem{rkItem("a-id", "Lemon", withRecipe("r1"))})
+
+	item := itemByName(t, db, "Lemon", false)
+	item.Name = "Meyer Lemon"
+	db.Save(item)
+	if err := r.RetargetLinks("Lemon", false, "Meyer Lemon", false); err != nil {
+		t.Fatalf("RetargetLinks: %v", err)
+	}
+
+	var link models.RecipeKeeperLink
+	if err := db.First(&link, "rk_item_id = ?", "a-id").Error; err != nil {
+		t.Fatalf("link should survive the rename: %v", err)
+	}
+	if link.MPName != "meyer lemon" {
+		t.Errorf("link MPName = %q, want %q", link.MPName, "meyer lemon")
+	}
+	if link.MPChecked {
+		t.Error("link MPChecked should remain false — only the name moved")
+	}
+
+	pushes, err := r.PendingPushes()
+	if err != nil {
+		t.Fatalf("PendingPushes: %v", err)
+	}
+	if len(pushes) != 1 {
+		t.Fatalf("pushes = %d, want exactly 1", len(pushes))
+	}
+	if pushes[0].ID != "a-id" || pushes[0].Name != "Meyer Lemon" || pushes[0].IsDeleted {
+		t.Errorf("push = %+v, want a-id renamed to Meyer Lemon, not deleted", pushes[0])
 	}
 }
 
@@ -100,7 +138,7 @@ func TestApplyAcksUpdatesLinkState(t *testing.T) {
 	item := itemByName(t, db, "Fig", false)
 	item.Checked = true
 	db.Save(item)
-	if err := r.RetargetLinks("Fig", false, true); err != nil {
+	if err := r.RetargetLinks("Fig", false, "Fig", true); err != nil {
 		t.Fatalf("RetargetLinks: %v", err)
 	}
 
@@ -131,7 +169,9 @@ func TestApplyAcksUpdatesLinkState(t *testing.T) {
 // the row can never be re-imported. TombstoneLinks only marks the links —
 // actually removing the row is the caller's job (grocery.go's delete handler,
 // a later task) — so the test deletes it too, matching real call order
-// ("before deleting the row" per the plan).
+// ("before deleting the row" per the plan). This is not a workaround; it's
+// the real production call order, just performed inline since the handler
+// doesn't exist yet.
 func TestTombstoneLinksOnDelete(t *testing.T) {
 	db := testDB(t)
 	r := testReconciler(t, db)
@@ -249,13 +289,14 @@ func TestTombstoneUndoAfterAckPushesUnDelete(t *testing.T) {
 }
 
 // RetargetLinks is what makes a same-row check/uncheck resolvable: it moves a
-// link from its old (name, checked) collapse key to the new one.
+// link from its old (name, checked) collapse key to the new one, updating
+// both fields.
 func TestRetargetLinksMovesCollapseKey(t *testing.T) {
 	db := testDB(t)
 	r := testReconciler(t, db)
 	_, _ = r.ApplyInbound([]ShoppingListItem{rkItem("a-id", "Fig", withRecipe("r1"))})
 
-	if err := r.RetargetLinks("Fig", false, true); err != nil {
+	if err := r.RetargetLinks("Fig", false, "Fig", true); err != nil {
 		t.Fatalf("RetargetLinks: %v", err)
 	}
 
@@ -266,13 +307,33 @@ func TestRetargetLinksMovesCollapseKey(t *testing.T) {
 	if !link.MPChecked {
 		t.Error("link MPChecked should be true after retarget")
 	}
-
-	// Retargeting again with a non-matching `from` must touch nothing.
-	if err := r.RetargetLinks("Fig", false, true); err != nil {
-		t.Fatalf("RetargetLinks (no-op): %v", err)
+	if link.MPName != "fig" {
+		t.Errorf("link MPName = %q, want %q", link.MPName, "fig")
 	}
-	db.First(&link, "rk_item_id = ?", "a-id")
-	if !link.MPChecked {
-		t.Error("link MPChecked should remain true")
+}
+
+// RetargetLinks with the source and destination collapse keys equal must be a
+// true no-op: no write, and in particular no spurious UpdatedAt-style churn
+// on rows that never moved.
+func TestRetargetLinksNoOpWhenKeysEqual(t *testing.T) {
+	db := testDB(t)
+	r := testReconciler(t, db)
+	_, _ = r.ApplyInbound([]ShoppingListItem{rkItem("a-id", "Fig", withRecipe("r1"))})
+
+	if err := r.RetargetLinks("Fig", false, "Fig", false); err != nil {
+		t.Fatalf("RetargetLinks: %v", err)
+	}
+	// Case/whitespace-only variation of the same key must also be a no-op —
+	// normalizeName folds both sides before comparing.
+	if err := r.RetargetLinks("fig", false, " Fig ", false); err != nil {
+		t.Fatalf("RetargetLinks: %v", err)
+	}
+
+	var link models.RecipeKeeperLink
+	if err := db.First(&link, "rk_item_id = ?", "a-id").Error; err != nil {
+		t.Fatalf("link lookup: %v", err)
+	}
+	if link.MPName != "fig" || link.MPChecked {
+		t.Errorf("link = %+v, want unchanged (mp_name=fig, mp_checked=false)", link)
 	}
 }

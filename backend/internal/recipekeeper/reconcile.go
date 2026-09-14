@@ -436,13 +436,18 @@ func (r *Reconciler) TombstoneLinks(name string, checked bool) error {
 	return nil
 }
 
-// RetargetLinks moves a row's links between its checked and unchecked collapse
-// keys. Meal Planner checks an item by flipping a flag on the SAME row, but
-// links are keyed by (name, checked) — without this the link would resolve to
-// nothing, be classified as an orphan, and be dropped, so the check would never
-// reach Recipe Keeper.
-func (r *Reconciler) RetargetLinks(name string, from, to bool) error {
+// RetargetLinks moves a row's links from one collapse key to another. Meal
+// Planner mutates a grocery row in place — checking it flips a flag, renaming
+// it rewrites Name — but links are keyed by (name, checked). Without
+// retargeting, the link resolves to nothing, PendingPushes classifies it as an
+// orphan and drops it, and the edit never reaches Recipe Keeper.
+func (r *Reconciler) RetargetLinks(fromName string, fromChecked bool, toName string, toChecked bool) error {
+	from := normalizeName(fromName)
+	to := normalizeName(toName)
+	if from == to && fromChecked == toChecked {
+		return nil
+	}
 	return r.DB.Model(&models.RecipeKeeperLink{}).
-		Where("mp_name = ? AND mp_checked = ?", normalizeName(name), from).
-		Update("mp_checked", to).Error
+		Where("mp_name = ? AND mp_checked = ?", from, fromChecked).
+		Updates(map[string]any{"mp_name": to, "mp_checked": toChecked}).Error
 }
