@@ -73,6 +73,14 @@ type Service struct {
 	// pulls would be wasteful at best and a memory problem at worst.
 	recipeSyncMu sync.Mutex
 
+	// grocerySyncMu guards TriggerGrocerySync the same way: a burst of
+	// grocery mutations (e.g. ten quick check-offs) must collapse into one
+	// in-flight reconcile, not N concurrent SyncOnce calls each reading the
+	// same PendingPushes and pushing the same entity ids — the production
+	// echo-loop symptom the plan's verification step warns about, and a race
+	// on the watermark write besides.
+	grocerySyncMu sync.Mutex
+
 	// bgCtx is the context background recipe pulls run under. Run sets it to
 	// its own ctx (so shutdown cancels an in-progress pull); until Run has
 	// been called, TriggerRecipeSync falls back to context.Background(). It
@@ -235,6 +243,30 @@ func (s *Service) TriggerRecipeSync() {
 			// bookkeeping rather than being log-only.
 			s.recordError(err)
 		}
+	}()
+}
+
+// TriggerGrocerySync kicks an out-of-band SyncOnce after a local grocery
+// mutation touched Recipe Keeper links, so the resulting push goes out
+// within seconds instead of waiting for the safety timer. It no-ops —
+// rather than piling up a concurrent sync — when one is already in flight,
+// and it never even starts once the auth-failure latch has tripped:
+// retrying a rejected password on every grocery edit is the exact
+// account-lockout risk that latch exists to prevent. Bounded to 30s so a
+// slow or hung upstream can't accumulate goroutines indefinitely.
+func (s *Service) TriggerGrocerySync() {
+	if s.isStopped() {
+		return
+	}
+	if !s.grocerySyncMu.TryLock() {
+		return
+	}
+	parent := s.backgroundContext()
+	go func() {
+		defer s.grocerySyncMu.Unlock()
+		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+		defer cancel()
+		_ = s.SyncOnce(ctx)
 	}()
 }
 

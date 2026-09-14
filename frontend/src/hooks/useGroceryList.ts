@@ -1198,20 +1198,26 @@ export function useGroceryList() {
       try {
         const realItemId = await resolveIdAsync(itemId);
         const serverItem = await editGroceryItemAPI(realItemId, updates);
-        // If server returned a different store_id (e.g. from item_defaults), apply it
-        const optimisticStoreId = updates.store_id !== undefined ? updates.store_id : item.store_id;
-        if (serverItem.store_id !== optimisticStoreId) {
-          optimisticVersionRef.current++;
-          setSections(prev => prev.map(s => ({
-            ...s,
-            items: s.items.map(i => i.id === itemId ? { ...i, store_id: serverItem.store_id } : i),
-          })));
-          await saveLocalGroceryItem({
-            id: item.id, section_id: item.section_id,
-            name: serverItem.name, quantity: serverItem.quantity,
-            checked: serverItem.checked, position: item.position,
-            store_id: serverItem.store_id, updated_at: serverItem.updated_at,
-          });
+        // serverItem is undefined when the server treated this PATCH as
+        // already-applied (the row is gone server-side, e.g. deleted by
+        // Recipe Keeper) — nothing to reconcile against, and our optimistic
+        // local state already reflects the edit.
+        if (serverItem) {
+          // If server returned a different store_id (e.g. from item_defaults), apply it
+          const optimisticStoreId = updates.store_id !== undefined ? updates.store_id : item.store_id;
+          if (serverItem.store_id !== optimisticStoreId) {
+            optimisticVersionRef.current++;
+            setSections(prev => prev.map(s => ({
+              ...s,
+              items: s.items.map(i => i.id === itemId ? { ...i, store_id: serverItem.store_id } : i),
+            })));
+            await saveLocalGroceryItem({
+              id: item.id, section_id: item.section_id,
+              name: serverItem.name, quantity: serverItem.quantity,
+              checked: serverItem.checked, position: item.position,
+              store_id: serverItem.store_id, updated_at: serverItem.updated_at,
+            });
+          }
         }
         // Update local item default when store changes
         if (updates.store_id !== undefined) {

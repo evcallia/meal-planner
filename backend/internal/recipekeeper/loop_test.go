@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -527,5 +528,136 @@ func TestAuthFailureLatchStopsRun(t *testing.T) {
 	st := svc.Status()
 	if !st.AuthFailed || st.LastError == "" {
 		t.Errorf("Status after latch trip = %+v, want AuthFailed and LastError set", st)
+	}
+}
+
+// TestTriggerGrocerySyncSkipsWhileInFlight mirrors
+// TestTriggerRecipeSyncSkipsWhileInFlight: a burst of grocery mutations must
+// collapse into one in-flight reconcile, not N concurrent SyncOnce calls
+// racing on the same PendingPushes/watermark (the production echo-loop
+// symptom).
+func TestTriggerGrocerySyncSkipsWhileInFlight(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var calls int32
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		// A successful SyncOnce opportunistically triggers a recipe-title
+		// cache warm-up (recordSuccess -> TriggerRecipeSync), a second,
+		// unrelated /api/sync request guarded by its own mutex. Only the
+		// grocery-shaped request (carries the ShoppingListItem bucket) is
+		// what this test is about — answer anything else immediately so it
+		// can't be mistaken for a second concurrent grocery sync.
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			ShoppingListItem json.RawMessage `json:"ShoppingListItemSyncEntityRequest"`
+		}
+		_ = json.Unmarshal(body, &req)
+		// A nil *ItemBucket marshals to the JSON literal null, which
+		// json.RawMessage captures as the 4 bytes "null" rather than a nil
+		// slice — compare content, not nil-ness.
+		if len(req.ShoppingListItem) == 0 || string(req.ShoppingListItem) == "null" {
+			_ = json.NewEncoder(w).Encode(SyncResponse{})
+			return
+		}
+		atomic.AddInt32(&calls, 1)
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+		_ = json.NewEncoder(w).Encode(SyncResponse{})
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	svc.TriggerGrocerySync()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first grocery kick never reached the server")
+	}
+
+	// Several more mutations landing while the first sync is still in
+	// flight — none of these may start a second concurrent sync.
+	svc.TriggerGrocerySync()
+	svc.TriggerGrocerySync()
+	svc.TriggerGrocerySync()
+
+	close(release)
+	deadline := time.After(2 * time.Second)
+	for {
+		if svc.grocerySyncMu.TryLock() {
+			svc.grocerySyncMu.Unlock()
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("grocery sync guard was never released")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("calls = %d, want 1 (later triggers should have been skipped while the first was in flight)", got)
+	}
+}
+
+// TestTriggerGrocerySyncSkipsWhenAuthLatchTripped proves a grocery edit made
+// after the auth-failure latch has tripped does not re-attempt the bad
+// password at all — retrying it on every edit is the exact account-lockout
+// risk the latch exists to prevent.
+func TestTriggerGrocerySyncSkipsWhenAuthLatchTripped(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var tokenRequests int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			atomic.AddInt32(&tokenRequests, 1)
+			w.WriteHeader(http.StatusBadRequest) // credentials rejected, every time
+			return
+		}
+	}))
+	defer srv.Close()
+
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "bad",
+		HTTP: srv.Client(), Now: time.Now}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	for i := 0; i < authDisableAt; i++ {
+		if err := svc.SyncOnce(context.Background()); err == nil {
+			t.Fatalf("SyncOnce %d: want an auth error", i)
+		}
+	}
+	if !svc.isStopped() {
+		t.Fatal("latch should have tripped after authDisableAt consecutive auth failures")
+	}
+	before := atomic.LoadInt32(&tokenRequests)
+
+	svc.TriggerGrocerySync()
+	// TriggerGrocerySync is fire-and-forget; give a would-be goroutine time
+	// to reach the server before asserting it never did.
+	time.Sleep(50 * time.Millisecond)
+
+	if after := atomic.LoadInt32(&tokenRequests); after != before {
+		t.Errorf("token requests = %d -> %d, want no new request — the latch should have stopped TriggerGrocerySync before it started", before, after)
 	}
 }

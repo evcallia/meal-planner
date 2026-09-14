@@ -1,12 +1,11 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -60,18 +59,16 @@ func (a *App) recipeKeeperTombstone(name string, checked bool) {
 
 // recipeKeeperKick fires an out-of-band reconcile after a mutation touched
 // Recipe Keeper links, so the resulting push goes out within seconds instead
-// of waiting for the 15-minute safety timer. It runs detached with its own
-// timeout and must never block the HTTP response — SyncOnce talks to a
-// third-party API over the network.
+// of waiting for the 15-minute safety timer. Delegates to
+// Service.TriggerGrocerySync, which single-flights (a burst of mutations
+// must collapse into one in-flight sync, not N concurrent ones racing on
+// PendingPushes/the watermark) and refuses to even start once the
+// auth-failure latch has tripped. Never blocks the HTTP response.
 func (a *App) recipeKeeperKick() {
 	if a.RecipeKeeper == nil {
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = a.RecipeKeeper.SyncOnce(ctx)
-	}()
+	a.RecipeKeeper.TriggerGrocerySync()
 }
 
 // upsertSectionDefault mirrors grocery._upsert_section_default: remember the
@@ -319,6 +316,12 @@ func (a *App) handleReplaceGrocery(w http.ResponseWriter, r *http.Request, _ *se
 		"action": "replaced", "sections": result,
 		"pushDetail": "replaced the grocery list (" + countNoun(len(payload.Sections), "section") + ", " + countNoun(replacedItems, "item") + ")",
 	}, r)
+	// No tombstones (see the comment above) — but items that survived the
+	// replace under a new id may still have RK links pointing at a
+	// resurrected row (e.g. undo-of-delete), which PendingPushes should
+	// push (IsDeleted: false) promptly rather than waiting for the safety
+	// timer.
+	a.recipeKeeperKick()
 	httpx.WriteJSON(w, 200, result)
 }
 
@@ -550,8 +553,12 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 		// or split. Treat "not found" as "already applied" rather than 404 —
 		// a 404 here would burn all MAX_SYNC_ATTEMPTS client retries before
 		// the queued change is discarded, turning a benign race into a stuck
-		// sync queue.
-		httpx.WriteJSON(w, 200, J{"status": "ok"})
+		// sync queue. 204 (not 200 + a body) because every other success path
+		// on this handler returns a full GroceryItem and the frontend types
+		// the call as Promise<GroceryItem> — a 200 with an unrelated shape
+		// would get spread into React state and IndexedDB as undefined
+		// fields. fetchAPI already turns 204 into `undefined` with no parse.
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	oldName := item.Name
@@ -590,7 +597,19 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 		if (newQuantity == nil) != (item.Quantity == nil) ||
 			(newQuantity != nil && *newQuantity != *item.Quantity) {
 			newQty := recipekeeper.QuantityOf(&models.GroceryItem{Quantity: newQuantity})
-			if a.RecipeKeeper != nil && newQty < oldQty {
+			// QuantityOf treats anything that isn't a clean positive integer
+			// (nil/empty included) as "1" — so a freeform value like "2 lbs"
+			// or "2.0" would otherwise look like a decrease from any oldQty
+			// > 1 and get routed to ConsumeUnits, which persists a bare
+			// integer and silently discards the user's literal text. Only
+			// delegate when the new value really is a trackable unit count.
+			isPlainQty := newQuantity == nil || *newQuantity == ""
+			if !isPlainQty {
+				if _, err := strconv.Atoi(*newQuantity); err == nil {
+					isPlainQty = true
+				}
+			}
+			if a.RecipeKeeper != nil && isPlainQty && newQty < oldQty {
 				// A decrease with Recipe Keeper enabled is not a plain
 				// column write: ConsumeUnits spends MP-only units first and
 				// only then checks off linked rows, and it persists the

@@ -540,29 +540,40 @@ func (r *Reconciler) ConsumeUnits(itemID uuid.UUID, n int) error {
 	if err != nil {
 		return err
 	}
-	// A freshly created dest row has zero prior units — quantityOf(dest)
-	// cannot be used as that base because nil/unset Quantity means "1", not
-	// "0" (see setQuantity), so a brand-new row would silently double-count
-	// the very first unit moved onto it.
-	base := 0
-	if !created {
-		base = quantityOf(dest)
-	}
-	if fromLinks > 0 {
-		for _, link := range links[:fromLinks] {
-			if err := r.moveLinkToRow(link, dest); err != nil {
-				return err
-			}
+	// If item is itself already checked, checkedRowFor's findRow(name, true)
+	// matches item's own row — dest and item are then two Go values over the
+	// very same DB row, not two rows. There is nothing to "move" units onto
+	// in that case; the row's own reduced quantity (written below via item)
+	// is the whole story. Skip the dest-side write entirely rather than
+	// have it be silently overwritten by item's Save further down — correct
+	// today only because item.Save happens to run second, which is exactly
+	// the kind of ordering dependency a later refactor could break.
+	sameRow := dest.ID == item.ID
+	if !sameRow {
+		// A freshly created dest row has zero prior units — quantityOf(dest)
+		// cannot be used as that base because nil/unset Quantity means "1", not
+		// "0" (see setQuantity), so a brand-new row would silently double-count
+		// the very first unit moved onto it.
+		base := 0
+		if !created {
+			base = quantityOf(dest)
 		}
-		setQuantity(dest, base+fromLinks)
-	} else {
-		// Purely local consumption still lands on the checked row, so the UI
-		// shows what was acquired.
-		setQuantity(dest, base+n)
-	}
-	dest.UpdatedAt = r.now()
-	if err := r.DB.Save(dest).Error; err != nil {
-		return err
+		if fromLinks > 0 {
+			for _, link := range links[:fromLinks] {
+				if err := r.moveLinkToRow(link, dest); err != nil {
+					return err
+				}
+			}
+			setQuantity(dest, base+fromLinks)
+		} else {
+			// Purely local consumption still lands on the checked row, so the UI
+			// shows what was acquired.
+			setQuantity(dest, base+n)
+		}
+		dest.UpdatedAt = r.now()
+		if err := r.DB.Save(dest).Error; err != nil {
+			return err
+		}
 	}
 
 	remaining := qty - n

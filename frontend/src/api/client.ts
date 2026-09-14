@@ -440,8 +440,13 @@ export async function deleteGrocerySection(sectionId: string): Promise<void> {
   await fetchAPI(`/grocery/sections/${sectionId}`, { method: 'DELETE' });
 }
 
-export async function editGroceryItem(itemId: string, updates: { name?: string; quantity?: string | null; store_id?: string | null }): Promise<GroceryItem> {
-  return fetchAPI<GroceryItem>(`/grocery/items/${itemId}`, {
+// Returns undefined on a 204: the server treats a PATCH to an item it can no
+// longer find as already-applied rather than a 404 (e.g. Recipe Keeper
+// deleted the row behind Meal Planner's back before a queued offline change
+// landed) — see handleUpdateGroceryItem. Callers must check before reading
+// any property.
+export async function editGroceryItem(itemId: string, updates: { name?: string; quantity?: string | null; store_id?: string | null }): Promise<GroceryItem | undefined> {
+  return fetchAPI<GroceryItem | undefined>(`/grocery/items/${itemId}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
   });
