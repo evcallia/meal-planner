@@ -213,16 +213,23 @@ func pruneRecipeKeeperTombstones(db *gorm.DB) {
 	// is kept until 90 days, then dropped rather than retried against an
 	// endpoint that is evidently never coming back.
 	oldCutoff := models.NowUTC().AddDate(0, 0, -30)
-	db.Where("pushed_at IS NOT NULL AND deleted_at < ?", oldCutoff).
-		Delete(&models.RecipeKeeperTombstone{})
+	var oldSettled []string
+	db.Model(&models.RecipeKeeperTombstone{}).
+		Where("pushed_at IS NOT NULL AND deleted_at < ?", oldCutoff).
+		Pluck("rk_item_id", &oldSettled)
+	if len(oldSettled) > 0 {
+		db.Where("rk_item_id IN ?", oldSettled).Delete(&models.RecipeKeeperLink{})
+		db.Where("rk_item_id IN ?", oldSettled).Delete(&models.RecipeKeeperTombstone{})
+	}
 
 	staleCutoff := models.NowUTC().AddDate(0, 0, -90)
-	var abandoned int64
+	var abandonedIDs []string
 	db.Model(&models.RecipeKeeperTombstone{}).
-		Where("pushed_at IS NULL AND deleted_at < ?", staleCutoff).Count(&abandoned)
-	if abandoned > 0 {
-		log.Printf("recipekeeper: abandoning %d undeliverable deletes older than 90 days", abandoned)
-		db.Where("pushed_at IS NULL AND deleted_at < ?", staleCutoff).
-			Delete(&models.RecipeKeeperTombstone{})
+		Where("pushed_at IS NULL AND deleted_at < ?", staleCutoff).
+		Pluck("rk_item_id", &abandonedIDs)
+	if len(abandonedIDs) > 0 {
+		log.Printf("recipekeeper: abandoning %d undeliverable deletes older than 90 days", len(abandonedIDs))
+		db.Where("rk_item_id IN ?", abandonedIDs).Delete(&models.RecipeKeeperLink{})
+		db.Where("rk_item_id IN ?", abandonedIDs).Delete(&models.RecipeKeeperTombstone{})
 	}
 }
