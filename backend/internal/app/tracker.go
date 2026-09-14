@@ -744,7 +744,7 @@ func (a *App) handleTrackerAddShare(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	data := a.trackerListJSON(lst, user.Sub)
-	a.trackerBroadcastList(lst, "list-shared", "shared the list with "+a.trackerMemberName(targetSub), r, targetSub)
+	a.trackerBroadcastList(lst, "list-shared", "shared the group with "+a.trackerMemberName(targetSub), r, targetSub)
 	httpx.WriteJSON(w, 200, data)
 }
 
@@ -774,7 +774,7 @@ func (a *App) handleTrackerRemoveShare(w http.ResponseWriter, r *http.Request, u
 		}
 	}
 	data := a.trackerListJSON(lst, user.Sub)
-	a.trackerBroadcastList(lst, "list-updated", "removed "+a.trackerMemberName(shareSub)+" from the list", r)
+	a.trackerBroadcastList(lst, "list-updated", "removed "+a.trackerMemberName(shareSub)+" from the group", r)
 	if audienceBefore[shareSub] {
 		a.Broadcaster.BroadcastToUser(shareSub, "tracker.updated",
 			J{"action": "list-deleted", "listId": listID.String()}, httpx.SourceID(r))
@@ -809,7 +809,7 @@ func (a *App) handleTrackerLeaveList(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	a.DB.Preload("Tasks").Preload("Shares").Where("id = ?", listID).First(&lst)
-	a.trackerBroadcastList(&lst, "list-updated", "left the list", r)
+	a.trackerBroadcastList(&lst, "list-updated", "left the group", r)
 	a.Broadcaster.BroadcastToUser(sub, "tracker.updated",
 		J{"action": "list-deleted", "listId": listID.String()}, httpx.SourceID(r))
 	w.WriteHeader(http.StatusNoContent)
@@ -840,7 +840,7 @@ func (a *App) handleTrackerRejoinList(w http.ResponseWriter, r *http.Request, us
 		a.DB.Preload("Tasks").Preload("Shares").Where("id = ?", listID).First(&lst)
 	}
 	data := a.trackerListJSON(&lst, sub)
-	a.trackerBroadcastList(&lst, "list-shared", "rejoined the list", r, sub)
+	a.trackerBroadcastList(&lst, "list-shared", "rejoined the group", r, sub)
 	httpx.WriteJSON(w, 200, data)
 }
 

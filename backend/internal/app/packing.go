@@ -211,7 +211,7 @@ func (a *App) packingGetBag(bagID uuid.UUID, sub string) (*models.PackingBag, *m
 	var bag models.PackingBag
 	err := a.DB.Where("id = ?", bagID).First(&bag).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil, httpx.NewHTTPError(http.StatusNotFound, "Bag not found")
+		return nil, nil, httpx.NewHTTPError(http.StatusNotFound, "Tag not found")
 	}
 	if err != nil {
 		return nil, nil, err
@@ -1010,7 +1010,7 @@ func (a *App) packingResolveBag(raw *string, listID uuid.UUID) (*uuid.UUID, erro
 	}
 	var bag models.PackingBag
 	if a.DB.Where("id = ? AND list_id = ?", id, listID).First(&bag).Error != nil {
-		return nil, httpx.NewHTTPError(http.StatusNotFound, "Bag not found")
+		return nil, httpx.NewHTTPError(http.StatusNotFound, "Tag not found")
 	}
 	return &id, nil
 }
@@ -1087,9 +1087,9 @@ func (a *App) handlePackingUpdateItem(w http.ResponseWriter, r *http.Request, us
 	a.DB.Where("id = ?", itemID).First(item)
 	extra := J{"sectionId": item.SectionID.String(), "item": packingItemJSON(item)}
 	if _, ok := updates["checked"]; ok {
-		verb := "unpacked"
+		verb := "unchecked"
 		if item.Checked {
-			verb = "packed"
+			verb = "checked off"
 		}
 		extra["pushDetail"] = verb + " “" + item.Name + "”"
 	} else if _, ok := updates["name"]; ok {
@@ -1242,9 +1242,9 @@ func (a *App) handlePackingCheckAll(w http.ResponseWriter, r *http.Request, user
 		httpx.WriteError(w, lerr)
 		return
 	}
-	detail := "unpacked everything in “" + lst.Name + "”"
+	detail := "unchecked everything in “" + lst.Name + "”"
 	if *payload.Checked {
-		detail = "packed everything in “" + lst.Name + "”"
+		detail = "checked off everything in “" + lst.Name + "”"
 	}
 	a.packingBroadcastList(lst, "checked-all", detail, r)
 	httpx.WriteJSON(w, 200, a.packingListJSON(lst, user.Sub))
@@ -1291,7 +1291,7 @@ func (a *App) handlePackingCreateBag(w http.ResponseWriter, r *http.Request, use
 	}
 	data := packingBagJSON(&bag)
 	a.packingBroadcast(lst, "bag-added", J{
-		"bag": data, "pushDetail": "added the “" + bag.Name + "” bag",
+		"bag": data, "pushDetail": "added the “" + bag.Name + "” tag",
 	}, r)
 	httpx.WriteJSON(w, http.StatusCreated, data)
 }
@@ -1322,7 +1322,7 @@ func (a *App) handlePackingUpdateBag(w http.ResponseWriter, r *http.Request, use
 	}
 	data := packingBagJSON(bag)
 	a.packingBroadcast(lst, "bag-updated", J{
-		"bag": data, "pushDetail": "renamed the “" + oldName + "” bag to “" + bag.Name + "”",
+		"bag": data, "pushDetail": "renamed the “" + oldName + "” tag to “" + bag.Name + "”",
 	}, r)
 	httpx.WriteJSON(w, 200, data)
 }
@@ -1355,7 +1355,7 @@ func (a *App) handlePackingDeleteBag(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	a.packingBroadcast(lst, "bag-deleted", J{
-		"bagId": bagID.String(), "pushDetail": "removed the “" + bag.Name + "” bag",
+		"bagId": bagID.String(), "pushDetail": "removed the “" + bag.Name + "” tag",
 	}, r)
 	w.WriteHeader(http.StatusNoContent)
 }

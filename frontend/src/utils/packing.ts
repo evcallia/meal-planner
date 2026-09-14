@@ -1,7 +1,7 @@
 import { PackingItem, PackingList, PackingSection } from '../types';
 import { NONE_STORE_ID } from '../components/ChecklistParts';
 
-// The "no bag assigned" pseudo-chip. Shares the grocery constant so the chip
+// The "no tag assigned" pseudo-chip. Shares the grocery constant so the chip
 // bar behaves identically on both tabs.
 export const NONE_BAG_ID = NONE_STORE_ID;
 
@@ -10,7 +10,7 @@ export interface BagProgress {
   name: string;
   packed: number;
   total: number;
-  /** 0–100, rounded to one decimal. 100 when there's nothing to pack. */
+  /** 0–100, rounded to one decimal. 100 when there's nothing to complete. */
   percent: number;
 }
 
@@ -24,8 +24,8 @@ export function allItems(list: Pick<PackingList, 'sections'>): PackingItem[] {
 }
 
 /**
- * Per-bag packing progress plus an overall total — the header table from the
- * spreadsheet this replaces. Bags with no items are omitted; unassigned items
+ * Per-tag completion progress plus an overall total — the header table from
+ * the spreadsheet this replaces. Tags with no items are omitted; unassigned items
  * are grouped under a "None" row so nothing is silently excluded from the
  * total.
  */

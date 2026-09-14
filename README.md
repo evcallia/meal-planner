@@ -10,6 +10,8 @@ A mobile-focused Progressive Web App for meal planning that integrates with Appl
 - Drag and drop meals between days (with touch support on mobile)
 - Pantry management - track ingredients you have on hand
 - Future meal ideas - save meal ideas to schedule later
+- Lists - shareable sectioned checklists with per-list tags and progress
+- Tasks - recency-tracked task groups ("when did I last do this?") with due reminders
 - Dark mode
 - PWA support - install on your phone's home screen
 - Offline support - works without internet, syncs when back online

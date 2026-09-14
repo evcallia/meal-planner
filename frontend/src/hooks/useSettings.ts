@@ -29,7 +29,7 @@ export interface Settings {
   notifyGroceryEdits: boolean;
   notifyListEdits: boolean;
   notifyListsDue: boolean;
-  // Travel (packing list) edits. Same per-list override namespace as the
+  // Lists tab (packing) edits. Same per-list override namespace as the
   // tracker: settings.listNotifyOverrides[listId].edits.
   notifyTravelEdits: boolean;
   // Re-notify daily (max once per 24h) while a task stays due.
@@ -57,10 +57,13 @@ export interface Settings {
   groceryGroupBy: 'category' | 'none';
   groceryHideStores: boolean;
   grocerySortBy: 'manual' | 'alphabetical';
-  // Travel display preferences (synced per-user). `packingShowChecked` keeps
-  // packed items visible at the bottom of their section; turning it off hides
-  // them without touching their stored position.
+  // Lists tab display preferences (synced per-user). `packingShowChecked` keeps
+  // completed items visible at the bottom of their section; turning it off
+  // hides them without touching their stored position. It is the DEFAULT —
+  // `packingShowCheckedOverrides` pins individual lists against it, and the
+  // kebab's "Use this for all lists" collapses everything back to the default.
   packingShowChecked: boolean;
+  packingShowCheckedOverrides: Record<string, boolean>;
   packingHideBags: boolean;
   packingSortBy: 'manual' | 'alphabetical';
   packingSelectedBagIds: string[];
@@ -103,6 +106,7 @@ export const DEFAULT_SETTINGS: Settings = {
   groceryHideStores: false,
   grocerySortBy: 'manual',
   packingShowChecked: true,
+  packingShowCheckedOverrides: {},
   packingHideBags: false,
   packingSortBy: 'manual',
   packingSelectedBagIds: [],

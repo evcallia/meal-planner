@@ -34,9 +34,15 @@ import { resetPackingSessionLoaded, markPackingSessionLoaded } from './hooks/use
 import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea, saveLocalHiddenEvents, clearLocalHiddenEvents, saveLocalItemDefaults, saveLocalTrackerLists, saveLocalTrackerTasks, saveLocalTrackerList, deleteLocalTrackerList, saveLocalTrackerTask, deleteLocalTrackerTask, getLocalTrackerLists, getLocalTrackerTasks, saveLocalPackingLists, saveLocalPackingBags, saveLocalPackingSections, saveLocalPackingItems, saveLocalPackingList, saveLocalPackingBag, saveLocalPackingSection, saveLocalPackingItem, deleteLocalPackingList, deleteLocalPackingBag, deleteLocalPackingSection, deleteLocalPackingItem, getLocalPackingSections, getLocalPackingItems, getLocalPackingBags, getLocalPackingLists } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
 
+// Page ids are internal and deliberately NOT renamed — they're persisted in
+// localStorage and mirrored by the settings keys below. Display names differ:
+// 'lists' is the tracker, shown as **Tasks**; 'travel' is the packing feature,
+// shown as **Lists**.
 type Page = 'meals' | 'pantry' | 'grocery' | 'lists' | 'travel';
 
-const ALL_PAGES: Page[] = ['meals', 'pantry', 'grocery', 'lists', 'travel'];
+// Order here drives the Settings → Features list and the first-enabled-tab
+// fallback; it matches the bottom nav: Meals, Pantry, Grocery, Lists, Tasks.
+const ALL_PAGES: Page[] = ['meals', 'pantry', 'grocery', 'travel', 'lists'];
 const PAGE_FEATURE_KEYS: Record<Page, 'featureMeals' | 'featurePantry' | 'featureGrocery' | 'featureLists' | 'featureTravel'> = {
   meals: 'featureMeals',
   pantry: 'featurePantry',
@@ -60,8 +66,8 @@ const trackerTaskToLocal = (t: TrackerTask) => ({
   total_count: t.total_count, avg_interval_days: t.avg_interval_days, recent_logs: t.recent_logs,
 });
 
-// Packing lists are cached flat (list / bags / sections / items) so a single
-// item change doesn't rewrite the whole trip.
+// Lists are cached flat (list / tags / sections / items) so a single item
+// change doesn't rewrite the whole list.
 const packingListToLocal = (l: PackingList) => ({
   id: l.id, name: l.name, icon: l.icon, color: l.color, position: l.position,
   owner_sub: l.owner_sub, owner_name: l.owner_name, is_owner: l.is_owner, shared_with: l.shared_with,
@@ -270,11 +276,11 @@ function BottomNav({ currentPage, onChange, groceryCount, hidden, pages }: { cur
                 : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
             }`}
           >
-            {/* Suitcase icon */}
+            {/* Bulleted-list icon */}
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2m-9 0h10a2 2 0 012 2v9a2 2 0 01-2 2H7a2 2 0 01-2-2V9a2 2 0 012-2zm3 3v8m6-8v8" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />
             </svg>
-            <span className="text-xs mt-0.5 font-medium">Travel</span>
+            <span className="text-xs mt-0.5 font-medium">Lists</span>
           </button>
         )}
         {pages.includes('lists') && (
@@ -286,11 +292,11 @@ function BottomNav({ currentPage, onChange, groceryCount, hidden, pages }: { cur
                 : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
             }`}
           >
-            {/* Checklist/tasks icon */}
+            {/* Check-in-circle icon */}
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12.75l2.25 2.25 4.5-4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span className="text-xs mt-0.5 font-medium">Lists</span>
+            <span className="text-xs mt-0.5 font-medium">Tasks</span>
           </button>
         )}
       </div>
@@ -475,6 +481,7 @@ function GroceryPage({
   );
 }
 
+// The recency tracker — displayed as the "Tasks" tab.
 function ListsPage({
   user,
   status,
@@ -498,7 +505,7 @@ function ListsPage({
 }) {
   return (
     <>
-      <PageHeader title="Lists" user={user} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} unseenActivity={unseenActivity} onShowActivity={onShowActivity} />
+      <PageHeader title="Tasks" user={user} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} unseenActivity={unseenActivity} onShowActivity={onShowActivity} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         <ListsView
           user={user}
@@ -524,6 +531,7 @@ function ListsPage({
   );
 }
 
+// The packing feature — displayed as the "Lists" tab.
 function TravelPage({
   user,
   status,
@@ -547,18 +555,20 @@ function TravelPage({
 }) {
   return (
     <>
-      <PageHeader title="Travel" user={user} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} unseenActivity={unseenActivity} onShowActivity={onShowActivity} />
+      <PageHeader title="Lists" user={user} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} unseenActivity={unseenActivity} onShowActivity={onShowActivity} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         <PackingListsView
           user={user}
           editHighlightColor={settings.editHighlightColor}
           showChecked={settings.packingShowChecked}
+          showCheckedOverrides={settings.packingShowCheckedOverrides}
           hideBags={settings.packingHideBags}
           sortBy={settings.packingSortBy}
           selectedBags={settings.packingSelectedBagIds}
           excludedBags={settings.packingExcludedBagIds}
           onUpdateDisplayPrefs={(updates) => onUpdateSettings({
             ...(updates.showChecked !== undefined ? { packingShowChecked: updates.showChecked } : {}),
+            ...(updates.showCheckedOverrides !== undefined ? { packingShowCheckedOverrides: updates.showCheckedOverrides } : {}),
             ...(updates.hideBags !== undefined ? { packingHideBags: updates.hideBags } : {}),
             ...(updates.sortBy !== undefined ? { packingSortBy: updates.sortBy } : {}),
             ...(updates.selectedBags !== undefined ? { packingSelectedBagIds: updates.selectedBags } : {}),
@@ -937,9 +947,9 @@ function AppContent() {
       // Focus-refresh events are handled by each tab's own hook — skip here
       if (detail.source_id === '__focus_refresh__') return;
 
-      // Tracker/Lists: warm the IndexedDB cache from realtime events while we're on
+      // Tracker/Tasks: warm the IndexedDB cache from realtime events while we're on
       // another tab, so lists + history stay current in the background and are ready
-      // to go offline with — same as grocery/pantry. (On the Lists tab, useTracker
+      // to go offline with — same as grocery/pantry. (On the Tasks tab, useTracker
       // handles events itself.) Events are already per-user scoped by the server.
       if (detail.type === 'tracker.updated') {
         if (currentPageRef.current === 'lists') return;
@@ -988,7 +998,7 @@ function AppContent() {
         return;
       }
 
-      // Travel / packing: same inactive-tab warming as tracker. Events are
+      // Lists (packing): same inactive-tab warming as the tracker. Events are
       // already scoped to the list's audience by the server.
       if (detail.type === 'packing.updated') {
         if (currentPageRef.current === 'travel') return;

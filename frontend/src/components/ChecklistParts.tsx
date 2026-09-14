@@ -7,11 +7,11 @@ import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
 import { getEditHighlight } from '../utils/editHighlightColors';
 
-// Presentational building blocks shared by the Grocery tab and the Travel
+// Presentational building blocks shared by the Grocery tab and the Lists
 // (packing) tab. Both are "sectioned checklist with a chip per item", so the
 // row, the section card, the section combobox and the menu radio live here
 // once. The only vocabulary difference is the chip: grocery calls it a store,
-// packing calls it a bag — hence the neutral `chip*` prop names.
+// the Lists tab calls it a tag — hence the neutral `chip*` prop names.
 //
 // A chip is structurally a Store ({id, name, position}); PackingBag satisfies
 // the same shape.
@@ -138,7 +138,7 @@ export interface ChecklistItemRowProps {
   dragHandlers?: DragHandlers;
   handleMouseDown?: (e: React.MouseEvent) => void;
   isDragging?: boolean;
-  /** Stores (grocery) or bags (packing). */
+  /** Stores (grocery) or tags (Lists). */
   chips: Store[];
   /** Which chip this item is assigned to. */
   chipId: string | null;
@@ -152,7 +152,7 @@ export interface ChecklistItemRowProps {
   editHighlightColor: string;
   onChangeSection: (itemId: string, targetSectionName: string) => void;
   hideChips?: boolean;
-  /** Packing lets you fix a typo on an already-packed item; grocery doesn't. */
+  /** Lists let you fix a typo on an already-completed item; grocery doesn't. */
   allowEditWhenChecked?: boolean;
 }
 
@@ -499,9 +499,9 @@ export interface ChecklistSectionCardProps {
   hideChips?: boolean;
   itemDragEnabled?: boolean;
   allowEditWhenChecked?: boolean;
-  /** Replaces the default "N items" header label (packing shows "3/7 packed"). */
+  /** Replaces the default "N items" header label (Lists shows "3/7 completed"). */
   headerMeta?: React.ReactNode;
-  /** Optional controls in the header, left of the count (Travel puts its
+  /** Optional controls in the header, left of the count (Lists puts its
    *  per-section menu here). Grocery passes nothing. */
   headerActions?: React.ReactNode;
 }

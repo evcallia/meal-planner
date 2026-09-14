@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { useSync, __resetAuthRequiredForTests } from '../useSync';
 import type { PendingChange } from '../../db';
 
-// Draining queued Travel/packing changes: temp ids created offline must be
+// Draining queued Lists-tab (packing) changes: temp ids created offline must be
 // rewritten to the server ids recorded when their create synced, and a change
 // whose parent create never landed must be dropped rather than retried forever.
 

@@ -88,7 +88,7 @@ describe('PackingListsView', () => {
   it('shows a prompt when there are no lists yet', () => {
     mockLists = [];
     renderView();
-    expect(screen.getByText(/No packing lists yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/No lists yet/i)).toBeInTheDocument();
   });
 
   it('renders a tab per list and the active list\'s sections', () => {
@@ -100,12 +100,12 @@ describe('PackingListsView', () => {
     expect(screen.getByText('Clothes')).toBeInTheDocument();
   });
 
-  it('shows packed/total in the section header', () => {
+  it('shows completed/total in the section header', () => {
     renderView();
-    expect(screen.getByText('1/3 packed')).toBeInTheDocument();
+    expect(screen.getByText('1/3 completed')).toBeInTheDocument();
   });
 
-  it('renders packed items last, and hides them when showChecked is off', () => {
+  it('renders completed items last, and hides them when showChecked is off', () => {
     const { unmount } = renderView({ showChecked: true });
     const names = screen.getAllByText(/Boots|Socks|Toothbrush/).map(el => el.textContent);
     expect(names.join(' ')).toMatch(/Boots.*Toothbrush.*Socks/s);
@@ -122,7 +122,7 @@ describe('PackingListsView', () => {
     expect(mockToggleItem).toHaveBeenCalledWith('l1', 'i1', true);
   });
 
-  it('unchecks a packed item', () => {
+  it('unchecks a completed item', () => {
     renderView();
     fireEvent.click(screen.getByRole('button', { name: 'Uncheck Socks' }));
     expect(mockToggleItem).toHaveBeenCalledWith('l1', 'i2', false);
@@ -135,7 +135,7 @@ describe('PackingListsView', () => {
     expect(within(panel).getByText('1/2')).toBeInTheDocument();   // Carry On
     expect(within(panel).getByText('0/1')).toBeInTheDocument();   // Toiletry Bag
     expect(within(panel).getByText('Total')).toBeInTheDocument();
-    expect(within(panel).getByText('33.3%')).toBeInTheDocument(); // 1 of 3 packed
+    expect(within(panel).getByText('33.3%')).toBeInTheDocument(); // 1 of 3 completed
   });
 
   it('hides the per-bag rows and chips when bags are hidden', () => {
@@ -144,7 +144,7 @@ describe('PackingListsView', () => {
     expect(screen.queryByText('1/2')).not.toBeInTheDocument();
   });
 
-  it('still shows the overall packed total when bags are hidden', () => {
+  it('still shows the overall completed total when tags are hidden', () => {
     renderView({ hideBags: true });
     const panel = screen.getByTestId('bag-progress');
     expect(within(panel).getByText('Total')).toBeInTheDocument();
@@ -162,17 +162,17 @@ describe('PackingListsView', () => {
     expect(mockSetAllChecked).toHaveBeenCalledWith('l1', false);
   });
 
-  it('toggles the show-packed display preference', () => {
+  it('toggles the show-completed display preference for the active list', () => {
     const onUpdateDisplayPrefs = vi.fn();
     renderView({ showChecked: true, onUpdateDisplayPrefs });
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
-    fireEvent.click(screen.getByText('Hide packed items'));
-    expect(onUpdateDisplayPrefs).toHaveBeenCalledWith({ showChecked: false });
+    fireEvent.click(screen.getByText('Hide completed items'));
+    expect(onUpdateDisplayPrefs).toHaveBeenCalledWith({ showCheckedOverrides: { l1: false } });
   });
 
   it('creates a list', async () => {
     renderView();
-    fireEvent.click(screen.getByRole('button', { name: /new packing list/i }));
+    fireEvent.click(screen.getByRole('button', { name: /new list/i }));
     fireEvent.change(screen.getByTestId('new-list-name'), { target: { value: 'Dolomites' } });
     fireEvent.click(screen.getByTestId('create-list'));
     expect(mockCreateList).toHaveBeenCalledWith('Dolomites', 'blue');
@@ -189,15 +189,15 @@ describe('PackingListsView', () => {
     expect(mockCreateSection).toHaveBeenCalledWith('l1', 'Tech');
   });
 
-  it('edits a trip\'s name and color together', () => {
+  it('edits a list\'s name and color together', () => {
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
     fireEvent.click(screen.getByText(/Rename & color/));
 
-    const editor = screen.getByTestId('edit-trip');
-    fireEvent.change(within(editor).getByTestId('edit-trip-name'), { target: { value: 'Paris 2027' } });
+    const editor = screen.getByTestId('edit-list');
+    fireEvent.change(within(editor).getByTestId('edit-list-name'), { target: { value: 'Paris 2027' } });
     fireEvent.click(within(editor).getByRole('button', { name: 'Color rose' }));
-    fireEvent.click(screen.getByTestId('edit-trip-save'));
+    fireEvent.click(screen.getByTestId('edit-list-save'));
 
     expect(mockUpdateList).toHaveBeenCalledWith('l1', { name: 'Paris 2027', color: 'rose' });
   });
@@ -206,8 +206,8 @@ describe('PackingListsView', () => {
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
     fireEvent.click(screen.getByText(/Rename & color/));
-    fireEvent.click(within(screen.getByTestId('edit-trip')).getByRole('button', { name: 'Color amber' }));
-    fireEvent.click(screen.getByTestId('edit-trip-save'));
+    fireEvent.click(within(screen.getByTestId('edit-list')).getByRole('button', { name: 'Color amber' }));
+    fireEvent.click(screen.getByTestId('edit-list-save'));
 
     expect(mockUpdateList).toHaveBeenCalledWith('l1', { color: 'amber' });
   });
@@ -216,13 +216,13 @@ describe('PackingListsView', () => {
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
     fireEvent.click(screen.getByText(/Rename & color/));
-    fireEvent.click(screen.getByTestId('edit-trip-save'));
+    fireEvent.click(screen.getByTestId('edit-list-save'));
 
     expect(mockUpdateList).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('edit-trip')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('edit-list')).not.toBeInTheDocument();
   });
 
-  it('reorders trips after a long-press drag on the tab strip', () => {
+  it('reorders lists after a long-press drag on the tab strip', () => {
     vi.useFakeTimers();
     try {
       mockLists = [listFixture(), { ...listFixture(), id: 'l2', name: 'Dolomites', position: 1 }];
@@ -270,22 +270,22 @@ describe('PackingListsView', () => {
     mockLists = [{ ...listFixture(), is_owner: false, owner_sub: 'someone-else' }];
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
-    expect(screen.getByText('Leave trip')).toBeInTheDocument();
-    expect(screen.queryByText('Delete trip')).not.toBeInTheDocument();
+    expect(screen.getByText('Leave list')).toBeInTheDocument();
+    expect(screen.queryByText('Delete list')).not.toBeInTheDocument();
     expect(screen.queryByText(/^Share…/)).not.toBeInTheDocument();
   });
 
-  it('locks the per-trip notification toggle until the global one is on', () => {
+  it('locks the per-list notification toggle until the global one is on', () => {
     renderView({ notifyEditsDefault: false });
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
-    expect(screen.getByText(/Mute notifications for this trip/)).toBeDisabled();
+    expect(screen.getByText(/Mute notifications for this list/)).toBeDisabled();
   });
 
-  it('mutes notifications for one trip when the global toggle is on', () => {
+  it('mutes notifications for one list when the global toggle is on', () => {
     const onSetListNotify = vi.fn();
     renderView({ notifyEditsDefault: true, onSetListNotify });
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
-    fireEvent.click(screen.getByText(/Mute notifications for this trip/));
+    fireEvent.click(screen.getByText(/Mute notifications for this list/));
     expect(onSetListNotify).toHaveBeenCalledWith('l1', { edits: false });
   });
 
@@ -302,7 +302,7 @@ describe('PackingListsView', () => {
     expect(within(panel).getByText('33.3%')).toBeInTheDocument(); // total 1/3
   });
 
-  it('copies a section into another trip and confirms it', async () => {
+  it('copies a section into another list and confirms it', async () => {
     mockLists = [listFixture(), { ...listFixture(), id: 'l2', name: 'Dolomites', position: 1 }];
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
@@ -324,13 +324,13 @@ describe('PackingListsView', () => {
     expect(screen.getByTestId('packing-flash')).toHaveTextContent('already has every item');
   });
 
-  it('offers no copy targets when this is the only trip', () => {
+  it('offers no copy targets when this is the only list', () => {
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
-    expect(screen.getByText('No other trips yet')).toBeInTheDocument();
+    expect(screen.getByText('No other lists yet')).toBeInTheDocument();
   });
 
-  it('does not offer the current trip as a copy target', () => {
+  it('does not offer the current list as a copy target', () => {
     mockLists = [listFixture(), { ...listFixture(), id: 'l2', name: 'Dolomites', position: 1 }];
     renderView();
     fireEvent.click(screen.getByRole('button', { name: /options for clothes/i }));
@@ -427,5 +427,166 @@ describe('section menu placement', () => {
     mockLoading = true;
     renderView();
     expect(screen.getByTestId('packing-loading')).toBeInTheDocument();
+  });
+});
+
+// A muted list is marked on its tab, so you can see which lists are silenced
+// without opening each one. The mark is meaningless while the global List-edits
+// toggle is off — nothing notifies then anyway — so it stays hidden.
+describe('PackingListsView muted indicator', () => {
+  const tabs = () => screen.getByTestId('packing-tabs');
+
+  it('marks a muted list when List notifications are enabled', () => {
+    renderView({ notifyEditsDefault: true, listNotifyOverrides: { l1: { edits: false } } });
+    const icon = within(tabs()).getByTestId('muted-icon');
+    expect(icon).toHaveAccessibleName('Edit notifications muted');
+  });
+
+  it('shows nothing when the list is not muted', () => {
+    renderView({ notifyEditsDefault: true, listNotifyOverrides: {} });
+    expect(within(tabs()).queryByTestId('muted-icon')).not.toBeInTheDocument();
+  });
+
+  it('shows nothing when List notifications are globally off', () => {
+    renderView({ notifyEditsDefault: false, listNotifyOverrides: { l1: { edits: false } } });
+    expect(within(tabs()).queryByTestId('muted-icon')).not.toBeInTheDocument();
+  });
+});
+
+// Show/hide completed is a per-list choice layered over a global default, so
+// one list can hide its completed items without silencing every other list.
+describe('PackingListsView per-list completed visibility', () => {
+  const secondList = (): PackingList => ({
+    ...listFixture(), id: 'l2', name: 'Home projects', position: 1,
+  });
+  const openMenu = () => fireEvent.click(screen.getByRole('button', { name: /list options/i }));
+
+  it('follows the global default when the list has no override', () => {
+    renderView({ showChecked: false, showCheckedOverrides: {} });
+    expect(screen.queryByText('Socks')).not.toBeInTheDocument();
+  });
+
+  it('lets a list override the default in either direction', () => {
+    const { unmount } = renderView({ showChecked: false, showCheckedOverrides: { l1: true } });
+    expect(screen.getByText('Socks')).toBeInTheDocument();
+    unmount();
+
+    renderView({ showChecked: true, showCheckedOverrides: { l1: false } });
+    expect(screen.queryByText('Socks')).not.toBeInTheDocument();
+  });
+
+  it('toggling writes an override for THIS list only, leaving the default alone', () => {
+    const onUpdate = vi.fn();
+    renderView({ showChecked: true, showCheckedOverrides: { l2: false }, onUpdateDisplayPrefs: onUpdate });
+    openMenu();
+    fireEvent.click(screen.getByText('Hide completed items'));
+    expect(onUpdate).toHaveBeenCalledWith({ showCheckedOverrides: { l2: false, l1: false } });
+    // The global default must be untouched by a per-list toggle.
+    expect(onUpdate.mock.calls[0][0]).not.toHaveProperty('showChecked');
+  });
+
+  it('the menu label reflects the effective value, not the global default', () => {
+    renderView({ showChecked: true, showCheckedOverrides: { l1: false } });
+    openMenu();
+    expect(screen.getByText('Show completed items')).toBeInTheDocument();
+  });
+
+  it('offers to apply to all lists after a toggle, without doing it yet', () => {
+    const onUpdate = vi.fn();
+    mockLists = [listFixture(), secondList()];
+    renderView({ showChecked: true, showCheckedOverrides: {}, onUpdateDisplayPrefs: onUpdate });
+    openMenu();
+    fireEvent.click(screen.getByText('Hide completed items'));
+    // The toggle itself only pinned this list.
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdate).toHaveBeenCalledWith({ showCheckedOverrides: { l1: false } });
+    expect(screen.getByTestId('packing-flash')).toHaveTextContent(/Paris/);
+    expect(screen.getByRole('button', { name: /apply to all lists/i })).toBeInTheDocument();
+  });
+
+  it('applies to every list when the offer is taken', () => {
+    const onUpdate = vi.fn();
+    mockLists = [listFixture(), secondList()];
+    renderView({ showChecked: true, showCheckedOverrides: {}, onUpdateDisplayPrefs: onUpdate });
+    openMenu();
+    fireEvent.click(screen.getByText('Hide completed items'));
+    fireEvent.click(screen.getByRole('button', { name: /apply to all lists/i }));
+    expect(onUpdate).toHaveBeenLastCalledWith({ showChecked: false, showCheckedOverrides: {} });
+    // The offer is consumed; a confirmation replaces it.
+    expect(screen.queryByRole('button', { name: /apply to all lists/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId('packing-flash')).toHaveTextContent(/all lists/i);
+  });
+
+  it('does not offer when applying to all would change nothing', () => {
+    // Only list, and the toggle lands back on the global default.
+    renderView({ showChecked: false, showCheckedOverrides: { l1: true } });
+    openMenu();
+    fireEvent.click(screen.getByText('Hide completed items'));
+    expect(screen.queryByRole('button', { name: /apply to all lists/i })).not.toBeInTheDocument();
+  });
+
+  it('still offers when another list carries an override', () => {
+    mockLists = [listFixture(), secondList()];
+    renderView({ showChecked: false, showCheckedOverrides: { l1: true, l2: true } });
+    openMenu();
+    // Back to the default for l1, but l2 is still pinned — applying to all clears it.
+    fireEvent.click(screen.getByText('Hide completed items'));
+    expect(screen.getByRole('button', { name: /apply to all lists/i })).toBeInTheDocument();
+  });
+
+  it('marks sections whose completed items are hidden, and unhides on tap', () => {
+    const onUpdate = vi.fn();
+    renderView({ showChecked: false, showCheckedOverrides: {}, onUpdateDisplayPrefs: onUpdate });
+    // The fixture's one section has a completed item (Socks) that is hidden.
+    expect(screen.queryByText('Socks')).not.toBeInTheDocument();
+    const mark = screen.getByRole('button', { name: /completed items are hidden/i });
+    fireEvent.click(mark);
+    expect(onUpdate).toHaveBeenCalledWith({ showCheckedOverrides: { l1: true } });
+  });
+
+  it('does not mark sections while completed items are visible', () => {
+    renderView({ showChecked: true, showCheckedOverrides: {} });
+    expect(screen.queryByRole('button', { name: /completed items are hidden/i })).not.toBeInTheDocument();
+  });
+
+  it('does not mark a section that has nothing completed to hide', () => {
+    mockLists = [{
+      ...listFixture(),
+      sections: [{
+        id: 's1', list_id: 'l1', name: 'Clothes', position: 0,
+        items: [
+          { id: 'i1', section_id: 's1', name: 'Boots', quantity: null, checked: false, position: 0, bag_id: null, updated_at: '2026-01-01T00:00:00' },
+        ],
+      }],
+    }];
+    renderView({ showChecked: false, showCheckedOverrides: {} });
+    expect(screen.queryByRole('button', { name: /completed items are hidden/i })).not.toBeInTheDocument();
+  });
+
+  // Rendered inline, the bar sat at the top of the list and was invisible once
+  // you'd scrolled down a long one. It floats over the page instead.
+  it('floats over the page instead of sitting in the scrolling content', () => {
+    renderView({ showChecked: true, showCheckedOverrides: {} });
+    openMenu();
+    fireEvent.click(screen.getByText('Hide completed items'));
+    const layer = screen.getByTestId('packing-flash').parentElement!;
+    // Portaled out of the view, so no scrolling/clipping ancestor can hide it.
+    expect(layer.parentElement).toBe(document.body);
+    expect(layer.className).toMatch(/\bfixed\b/);
+  });
+
+  it('can be dismissed early with the close button', () => {
+    renderView({ showChecked: true, showCheckedOverrides: {} });
+    openMenu();
+    fireEvent.click(screen.getByText('Hide completed items'));
+    expect(screen.getByTestId('packing-flash')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
+    expect(screen.queryByTestId('packing-flash')).not.toBeInTheDocument();
+  });
+
+  it('has no apply-to-all item in the menu itself', () => {
+    renderView({ showChecked: true, showCheckedOverrides: { l1: false } });
+    openMenu();
+    expect(screen.queryByText('Use this for all lists')).not.toBeInTheDocument();
   });
 });

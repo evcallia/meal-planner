@@ -757,7 +757,7 @@ export function useSync() {
           }
           await deleteTrackerLogAPI(realId);
         } else if (change.type.startsWith('packing-')) {
-          // Travel / packing lists. `mapId` resolves a temp id created offline
+          // Lists tab (packing). `mapId` resolves a temp id created offline
           // to the server id useSync recorded when the create synced; a temp id
           // with no mapping means its create never landed, so the dependent
           // change is dropped rather than retried forever.

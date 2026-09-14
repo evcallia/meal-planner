@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useTabReorder } from '../useTabReorder';
 
-// The long-press tab drag shared by the Lists and Travel tabs.
+// The long-press tab drag shared by the Lists and Tasks tabs.
 
 const pointer = (x = 0, y = 0) => ({ clientX: x, clientY: y }) as React.PointerEvent;
 

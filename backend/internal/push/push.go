@@ -609,7 +609,9 @@ func (s *Service) QueueTrackerEdit(listID, listName string, audience map[string]
 }
 
 // QueueListEdit is the per-list-audience edit batcher shared by every
-// multi-list feature (category "lists" = tracker, "travel" = packing lists).
+// multi-list feature. Categories are internal ids whose display names differ:
+// "lists" = the tracker (shown as the Tasks tab), "travel" = packing lists
+// (shown as the Lists tab).
 // Batches are keyed per (category, list, actor) so two features editing the
 // same-named list never collapse into one notification.
 func (s *Service) QueueListEdit(category, listID, listName string, audience map[string]bool, actorSub, actorName, detail string) {

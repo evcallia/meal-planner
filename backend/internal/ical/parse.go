@@ -3,9 +3,17 @@ package ical
 import (
 	"strings"
 	"time"
+	// Zone lookups must work on a scratch base image with no /usr/share/zoneinfo
+	// — without the embedded database, a TZID event fails to parse and vanishes.
+	_ "time/tzdata"
 
 	goical "github.com/emersion/go-ical"
 )
+
+// eventZone is the household's timezone: the zone a zone-qualified event is
+// rendered into before its wall clock is stored. It follows the process TZ
+// (the compose files set TZ=America/Los_Angeles); tests override it.
+var eventZone = time.Local
 
 // parseICSEvents extracts VEVENTs from raw ICS data, mirroring the icalendar
 // walk in Python: naive datetimes (tz-aware converted then stripped), DATE
@@ -66,13 +74,23 @@ func extractEvents(cal *goical.Calendar, calendarName string) []EventWithSource 
 	return out
 }
 
-// parseICalTime mirrors _parse_ical_date + _is_all_day: returns the naive
-// time and whether the property was a DATE (all-day) value.
+// parseICalTime returns the naive time to store and whether the property was
+// a DATE (all-day) value.
 //
-// Python's `dt.replace(tzinfo=None)` DROPS the timezone but KEEPS the
-// wall-clock reading — a TZID=America/New_York 10:30 stays 10:30, it is NOT
-// converted to UTC. Event keys, event_date bucketing, and existing
-// hidden-event rows all depend on that behavior, so mirror it exactly.
+// Storage is naive wall-clock — no zone — and the frontend renders it as-is.
+// That only reads correctly if the wall clock is the VIEWER's, so a
+// zone-qualified value (TZID=... or a trailing Z) is first converted into
+// `eventZone`: an event saved on Paris time at 18:30 is 09:30 here, and
+// showing "6:30 PM" for it was simply wrong.
+//
+// Two kinds of value are deliberately left alone:
+//   - a FLOATING time (no TZID, no Z) already means "this wall clock, wherever
+//     you are" — converting it would invent an offset that isn't there;
+//   - a DATE has no time to convert, and shifting one moves it off its day.
+//
+// For the common case — an event in the household's own zone — the stored
+// value is unchanged, so event keys, event_date bucketing and the
+// hidden_calendar_events rows keyed off them all stay put.
 func parseICalTime(prop *goical.Prop) (time.Time, bool, bool) {
 	isDate := prop.ValueType() == goical.ValueDate ||
 		(len(strings.TrimSpace(prop.Value)) == 8 && !strings.Contains(prop.Value, "T"))
@@ -80,7 +98,19 @@ func parseICalTime(prop *goical.Prop) (time.Time, bool, bool) {
 	if err != nil {
 		return time.Time{}, false, false
 	}
+	if !isDate && zoneQualified(prop) {
+		t = t.In(eventZone)
+	}
 	naive := time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(),
 		t.Nanosecond(), time.UTC)
 	return naive, isDate, true
+}
+
+// zoneQualified reports whether the property names a real instant — either via
+// a TZID parameter or the UTC "Z" suffix — as opposed to a floating time.
+func zoneQualified(prop *goical.Prop) bool {
+	if prop.Params.Get(goical.PropTimezoneID) != "" {
+		return true
+	}
+	return strings.HasSuffix(strings.ToUpper(strings.TrimSpace(prop.Value)), "Z")
 }

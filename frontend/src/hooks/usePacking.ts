@@ -46,7 +46,7 @@ import { useIdRemap } from './useIdRemap';
 import { toTitleCase } from '../utils/titleCase';
 import { orderSectionItems } from '../utils/packing';
 
-// Travel / packing lists. One hook owns every list the user can see (like
+// Lists tab (packing). One hook owns every list the user can see (like
 // useTracker) plus the sectioned-checklist mutations (like useGroceryList),
 // each optimistic → IndexedDB → API-or-queue → undoable.
 //

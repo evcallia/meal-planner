@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 // Long-press drag-to-reorder for a horizontal tab strip. Shared by the Lists
-// tab and the Travel tab so both feel identical: press and hold a tab to pick
+// tab and the Lists tab so both feel identical: press and hold a tab to pick
 // it up, drag over neighbours to shuffle, and the strip auto-scrolls when the
 // pointer nears an edge so you can reach tabs that are off-screen.
 //

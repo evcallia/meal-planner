@@ -1,8 +1,9 @@
 package ical
 
-// Regression for the TZID audit finding: Python's _parse_ical_date drops the
-// timezone but KEEPS the wall-clock reading. Event keys, event_date
-// bucketing, and hidden-event rows depend on that.
+// Regression for the TZID audit finding: an event in the household's OWN zone
+// keeps its wall-clock reading exactly — event keys, event_date bucketing and
+// hidden-event rows depend on that. (An event in a FOREIGN zone is converted
+// into `eventZone` first; see tzlocal_test.go.)
 
 import (
 	"testing"
@@ -25,6 +26,8 @@ END:VCALENDAR
 `
 
 func TestTZIDKeepsWallClock(t *testing.T) {
+	// The event's zone IS the local zone here, so nothing should move.
+	withZone(t, "America/New_York")
 	events := parseICSEvents([]byte(tzidICS), "Family")
 	if len(events) != 1 {
 		t.Fatalf("parsed %d events, want 1", len(events))
@@ -46,6 +49,9 @@ func TestTZIDKeepsWallClock(t *testing.T) {
 }
 
 func TestUTCAndFloatingUnaffected(t *testing.T) {
+	// Local zone == UTC, so the Z-stamped event converts to itself; the
+	// floating one is never converted at all.
+	withZone(t, "UTC")
 	ics := `BEGIN:VCALENDAR
 VERSION:2.0
 BEGIN:VEVENT
