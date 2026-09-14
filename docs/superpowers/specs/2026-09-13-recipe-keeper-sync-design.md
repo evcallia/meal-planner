@@ -35,7 +35,7 @@ Settled during design; each closed a real fork in the implementation.
 | Deletes | **Propagate, including bulk clears** | A local-only delete resurrects on the next pull. Backed by tombstones for the window where a push hasn't landed. |
 | Credentials | **Server config** | The MP grocery list is already shared/global; one household connection matches it. |
 | Source list | **The main list only** | MP has exactly one grocery list. |
-| First run | **Import alongside, no matching** | Existing MP items are left untouched. Duplicates are expected and accepted (see [First run](#first-run)). |
+| First run | **Same path as every sync** | Superseded: collapse across MP-only units means RK items merge into existing rows. No duplicates, no once-only logic (see [First run](#first-run)). |
 | Group by recipe | **In scope for v1** | Answers "what do I need for the fig cocktail", complementing the per-item popover. |
 
 ## Architecture
@@ -146,7 +146,7 @@ Per `ShoppingListItem` in `UpdatedServerItems`:
 | `IsDeleted: true` | Drop the link. Other links remain → quantity decrements. Last link gone → delete the MP item. |
 | Link exists, `LastModified` equals stored | **No-op — our own echo** |
 | Link exists, `LastModified` newer | Apply `Name` and `IsChecked` |
-| No link, live | Attach to an existing RK-linked item with the same collapse key, else create a new MP item |
+| No link, live | Attach to any existing row with the same collapse key — RK-linked or MP-only — else create a new row |
 
 Items whose `ShoppingListId` is not the configured list are ignored entirely.
 
@@ -307,11 +307,20 @@ no store concept, so stores never round-trip.
 
 ### First run
 
-Per the decision above: existing MP items are **left untouched** and every live RK item
-is imported as new (collapsed among themselves). If an item is already on both lists
-it will appear twice, and the user resolves it by deleting one. This is deliberate —
-name-matching across two independently-maintained lists risks silently adopting or
-overwriting items the user created.
+**Superseded by the collapse decision.** "Import alongside, no matching" was chosen
+when collapse applied only among RK-linked items; extending collapse to MP-only units
+changes what first run does, and the two cannot both hold.
+
+Under the final model, an incoming RK item joins any existing row with the same
+`(name, checked)` key, incrementing its quantity and attaching a link. So an existing
+MP `Lemon` plus three RK lemons becomes one row of quantity 4 with three links — not
+two rows.
+
+This is the better outcome and is consistent rather than special-cased: no duplicates
+to clean up by hand, and first run behaves exactly like every subsequent sync instead
+of running once-only logic that is hard to test and impossible to re-run. The original
+concern — silently adopting a user's item — does not apply, because the MP-only unit
+is never pushed. Ownership is a property of links, and MP-only units have none.
 
 The initial `Recipe` pull is a full 12-bucket sync and is **expensive** — recipe
 entities embed base64 photos at roughly 100–300 KB each (see the protocol reference).
