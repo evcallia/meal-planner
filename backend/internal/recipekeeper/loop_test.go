@@ -4,8 +4,10 @@ package recipekeeper
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -206,7 +208,12 @@ func TestSyncRecipesPopulatesCacheAndPaginates(t *testing.T) {
 		var req SyncRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req.Recipe == nil {
-			t.Fatalf("expected a Recipe bucket in the request")
+			// t.Fatalf here would call Goexit on the server's own goroutine,
+			// not the test goroutine — the test would just see a confusing
+			// EOF instead of this message. Errorf + return reports it
+			// correctly and still aborts the response.
+			t.Errorf("expected a Recipe bucket in the request")
+			return
 		}
 		n := atomic.AddInt32(&calls, 1)
 		switch n {
@@ -237,7 +244,8 @@ func TestSyncRecipesPopulatesCacheAndPaginates(t *testing.T) {
 				},
 			})
 		default:
-			t.Fatalf("unexpected call %d — pagination should have stopped", n)
+			t.Errorf("unexpected call %d — pagination should have stopped", n)
+			return
 		}
 	}))
 	defer srv.Close()
@@ -328,5 +336,196 @@ func TestTriggerRecipeSyncSkipsWhileInFlight(t *testing.T) {
 
 	if got := atomic.LoadInt32(&calls); got != 1 {
 		t.Errorf("calls = %d, want 1 (second trigger should have been skipped while the first was in flight)", got)
+	}
+}
+
+// TestSyncOnceIsSafeForConcurrentCallers guards the failures/authFailures/
+// stopped bookkeeping added for the auth latch. Task 9 adds
+// POST /api/recipe-keeper/sync, which calls SyncOnce concurrently with the
+// background Run loop — this must not race (run with -race).
+func TestSyncOnceIsSafeForConcurrentCallers(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(SyncResponse{})
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = svc.SyncOnce(context.Background())
+		}()
+	}
+	wg.Wait()
+
+	if st := svc.Status(); st.LastError != "" {
+		t.Errorf("LastError = %q, want empty after concurrent successful syncs", st.LastError)
+	}
+}
+
+// TestRecordErrorTransientThreeStrikes locks in the headline behavior of this
+// task: a transient (non-auth) failure only surfaces to the bell after the
+// third in a row, not the first.
+func TestRecordErrorTransientThreeStrikes(t *testing.T) {
+	db := testDB(t)
+	svc := &Service{DB: db}
+	transientErr := errors.New("connection reset")
+
+	svc.recordError(transientErr)
+	if got := svc.Status().LastError; got != "" {
+		t.Errorf("after 1 failure LastError = %q, want empty", got)
+	}
+	svc.recordError(transientErr)
+	if got := svc.Status().LastError; got != "" {
+		t.Errorf("after 2 failures LastError = %q, want empty", got)
+	}
+	svc.recordError(transientErr)
+	if got := svc.Status().LastError; got == "" {
+		t.Error("after 3 failures LastError should be set")
+	}
+}
+
+// TestRecordSuccessClearsPriorError proves a subsequent success clears a
+// previously-recorded error rather than leaving a stale message on the bell.
+func TestRecordSuccessClearsPriorError(t *testing.T) {
+	db := testDB(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(SyncResponse{})
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	// recordSuccess triggers a background recipe sync, which needs a real
+	// Client — a bare &Service{DB: db} would panic in that goroutine.
+	svc := &Service{Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth}, DB: db}
+
+	svc.recordError(errors.New("boom"))
+	svc.recordError(errors.New("boom"))
+	svc.recordError(errors.New("boom"))
+	if got := svc.Status().LastError; got == "" {
+		t.Fatal("expected LastError to be set before recordSuccess")
+	}
+
+	svc.recordSuccess()
+	if got := svc.Status().LastError; got != "" {
+		t.Errorf("LastError = %q, want empty after recordSuccess", got)
+	}
+}
+
+// TestRunExitsOnContextCancellation proves Run's poll loop actually stops
+// when its context is cancelled (app shutdown), rather than leaking forever.
+func TestRunExitsOnContextCancellation(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		if r.URL.Path == "/api/syncnotification" {
+			w.WriteHeader(http.StatusCreated) // 201: poll expired, nothing changed
+			return
+		}
+		_ = json.NewEncoder(w).Encode(SyncResponse{})
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		svc.Run(ctx)
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond) // let it reach the poll loop
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not exit after its context was cancelled")
+	}
+}
+
+// TestAuthFailureLatchStopsRun proves repeated auth failures stop the poll
+// loop entirely instead of retrying a bad password forever — the loop is
+// tripped directly via SyncOnce (real, fast) rather than waited out through
+// Run's own backoff between auth retries, which is deliberately slow.
+func TestAuthFailureLatchStopsRun(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.WriteHeader(http.StatusBadRequest) // credentials rejected, every time
+			return
+		}
+	}))
+	defer srv.Close()
+
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "bad",
+		HTTP: srv.Client(), Now: time.Now}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	for i := 0; i < authDisableAt; i++ {
+		if err := svc.SyncOnce(context.Background()); err == nil {
+			t.Fatalf("SyncOnce %d: want an auth error", i)
+		}
+	}
+	if !svc.isStopped() {
+		t.Fatal("latch should have tripped after authDisableAt consecutive auth failures")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		svc.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not stop immediately when the latch was already tripped")
+	}
+
+	st := svc.Status()
+	if !st.AuthFailed || st.LastError == "" {
+		t.Errorf("Status after latch trip = %+v, want AuthFailed and LastError set", st)
 	}
 }

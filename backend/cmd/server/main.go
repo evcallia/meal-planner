@@ -117,9 +117,18 @@ func main() {
 			OnChange: func(recipekeeper.Changes) {
 				// The sync loop has no *http.Request to hang a broadcast off
 				// of (unlike application.broadcast), so it publishes directly
-				// with a synthetic, stable source id.
+				// with a synthetic, stable source id. The payload deliberately
+				// carries NO "action" key: building real item-added/updated/
+				// deleted deltas needs the app package's serializers, and
+				// importing app from recipekeeper would be a circular import.
+				// Every frontend hook (and the cache warmer) already falls
+				// back to a full API refetch when action is undefined — the
+				// documented "legacy event" path — which is exactly what
+				// should happen here. A later task can upgrade this to
+				// per-item deltas once serialization is reachable from this
+				// package.
 				application.Broadcaster.BroadcastEvent("grocery.updated",
-					map[string]any{"action": "replaced", "source": "recipe-keeper"},
+					map[string]any{"source": "recipe-keeper"},
 					"recipe-keeper")
 			},
 		}
