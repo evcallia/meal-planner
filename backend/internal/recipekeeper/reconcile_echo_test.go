@@ -11,6 +11,15 @@ import (
 // through the doorbell. Nothing further may be pushed. Without the echo
 // guard in applyOne, this would push forever: every sync cycle would see its
 // own prior push reflected back and re-diff it as a fresh change.
+//
+// By the time the echo arrives, ApplyAcks has already synced the link's
+// cached RKName/RKChecked to match the row, so a same-row moveLink write
+// would be byte-identical for those fields — asserting on them wouldn't
+// distinguish "the guard fired" from "the guard is gone but there was
+// nothing to write anyway". The echo therefore carries a Position the link
+// does NOT have cached (42, vs the 1 every rkItem fixture defaults to): if
+// the guard is absent, applyOne falls through to moveLink's same-row branch
+// and unconditionally overwrites link.RKPosition with it.
 func TestPushAckEchoProducesNoFurtherPush(t *testing.T) {
 	db := testDB(t)
 	r := testReconciler(t, db)
@@ -37,16 +46,36 @@ func TestPushAckEchoProducesNoFurtherPush(t *testing.T) {
 		t.Fatalf("ApplyAcks: %v", err)
 	}
 
-	// The doorbell fires for our own write and the server replays the entity.
+	var cached models.RecipeKeeperLink
+	if err := db.First(&cached, "rk_item_id = ?", "a-id").Error; err != nil {
+		t.Fatalf("link lookup: %v", err)
+	}
+	if cached.RKPosition == 42 {
+		t.Fatalf("test fixture bug: cached RKPosition already 42")
+	}
+
+	// The doorbell fires for our own write and the server replays the entity
+	// — with a Position the link doesn't have cached, so a same-row moveLink
+	// write (what happens if the echo guard is missing) is observable.
 	echo := rkItem("a-id", "Fig", withRecipe("r1"), checked)
 	lm := serverLM
 	echo.LastModified = &lm
+	echo.Position = 42
 	ch, err := r.ApplyInbound([]ShoppingListItem{echo})
 	if err != nil {
 		t.Fatalf("ApplyInbound(echo): %v", err)
 	}
 	if ch.Any() {
 		t.Errorf("echo produced changes: %+v", ch)
+	}
+
+	var link models.RecipeKeeperLink
+	if err := db.First(&link, "rk_item_id = ?", "a-id").Error; err != nil {
+		t.Fatalf("link lookup: %v", err)
+	}
+	if link.RKPosition != cached.RKPosition {
+		t.Errorf("ECHO WAS NOT SUPPRESSED: RKPosition = %d, want unchanged at %d (moveLink wrote the echo's Position)",
+			link.RKPosition, cached.RKPosition)
 	}
 
 	after, err := r.PendingPushes()
@@ -60,6 +89,16 @@ func TestPushAckEchoProducesNoFurtherPush(t *testing.T) {
 
 // A delete round trip must also settle: after the ack, the replayed tombstoned
 // entity must not resurrect the item or re-push.
+//
+// Replaying the entity back tombstoned (IsDeleted:true) does not actually
+// exercise the resurrection guard (isTombstoned in ApplyInbound): even with
+// that guard removed, the replay would still route through detachLink, find
+// no row, and delete the now-redundant link — producing the same "item
+// absent, nothing pending" outcome for an unrelated reason. The real
+// scenario isTombstoned exists for is the server sending the entity back
+// LIVE (IsDeleted:false) because its own copy hasn't caught up with our
+// delete yet — that is what actually reaches attachNew and recreates the row
+// if the guard is missing.
 func TestDeleteRoundTripSettles(t *testing.T) {
 	db := testDB(t)
 	r := testReconciler(t, db)
@@ -89,6 +128,19 @@ func TestDeleteRoundTripSettles(t *testing.T) {
 	after, _ := r.PendingPushes()
 	if len(after) != 0 {
 		t.Errorf("delete still pending after ack: %+v", after)
+	}
+
+	// The actual resurrection scenario: the server's next pull still shows
+	// the entity LIVE, because its own state hasn't caught up with our
+	// already-acked delete. isTombstoned must block this unconditionally —
+	// without it, this reaches attachNew (the link that used to resolve it
+	// was already dropped by the tombstoned echo above) and recreates the row.
+	live := rkItem("a-id", "Fig", withRecipe("r1"))
+	if _, err := r.ApplyInbound([]ShoppingListItem{live}); err != nil {
+		t.Fatalf("ApplyInbound(live replay): %v", err)
+	}
+	if got := itemByName(t, db, "Fig", false); got != nil {
+		t.Errorf("RESURRECTED: a live replay of a tombstoned id recreated the row: %+v", got)
 	}
 }
 
@@ -194,14 +246,35 @@ func TestReplaceStyleIDChurnPreservesLinks(t *testing.T) {
 		CreatedAt: models.NowUTC(), UpdatedAt: models.NowUTC(),
 	})
 
+	// Sanity check only: links are string-keyed by (name, checked), so a raw
+	// row delete/recreate at the DB layer can't touch them regardless of
+	// whether the reconciler's own id-resolution logic (findRow) still
+	// works. This would hold even with reconcile.go deleted from the build.
 	if n := linkCount(db, "Lemon", false); n != 2 {
 		t.Fatalf("links after replace = %d, want 2", n)
 	}
+
 	pushes, err := r.PendingPushes()
 	if err != nil {
 		t.Fatalf("PendingPushes: %v", err)
 	}
 	if len(pushes) != 0 {
 		t.Errorf("an id churn must not push anything, got %+v", pushes)
+	}
+
+	// The postcondition that actually matters: if the id-churn bug this test
+	// exists to catch regressed findRow's name matching, PendingPushes would
+	// classify both links as unresolvable orphans and SILENTLY DELETE them
+	// (see the "orphan link, dropping" path) — which also produces zero
+	// pushes above. So re-check survival AFTER PendingPushes has run, and
+	// check identity, not just count, so a drop-and-somehow-replace couldn't
+	// slip past a bare count check either.
+	if n := linkCount(db, "Lemon", false); n != 2 {
+		t.Fatalf("DETACHED FROM RECIPE KEEPER: links after PendingPushes = %d, want 2 (orphan-drop leaves zero pushes too)", n)
+	}
+	var links []models.RecipeKeeperLink
+	db.Where("mp_name = ? AND mp_checked = ?", "lemon", false).Order("rk_item_id asc").Find(&links)
+	if len(links) != 2 || links[0].RKItemID != "a-id" || links[1].RKItemID != "b-id" {
+		t.Errorf("surviving links = %+v, want rk_item_id a-id and b-id intact", links)
 	}
 }
