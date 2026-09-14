@@ -534,6 +534,15 @@ describe('PackingListsView per-list completed visibility', () => {
     expect(screen.getByRole('button', { name: /apply to all lists/i })).toBeInTheDocument();
   });
 
+  it('can be dismissed early with the close button', () => {
+    renderView({ showChecked: true, showCheckedOverrides: {} });
+    openMenu();
+    fireEvent.click(screen.getByText('Hide completed items'));
+    expect(screen.getByTestId('packing-flash')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
+    expect(screen.queryByTestId('packing-flash')).not.toBeInTheDocument();
+  });
+
   it('has no apply-to-all item in the menu itself', () => {
     renderView({ showChecked: true, showCheckedOverrides: { l1: false } });
     openMenu();

@@ -488,6 +488,11 @@ export function PackingListsView({
     flashTimerRef.current = setTimeout(() => setFlash(null), action ? 6000 : 4000);
   }, []);
 
+  const dismissFlash = useCallback(() => {
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    setFlash(null);
+  }, []);
+
   // Toggling completed-visibility pins THIS list, then offers to extend the
   // choice to every list — the offer rides on the transient bar rather than
   // sitting in the menu, where it read as an unrelated option.
@@ -917,6 +922,15 @@ export function PackingListsView({
                 {flash.action.label}
               </button>
             )}
+            <button
+              onClick={dismissFlash}
+              aria-label="Dismiss"
+              className="shrink-0 -mr-1 p-1 rounded-lg opacity-60 hover:opacity-100"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         </div>
       )}
