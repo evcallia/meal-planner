@@ -18,16 +18,24 @@ import (
 // model already groups on — survives that id churn.
 //
 // RKName/RKChecked cache the last known server state so the outbound reconcile
-// can diff against it without a network round trip.
+// can diff against it without a network round trip. RKSyncedToExternalList and
+// RKCheckedDate are cached the same way — the protocol has no partial
+// updates, so every push must echo these from the last known server state
+// rather than invent them (RKSyncedToExternalList is out of scope for this
+// integration; RKCheckedDate must only regenerate on an actual
+// unchecked -> checked transition, never on every push of an already-checked
+// item).
 type RecipeKeeperLink struct {
-	RKItemID       string  `gorm:"type:text;primaryKey"`
-	MPName         string  `gorm:"type:text;index"` // normalized: lowercased, trimmed
-	MPChecked      bool    `gorm:"index"`
-	RKRecipeID     *string `gorm:"type:text;index"`
-	RKName         string  `gorm:"type:text"`
-	RKChecked      bool
-	RKLastModified string `gorm:"type:text"`
-	RKPosition     int
+	RKItemID               string  `gorm:"type:text;primaryKey"`
+	MPName                 string  `gorm:"type:text;index"` // normalized: lowercased, trimmed
+	MPChecked              bool    `gorm:"index"`
+	RKRecipeID             *string `gorm:"type:text;index"`
+	RKName                 string  `gorm:"type:text"`
+	RKChecked              bool
+	RKLastModified         string `gorm:"type:text"`
+	RKPosition             int
+	RKSyncedToExternalList *bool
+	RKCheckedDate          *string `gorm:"type:text"`
 }
 
 // RecipeKeeperRecipe caches recipe id -> title. Only the title is stored; the

@@ -137,6 +137,8 @@ func (r *Reconciler) moveLink(link *models.RecipeKeeperLink, in ShoppingListItem
 	}
 	link.RKLastModified = derefOr(in.LastModified, link.RKLastModified)
 	link.RKPosition = in.Position
+	link.RKSyncedToExternalList = in.IsSyncedToExternalList
+	link.RKCheckedDate = in.CheckedDate
 	return r.DB.Save(link).Error
 }
 
@@ -163,14 +165,16 @@ func (r *Reconciler) attachNew(in ShoppingListItem, ch *Changes) error {
 	}
 
 	return r.DB.Create(&models.RecipeKeeperLink{
-		RKItemID:       in.ID,
-		MPName:         normalizeName(row.Name),
-		MPChecked:      row.Checked,
-		RKRecipeID:     in.RecipeID,
-		RKName:         in.Name,
-		RKChecked:      in.IsChecked,
-		RKLastModified: derefOr(in.LastModified, ""),
-		RKPosition:     in.Position,
+		RKItemID:               in.ID,
+		MPName:                 normalizeName(row.Name),
+		MPChecked:              row.Checked,
+		RKRecipeID:             in.RecipeID,
+		RKName:                 in.Name,
+		RKChecked:              in.IsChecked,
+		RKLastModified:         derefOr(in.LastModified, ""),
+		RKPosition:             in.Position,
+		RKSyncedToExternalList: in.IsSyncedToExternalList,
+		RKCheckedDate:          in.CheckedDate,
 	}).Error
 }
 
@@ -260,14 +264,19 @@ func stripZ(s string) string { return strings.TrimSuffix(s, "Z") }
 func (r *Reconciler) PendingPushes() ([]ShoppingListItem, error) {
 	var out []ShoppingListItem
 
-	// Tombstones: either a delete to push, or an undo to reverse.
+	// Tombstones: either a delete to push, or an undo to reverse. Ordered for
+	// deterministic push order, same rationale as linksFor's ordering.
 	var tombs []models.RecipeKeeperTombstone
-	if err := r.DB.Find(&tombs).Error; err != nil {
+	if err := r.DB.Order("deleted_at asc, rk_item_id asc").Find(&tombs).Error; err != nil {
 		return nil, err
 	}
 	for _, tomb := range tombs {
 		var link models.RecipeKeeperLink
-		hasLink := r.DB.First(&link, "rk_item_id = ?", tomb.RKItemID).Error == nil
+		lerr := r.DB.First(&link, "rk_item_id = ?", tomb.RKItemID).Error
+		hasLink := lerr == nil
+		if lerr != nil && !errors.Is(lerr, gorm.ErrRecordNotFound) {
+			return nil, lerr
+		}
 
 		var row *models.GroceryItem
 		if hasLink {
@@ -288,7 +297,9 @@ func (r *Reconciler) PendingPushes() ([]ShoppingListItem, error) {
 				}
 				continue
 			}
-			out = append(out, r.entityFor(link, link.RKName, link.RKChecked, false))
+			if item, ok := r.buildPush(link, link.RKName, link.RKChecked, false); ok {
+				out = append(out, item)
+			}
 			continue
 		}
 
@@ -296,18 +307,25 @@ func (r *Reconciler) PendingPushes() ([]ShoppingListItem, error) {
 			continue // already deleted on the server
 		}
 		if !hasLink {
-			// Link already gone; synthesize the minimum the server needs.
-			out = append(out, ShoppingListItem{
-				ID: tomb.RKItemID, ShoppingListID: r.ListID, IsDeleted: true,
-			})
+			// No link means we cannot construct a COMPLETE entity: every
+			// omitted field (Name, Position, RecipeId, LastModified) would
+			// overwrite the server's value with the create encoding. Leaving
+			// the row alone in Recipe Keeper is strictly better than
+			// blanking it — the 90-day tombstone retention eventually clears
+			// this tombstone regardless. ApplyAcks now keeps the link across
+			// an acked delete specifically so this branch stays near
+			// unreachable; the log is a diagnostic tripwire if it isn't.
+			log.Printf("recipekeeper: tombstone %s has no link, cannot push a complete delete; skipping", tomb.RKItemID)
 			continue
 		}
-		out = append(out, r.entityFor(link, link.RKName, link.RKChecked, true))
+		if item, ok := r.buildPush(link, link.RKName, link.RKChecked, true); ok {
+			out = append(out, item)
+		}
 	}
 
 	// Then field diffs for links whose row has drifted from cached RK state.
 	var links []models.RecipeKeeperLink
-	if err := r.DB.Find(&links).Error; err != nil {
+	if err := r.DB.Order("rk_item_id asc").Find(&links).Error; err != nil {
 		return nil, err
 	}
 	for _, link := range links {
@@ -331,16 +349,35 @@ func (r *Reconciler) PendingPushes() ([]ShoppingListItem, error) {
 		if collapseKey(row.Name, row.Checked) == collapseKey(link.RKName, link.RKChecked) {
 			continue
 		}
-		out = append(out, r.entityFor(link, row.Name, row.Checked, false))
+		if item, ok := r.buildPush(link, row.Name, row.Checked, false); ok {
+			out = append(out, item)
+		}
 	}
 	return out, nil
 }
 
+// buildPush wraps entityFor with a guard: an empty cached LastModified means
+// the link never had authoritative server state cached (a data-integrity
+// gap, not a normal state), and entityFor would then omit LastModified —
+// the CREATE encoding — for an entity Recipe Keeper already has. Skip and
+// log rather than risk resetting server-side state for an existing entity.
+func (r *Reconciler) buildPush(link models.RecipeKeeperLink, name string, checkedNow, isDelete bool) (ShoppingListItem, bool) {
+	if link.RKLastModified == "" {
+		log.Printf("recipekeeper: link %s has no cached LastModified, skipping push", link.RKItemID)
+		return ShoppingListItem{}, false
+	}
+	return r.entityFor(link, name, checkedNow, isDelete), true
+}
+
 // entityFor builds a complete entity from the link's cached fields, replacing
 // only what changed. The protocol has no partial updates: any field omitted or
-// stale here overwrites the server's value.
+// stale here overwrites the server's value — IsSyncedToExternalList and
+// CheckedDate are therefore always echoed from the link's cache, never
+// invented, with one exception: CheckedDate is freshly generated ONLY on the
+// unchecked -> checked transition (checkedNow && !link.RKChecked); any other
+// push of an already-checked item (rename, un-delete, ...) echoes the
+// server's original check timestamp so it is never silently overwritten.
 func (r *Reconciler) entityFor(link models.RecipeKeeperLink, name string, checkedNow, isDelete bool) ShoppingListItem {
-	synced := true
 	item := ShoppingListItem{
 		ID:                     link.RKItemID,
 		Name:                   name,
@@ -348,16 +385,22 @@ func (r *Reconciler) entityFor(link models.RecipeKeeperLink, name string, checke
 		IsChecked:              checkedNow,
 		Position:               link.RKPosition,
 		RecipeID:               link.RKRecipeID,
-		IsSyncedToExternalList: &synced,
+		IsSyncedToExternalList: link.RKSyncedToExternalList,
 		IsDeleted:              isDelete,
 	}
 	if lm := stripZ(link.RKLastModified); lm != "" {
 		item.LastModified = &lm
 	}
-	if checkedNow {
-		// Naive UTC with no zone suffix, matching the client's own encoding.
+	switch {
+	case checkedNow && !link.RKChecked:
+		// The moment of check: generate the timestamp. Naive UTC, no zone
+		// suffix — CheckedDate never carries Z on the wire, unlike LastModified.
 		d := r.now().UTC().Format("2006-01-02T15:04:05.0000000")
 		item.CheckedDate = &d
+	case checkedNow:
+		item.CheckedDate = link.RKCheckedDate
+	default:
+		item.CheckedDate = nil
 	}
 	return item
 }
@@ -369,10 +412,18 @@ func (r *Reconciler) ApplyAcks(acks []AckItem) error {
 	now := r.now()
 	for _, ack := range acks {
 		var link models.RecipeKeeperLink
-		hasLink := r.DB.First(&link, "rk_item_id = ?", ack.ID).Error == nil
+		lerr := r.DB.First(&link, "rk_item_id = ?", ack.ID).Error
+		hasLink := lerr == nil
+		if lerr != nil && !errors.Is(lerr, gorm.ErrRecordNotFound) {
+			return lerr
+		}
 
 		var tomb models.RecipeKeeperTombstone
-		if err := r.DB.First(&tomb, "rk_item_id = ?", ack.ID).Error; err == nil {
+		terr := r.DB.First(&tomb, "rk_item_id = ?", ack.ID).Error
+		if terr != nil && !errors.Is(terr, gorm.ErrRecordNotFound) {
+			return terr
+		}
+		if terr == nil {
 			var row *models.GroceryItem
 			if hasLink {
 				var ferr error
@@ -446,6 +497,16 @@ func (r *Reconciler) RetargetLinks(fromName string, fromChecked bool, toName str
 	to := normalizeName(toName)
 	if from == to && fromChecked == toChecked {
 		return nil
+	}
+	// MP allows multiple grocery rows with the same name (no uniqueness
+	// constraint), so if the destination collapse key already has links this
+	// move creates two groups of links pointing at what looks like one row
+	// from Recipe Keeper's side. We do not attempt to merge them — that would
+	// mean picking a survivor row and reconciling quantities — so this is an
+	// accepted ambiguity; log it so it is visible if it ever actually happens.
+	if linkCount(r.DB, to, toChecked) > 0 {
+		log.Printf("recipekeeper: RetargetLinks %s/%v -> %s/%v: destination already has links",
+			from, fromChecked, to, toChecked)
 	}
 	return r.DB.Model(&models.RecipeKeeperLink{}).
 		Where("mp_name = ? AND mp_checked = ?", from, fromChecked).
