@@ -42,10 +42,10 @@ type RecipeKeeperRecipe struct {
 // PushedAt nil means the delete still needs pushing, and the row's existence
 // stops a not-yet-synced delete from being re-imported on the next pull.
 type RecipeKeeperTombstone struct {
-	RKItemID        string `gorm:"type:text;primaryKey"`
-	DeletedAt       time.Time
-	PushedAt        *time.Time
-	AckLastModified *string `gorm:"type:text"`
+	RKItemID        string     `gorm:"type:text;primaryKey"`
+	DeletedAt       time.Time  `gorm:"type:timestamp"`
+	PushedAt        *time.Time `gorm:"type:timestamp"`
+	AckLastModified *string    `gorm:"type:text"`
 }
 
 // RecipeKeeperState is a key/value bag for sync watermarks, the generated
