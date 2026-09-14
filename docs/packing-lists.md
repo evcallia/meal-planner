@@ -46,8 +46,9 @@ Owner-only: delete list, add/remove shares. Everything else is collaborative.
   entirely when off. It is the DEFAULT: `settings.packingShowCheckedOverrides`
   maps a list id to a pinned value, so one trip can hide its completed items
   while the rest keep showing them. The kebab toggle writes an override for the
-  active list; "Use this for all lists" promotes the current value to the
-  default and clears the overrides.
+  active list, then the transient flash bar offers "Apply to all lists", which
+  promotes the new value to the default and clears every override. The offer is
+  skipped when it would change nothing.
 * `POST /api/packing/lists/{id}/check-all` with `{"checked": bool}` checks or
   unchecks every item in the list in one shot (menu action + single undo entry).
 

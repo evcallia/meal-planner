@@ -116,7 +116,7 @@ export function PackingListsView({
   const [newItemName, setNewItemName] = useState('');
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
-  const [flash, setFlash] = useState<string | null>(null);
+  const [flash, setFlash] = useState<{ message: string; action?: { label: string; onClick: () => void } } | null>(null);
 
   const commitEditingRef = useRef<(() => void) | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -133,10 +133,6 @@ export function PackingListsView({
 
   // Completed-item visibility is per list, defaulting to the global setting.
   const showCheckedHere = showCheckedOverrides[listId] ?? showChecked;
-  // "Use this for all" is only offered when it would actually change something:
-  // either this list differs from the default, or some other list is still pinned.
-  const canApplyToAll = showCheckedHere !== showChecked
-    || Object.keys(showCheckedOverrides).length > 0;
 
 
   useEffect(() => {
@@ -482,11 +478,41 @@ export function PackingListsView({
   // Copying lands in ANOTHER list, so nothing visibly changes here — say so.
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (flashTimerRef.current) clearTimeout(flashTimerRef.current); }, []);
-  const showFlash = useCallback((message: string) => {
-    setFlash(message);
+  const showFlash = useCallback((
+    message: string,
+    action?: { label: string; onClick: () => void },
+  ) => {
+    setFlash({ message, action });
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-    flashTimerRef.current = setTimeout(() => setFlash(null), 4000);
+    // An actionable bar sticks around longer — it has to be read and acted on.
+    flashTimerRef.current = setTimeout(() => setFlash(null), action ? 6000 : 4000);
   }, []);
+
+  // Toggling completed-visibility pins THIS list, then offers to extend the
+  // choice to every list — the offer rides on the transient bar rather than
+  // sitting in the menu, where it read as an unrelated option.
+  const toggleShowChecked = useCallback(() => {
+    const next = !showCheckedHere;
+    updatePrefsRef.current({ showCheckedOverrides: { ...showCheckedOverrides, [listId]: next } });
+
+    const listName = activeList?.name ?? 'this list';
+    const verb = next ? 'shown' : 'hidden';
+    // Only worth offering when applying to all would actually change something:
+    // this list would differ from the default, or another list is still pinned.
+    const wouldChange = next !== showChecked
+      || Object.keys(showCheckedOverrides).some(id => id !== listId);
+    if (!wouldChange) {
+      showFlash(`Completed items ${verb} for “${listName}”.`);
+      return;
+    }
+    showFlash(`Completed items ${verb} for “${listName}”.`, {
+      label: 'Apply to all lists',
+      onClick: () => {
+        updatePrefsRef.current({ showChecked: next, showCheckedOverrides: {} });
+        showFlash(`Completed items ${verb} for all lists.`);
+      },
+    });
+  }, [showCheckedHere, showChecked, showCheckedOverrides, listId, activeList, showFlash]);
 
   const handleCopySection = useCallback(async (sectionId: string, toListId: string) => {
     const target = lists.find(l => l.id === toListId);
@@ -732,25 +758,12 @@ export function PackingListsView({
                           </button>
                         )}
                         <button
-                          onClick={() => {
-                            updatePrefs({ showCheckedOverrides: { ...showCheckedOverrides, [listId]: !showCheckedHere } });
-                            setMenuOpen(false);
-                          }}
+                          onClick={() => { toggleShowChecked(); setMenuOpen(false); }}
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
                         >
                           {showCheckedHere ? 'Hide completed items' : 'Show completed items'}
                         </button>
-                        {canApplyToAll && (
-                          <button
-                            onClick={() => {
-                              updatePrefs({ showChecked: showCheckedHere, showCheckedOverrides: {} });
-                              setMenuOpen(false);
-                            }}
-                            className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
-                          >
-                            Use this for all lists
-                          </button>
-                        )}
+
                         <button
                           onClick={handleCopy}
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -894,7 +907,17 @@ export function PackingListsView({
           data-testid="packing-flash"
           className="mt-2 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300"
         >
-          {flash}
+          <div className="flex items-center gap-3">
+            <span className="flex-1 min-w-0">{flash.message}</span>
+            {flash.action && (
+              <button
+                onClick={flash.action.onClick}
+                className="shrink-0 font-semibold underline underline-offset-2 hover:no-underline"
+              >
+                {flash.action.label}
+              </button>
+            )}
+          </div>
         </div>
       )}
 

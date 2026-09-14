@@ -491,25 +491,52 @@ describe('PackingListsView per-list completed visibility', () => {
     expect(screen.getByText('Show completed items')).toBeInTheDocument();
   });
 
-  it('"use for all" pushes the effective value to the default and clears overrides', () => {
+  it('offers to apply to all lists after a toggle, without doing it yet', () => {
     const onUpdate = vi.fn();
     mockLists = [listFixture(), secondList()];
-    renderView({ showChecked: true, showCheckedOverrides: { l1: false }, onUpdateDisplayPrefs: onUpdate });
+    renderView({ showChecked: true, showCheckedOverrides: {}, onUpdateDisplayPrefs: onUpdate });
     openMenu();
-    fireEvent.click(screen.getByText('Use this for all lists'));
-    expect(onUpdate).toHaveBeenCalledWith({ showChecked: false, showCheckedOverrides: {} });
+    fireEvent.click(screen.getByText('Hide completed items'));
+    // The toggle itself only pinned this list.
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdate).toHaveBeenCalledWith({ showCheckedOverrides: { l1: false } });
+    expect(screen.getByTestId('packing-flash')).toHaveTextContent(/Paris/);
+    expect(screen.getByRole('button', { name: /apply to all lists/i })).toBeInTheDocument();
   });
 
-  it('hides "use for all" when every list already agrees with the default', () => {
-    renderView({ showChecked: true, showCheckedOverrides: {} });
+  it('applies to every list when the offer is taken', () => {
+    const onUpdate = vi.fn();
+    mockLists = [listFixture(), secondList()];
+    renderView({ showChecked: true, showCheckedOverrides: {}, onUpdateDisplayPrefs: onUpdate });
+    openMenu();
+    fireEvent.click(screen.getByText('Hide completed items'));
+    fireEvent.click(screen.getByRole('button', { name: /apply to all lists/i }));
+    expect(onUpdate).toHaveBeenLastCalledWith({ showChecked: false, showCheckedOverrides: {} });
+    // The offer is consumed; a confirmation replaces it.
+    expect(screen.queryByRole('button', { name: /apply to all lists/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId('packing-flash')).toHaveTextContent(/all lists/i);
+  });
+
+  it('does not offer when applying to all would change nothing', () => {
+    // Only list, and the toggle lands back on the global default.
+    renderView({ showChecked: false, showCheckedOverrides: { l1: true } });
+    openMenu();
+    fireEvent.click(screen.getByText('Hide completed items'));
+    expect(screen.queryByRole('button', { name: /apply to all lists/i })).not.toBeInTheDocument();
+  });
+
+  it('still offers when another list carries an override', () => {
+    mockLists = [listFixture(), secondList()];
+    renderView({ showChecked: false, showCheckedOverrides: { l1: true, l2: true } });
+    openMenu();
+    // Back to the default for l1, but l2 is still pinned — applying to all clears it.
+    fireEvent.click(screen.getByText('Hide completed items'));
+    expect(screen.getByRole('button', { name: /apply to all lists/i })).toBeInTheDocument();
+  });
+
+  it('has no apply-to-all item in the menu itself', () => {
+    renderView({ showChecked: true, showCheckedOverrides: { l1: false } });
     openMenu();
     expect(screen.queryByText('Use this for all lists')).not.toBeInTheDocument();
-  });
-
-  it('offers "use for all" when another list still carries an override', () => {
-    mockLists = [listFixture(), secondList()];
-    renderView({ showChecked: true, showCheckedOverrides: { l2: false } });
-    openMenu();
-    expect(screen.getByText('Use this for all lists')).toBeInTheDocument();
   });
 });
