@@ -132,6 +132,9 @@ func main() {
 					"recipe-keeper")
 			},
 		}
+		// Exposed on App so /api/recipe-keeper/status and /sync can reach it;
+		// nil (the zero value) on App when the integration isn't configured.
+		application.RecipeKeeper = rkService
 		var rkCtx context.Context
 		rkCtx, cancelRecipeKeeper = context.WithCancel(context.Background())
 		go rkService.Run(rkCtx)

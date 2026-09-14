@@ -18,6 +18,7 @@ import (
 	"mealplanner/internal/models"
 	"mealplanner/internal/push"
 	"mealplanner/internal/realtime"
+	"mealplanner/internal/recipekeeper"
 	"mealplanner/internal/session"
 )
 
@@ -28,7 +29,10 @@ type App struct {
 	Broadcaster *realtime.Broadcaster
 	Calendar    *ical.Service
 	Push        *push.Service
-	oidc        *oidcClient
+	// RecipeKeeper is nil when the integration isn't configured (no env
+	// credentials) — handlers must treat nil as "disabled", not panic.
+	RecipeKeeper *recipekeeper.Service
+	oidc         *oidcClient
 
 	loginLimiter *loginLimiter
 }
@@ -210,6 +214,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/packing/lists/{listId}/reorder-bags", auth(a.handlePackingReorderBags))
 	mux.HandleFunc("PATCH /api/packing/bags/{bagId}", auth(a.handlePackingUpdateBag))
 	mux.HandleFunc("DELETE /api/packing/bags/{bagId}", auth(a.handlePackingDeleteBag))
+
+	mux.HandleFunc("GET /api/recipe-keeper/status", auth(a.handleRecipeKeeperStatus))
+	mux.HandleFunc("POST /api/recipe-keeper/sync", auth(a.handleRecipeKeeperSync))
 
 	// Unknown /api paths → 404 JSON (before the SPA catch-all).
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {

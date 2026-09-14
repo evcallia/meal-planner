@@ -10,12 +10,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"mealplanner/internal/config"
 	"mealplanner/internal/db"
 	"mealplanner/internal/ical"
+	"mealplanner/internal/models"
 	"mealplanner/internal/realtime"
 )
 
@@ -188,6 +190,31 @@ func (c *Collector) Events() []map[string]any {
 			c.b.Unsubscribe(c.sub)
 			return out
 		}
+	}
+}
+
+// seedRecipeKeeperLink writes a RecipeKeeperLink + RecipeKeeperRecipe pair
+// directly, mirroring what the sync loop's Reconciler would persist. Links
+// address grocery rows by collapse key (MPName/MPChecked), never by grocery
+// item id — see models.RecipeKeeperLink.
+func seedRecipeKeeperLink(t *testing.T, ta *testApp, itemName string, checked bool, rkItemID, recipeID, title string) {
+	t.Helper()
+	rid := recipeID
+	link := models.RecipeKeeperLink{
+		RKItemID:       rkItemID,
+		MPName:         strings.ToLower(strings.TrimSpace(itemName)),
+		MPChecked:      checked,
+		RKRecipeID:     &rid,
+		RKName:         itemName,
+		RKChecked:      checked,
+		RKLastModified: "2026-09-14T00:00:00.0000001Z",
+	}
+	if err := ta.App.DB.Create(&link).Error; err != nil {
+		t.Fatalf("seed recipe keeper link: %v", err)
+	}
+	recipe := models.RecipeKeeperRecipe{RKRecipeID: recipeID, Title: title}
+	if err := ta.App.DB.Create(&recipe).Error; err != nil {
+		t.Fatalf("seed recipe keeper recipe: %v", err)
 	}
 }
 

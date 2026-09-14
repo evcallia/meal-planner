@@ -26,6 +26,11 @@ func collapseKey(name string, checked bool) string {
 	return k
 }
 
+// RowKey is the collapse key linking a Recipe Keeper row to a grocery row —
+// exported so the app package can build the same key when joining
+// RecipeKeeperLink rows against grocery items for serialization.
+func RowKey(name string, checked bool) string { return collapseKey(name, checked) }
+
 func quantityOf(item *models.GroceryItem) int {
 	if item.Quantity == nil || *item.Quantity == "" {
 		return 1

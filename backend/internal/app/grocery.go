@@ -11,6 +11,7 @@ import (
 	"mealplanner/internal/httpx"
 	"mealplanner/internal/models"
 	"mealplanner/internal/push"
+	"mealplanner/internal/recipekeeper"
 	"mealplanner/internal/session"
 )
 
@@ -70,12 +71,30 @@ func (a *App) loadGrocerySections() ([]models.GrocerySection, error) {
 	return sections, err
 }
 
-func grocerySectionsJSON(sections []models.GrocerySection) []J {
+// grocerySectionsJSON serializes a full response. It loads the recipe
+// attribution map once (recipeRefsByKey) rather than per item, since a
+// response can carry ~200 items.
+func grocerySectionsJSON(db *gorm.DB, sections []models.GrocerySection) []J {
+	refsByKey := recipeRefsByKey(db)
 	out := make([]J, 0, len(sections))
 	for i := range sections {
-		out = append(out, grocerySectionJSON(&sections[i]))
+		out = append(out, grocerySectionJSON(&sections[i], refsByKey))
 	}
 	return out
+}
+
+// groceryItemJSON and grocerySectionJSON (App methods, below) are
+// single-item/single-section convenience wrappers for the mutation
+// endpoints, which only ever serialize one row —
+// building the whole recipeRefsByKey map for one lookup is a couple of extra
+// queries, not an N+1, and keeps every response shape going through the same
+// serializer.
+func (a *App) groceryItemJSON(item *models.GroceryItem) J {
+	return groceryItemJSON(item, recipeRefsByKey(a.DB)[recipekeeper.RowKey(item.Name, item.Checked)])
+}
+
+func (a *App) grocerySectionJSON(section *models.GrocerySection) J {
+	return grocerySectionJSON(section, recipeRefsByKey(a.DB))
 }
 
 func (a *App) handleListGrocery(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -84,7 +103,7 @@ func (a *App) handleListGrocery(w http.ResponseWriter, r *http.Request, _ *sessi
 		httpx.WriteError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, 200, grocerySectionsJSON(sections))
+	httpx.WriteJSON(w, 200, grocerySectionsJSON(a.DB, sections))
 }
 
 func (a *App) handleListItemDefaults(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -240,7 +259,7 @@ func (a *App) handleReplaceGrocery(w http.ResponseWriter, r *http.Request, _ *se
 		httpx.WriteError(w, err)
 		return
 	}
-	result := grocerySectionsJSON(sections)
+	result := grocerySectionsJSON(a.DB, sections)
 	replacedItems := 0
 	for _, sec := range payload.Sections {
 		replacedItems += len(sec.Items)
@@ -281,7 +300,7 @@ func (a *App) handleUpdateGrocerySection(w http.ResponseWriter, r *http.Request,
 	a.broadcast("grocery.updated", J{
 		"action": "section-renamed", "sectionId": section.ID.String(), "name": section.Name,
 	}, r)
-	httpx.WriteJSON(w, 200, grocerySectionJSON(&section))
+	httpx.WriteJSON(w, 200, a.grocerySectionJSON(&section))
 }
 
 func (a *App) handleDeleteGrocerySection(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -337,7 +356,7 @@ func (a *App) handleCreateGrocerySection(w http.ResponseWriter, r *http.Request,
 		"section": J{"id": section.ID.String(), "name": section.Name, "position": section.Position, "items": []J{}},
 	}, r)
 	section.Items = []models.GroceryItem{}
-	httpx.WriteJSON(w, http.StatusCreated, grocerySectionJSON(&section))
+	httpx.WriteJSON(w, http.StatusCreated, a.grocerySectionJSON(&section))
 }
 
 func (a *App) handleReorderGrocerySections(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -548,7 +567,7 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 	// Check/uncheck and renames get precise phrasing; the generic derivation
 	// ("updated X") covers quantity/store tweaks.
 	updatePayload := J{
-		"action": "item-updated", "sectionId": item.SectionID.String(), "item": groceryItemJSON(&item),
+		"action": "item-updated", "sectionId": item.SectionID.String(), "item": a.groceryItemJSON(&item),
 	}
 	if _, ok := updates["checked"]; ok {
 		verb := "unchecked"
@@ -560,7 +579,7 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 		updatePayload["pushDetail"] = "renamed “" + oldName + "” to “" + item.Name + "”"
 	}
 	a.broadcast("grocery.updated", updatePayload, r)
-	httpx.WriteJSON(w, 200, groceryItemJSON(&item))
+	httpx.WriteJSON(w, 200, a.groceryItemJSON(&item))
 }
 
 func (a *App) handleAddGroceryItem(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -628,9 +647,9 @@ func (a *App) handleAddGroceryItem(w http.ResponseWriter, r *http.Request, _ *se
 		return
 	}
 	a.broadcast("grocery.updated", J{
-		"action": "item-added", "sectionId": item.SectionID.String(), "item": groceryItemJSON(&item),
+		"action": "item-added", "sectionId": item.SectionID.String(), "item": a.groceryItemJSON(&item),
 	}, r)
-	httpx.WriteJSON(w, 200, groceryItemJSON(&item))
+	httpx.WriteJSON(w, 200, a.groceryItemJSON(&item))
 }
 
 func (a *App) handleMoveGroceryItem(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -697,9 +716,9 @@ func (a *App) handleMoveGroceryItem(w http.ResponseWriter, r *http.Request, _ *s
 		"action":        "item-moved",
 		"fromSectionId": oldSectionID.String(),
 		"toSectionId":   item.SectionID.String(),
-		"item":          groceryItemJSON(&item),
+		"item":          a.groceryItemJSON(&item),
 	}, r)
-	httpx.WriteJSON(w, 200, groceryItemJSON(&item))
+	httpx.WriteJSON(w, 200, a.groceryItemJSON(&item))
 }
 
 func (a *App) handleDeleteGroceryItem(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -759,5 +778,5 @@ func (a *App) handleClearGroceryItems(w http.ResponseWriter, r *http.Request, _ 
 		action = "cleared-all"
 	}
 	a.broadcast("grocery.updated", J{"action": action}, r)
-	httpx.WriteJSON(w, 200, grocerySectionsJSON(sections))
+	httpx.WriteJSON(w, 200, grocerySectionsJSON(a.DB, sections))
 }
