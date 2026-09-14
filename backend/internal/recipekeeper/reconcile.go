@@ -247,13 +247,6 @@ func (r *Reconciler) placeSection(name string) (uuid.UUID, error) {
 	return sec.ID, nil
 }
 
-// sectionFromRKCategory is filled in by Task 6, which caches RK's
-// name -> category mapping. Until then no RK-derived placement occurs and the
-// Uncategorized fallback applies.
-func (r *Reconciler) sectionFromRKCategory(string) (uuid.UUID, bool) {
-	return uuid.Nil, false
-}
-
 // stripZ converts a server timestamp to the form the client must echo back.
 // Server values carry Z; pushed values must not (docs/recipe-keeper-api.md).
 func stripZ(s string) string { return strings.TrimSuffix(s, "Z") }

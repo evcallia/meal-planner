@@ -2,6 +2,7 @@
 package recipekeeper
 
 import (
+	"encoding/json"
 	"testing"
 
 	"mealplanner/internal/models"
@@ -233,6 +234,12 @@ func TestReplaceStyleIDChurnPreservesLinks(t *testing.T) {
 		rkItem("a-id", "Lemon", withRecipe("r1")),
 		rkItem("b-id", "Lemon", withRecipe("r2")),
 	})
+	if err := r.StoreRecipes([]json.RawMessage{
+		json.RawMessage(`{"Id":"r1","Title":"Fig Cocktail"}`),
+		json.RawMessage(`{"Id":"r2","Title":"Thai Curry"}`),
+	}); err != nil {
+		t.Fatalf("StoreRecipes: %v", err)
+	}
 
 	// Exactly what handleReplaceGrocery does.
 	var sections []models.GrocerySection
@@ -276,5 +283,14 @@ func TestReplaceStyleIDChurnPreservesLinks(t *testing.T) {
 	db.Where("mp_name = ? AND mp_checked = ?", "lemon", false).Order("rk_item_id asc").Find(&links)
 	if len(links) != 2 || links[0].RKItemID != "a-id" || links[1].RKItemID != "b-id" {
 		t.Errorf("surviving links = %+v, want rk_item_id a-id and b-id intact", links)
+	}
+
+	// Attribution must survive the id churn too.
+	refs, err := r.RecipeTitles("Lemon", false)
+	if err != nil {
+		t.Fatalf("RecipeTitles: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Errorf("recipe refs after churn = %d, want 2", len(refs))
 	}
 }
