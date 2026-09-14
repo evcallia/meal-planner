@@ -58,9 +58,12 @@ export interface Settings {
   groceryHideStores: boolean;
   grocerySortBy: 'manual' | 'alphabetical';
   // Lists tab display preferences (synced per-user). `packingShowChecked` keeps
-  // packed items visible at the bottom of their section; turning it off hides
-  // them without touching their stored position.
+  // completed items visible at the bottom of their section; turning it off
+  // hides them without touching their stored position. It is the DEFAULT —
+  // `packingShowCheckedOverrides` pins individual lists against it, and the
+  // kebab's "Use this for all lists" collapses everything back to the default.
   packingShowChecked: boolean;
+  packingShowCheckedOverrides: Record<string, boolean>;
   packingHideBags: boolean;
   packingSortBy: 'manual' | 'alphabetical';
   packingSelectedBagIds: string[];
@@ -103,6 +106,7 @@ export const DEFAULT_SETTINGS: Settings = {
   groceryHideStores: false,
   grocerySortBy: 'manual',
   packingShowChecked: true,
+  packingShowCheckedOverrides: {},
   packingHideBags: false,
   packingSortBy: 'manual',
   packingSelectedBagIds: [],

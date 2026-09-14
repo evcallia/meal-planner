@@ -43,7 +43,11 @@ Owner-only: delete list, add/remove shares. Everything else is collaborative.
 * Grocery instead lifts every checked item into one global "Checked" panel and
   orders it by `updated_at`; packing keeps them in place.
 * `settings.packingShowChecked` (per-user, synced, default true) hides them
-  entirely when off.
+  entirely when off. It is the DEFAULT: `settings.packingShowCheckedOverrides`
+  maps a list id to a pinned value, so one trip can hide its completed items
+  while the rest keep showing them. The kebab toggle writes an override for the
+  active list; "Use this for all lists" promotes the current value to the
+  default and clears the overrides.
 * `POST /api/packing/lists/{id}/check-all` with `{"checked": bool}` checks or
   unchecks every item in the list in one shot (menu action + single undo entry).
 

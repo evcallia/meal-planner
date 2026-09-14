@@ -43,12 +43,15 @@ export interface PackingListsViewProps {
   user: UserInfo;
   editHighlightColor?: string;
   showChecked?: boolean;
+  /** Per-list pins layered over `showChecked`; absent = follow the default. */
+  showCheckedOverrides?: Record<string, boolean>;
   hideBags?: boolean;
   sortBy?: 'manual' | 'alphabetical';
   selectedBags?: string[];
   excludedBags?: string[];
   onUpdateDisplayPrefs?: (updates: {
     showChecked?: boolean;
+    showCheckedOverrides?: Record<string, boolean>;
     hideBags?: boolean;
     sortBy?: 'manual' | 'alphabetical';
     selectedBags?: string[];
@@ -61,11 +64,14 @@ export interface PackingListsViewProps {
 }
 
 const EMPTY: string[] = [];
+// Stable identity so a defaulted prop doesn't re-run memos every render.
+const EMPTY_OVERRIDES: Record<string, boolean> = {};
 
 export function PackingListsView({
   user,
   editHighlightColor = 'emerald',
   showChecked = true,
+  showCheckedOverrides = EMPTY_OVERRIDES,
   hideBags = false,
   sortBy = 'manual',
   selectedBags = EMPTY,
@@ -124,6 +130,14 @@ export function PackingListsView({
     [lists, activeId],
   );
   const listId = activeList?.id ?? '';
+
+  // Completed-item visibility is per list, defaulting to the global setting.
+  const showCheckedHere = showCheckedOverrides[listId] ?? showChecked;
+  // "Use this for all" is only offered when it would actually change something:
+  // either this list differs from the default, or some other list is still pinned.
+  const canApplyToAll = showCheckedHere !== showChecked
+    || Object.keys(showCheckedOverrides).length > 0;
+
 
   useEffect(() => {
     if (activeList) {
@@ -231,7 +245,7 @@ export function PackingListsView({
     if (!activeList) return [];
     return activeList.sections
       .map(section => {
-        let items = visibleSectionItems(section, { showChecked, sortBy });
+        let items = visibleSectionItems(section, { showChecked: showCheckedHere, sortBy });
         if (excludedBagIds.size > 0) {
           items = items.filter(i => !excludedBagIds.has(i.bag_id ?? NONE_STORE_ID));
         }
@@ -244,7 +258,7 @@ export function PackingListsView({
       // is hiding its contents (so empty sections remain addable-to).
       .filter(({ section, items }) =>
         items.length > 0 || (selectedBagIds.size === 0 && excludedBagIds.size === 0 && section.items.length === 0));
-  }, [activeList, showChecked, sortBy, selectedBagIds, excludedBagIds]);
+  }, [activeList, showCheckedHere, sortBy, selectedBagIds, excludedBagIds]);
 
   const currentListItemNames = useMemo(() => {
     const names = new Set<string>();
@@ -718,11 +732,25 @@ export function PackingListsView({
                           </button>
                         )}
                         <button
-                          onClick={() => { updatePrefs({ showChecked: !showChecked }); setMenuOpen(false); }}
+                          onClick={() => {
+                            updatePrefs({ showCheckedOverrides: { ...showCheckedOverrides, [listId]: !showCheckedHere } });
+                            setMenuOpen(false);
+                          }}
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
                         >
-                          {showChecked ? 'Hide completed items' : 'Show completed items'}
+                          {showCheckedHere ? 'Hide completed items' : 'Show completed items'}
                         </button>
+                        {canApplyToAll && (
+                          <button
+                            onClick={() => {
+                              updatePrefs({ showChecked: showCheckedHere, showCheckedOverrides: {} });
+                              setMenuOpen(false);
+                            }}
+                            className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                          >
+                            Use this for all lists
+                          </button>
+                        )}
                         <button
                           onClick={handleCopy}
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"

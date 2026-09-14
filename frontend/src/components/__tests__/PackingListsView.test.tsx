@@ -162,12 +162,12 @@ describe('PackingListsView', () => {
     expect(mockSetAllChecked).toHaveBeenCalledWith('l1', false);
   });
 
-  it('toggles the show-completed display preference', () => {
+  it('toggles the show-completed display preference for the active list', () => {
     const onUpdateDisplayPrefs = vi.fn();
     renderView({ showChecked: true, onUpdateDisplayPrefs });
     fireEvent.click(screen.getByRole('button', { name: /list options/i }));
     fireEvent.click(screen.getByText('Hide completed items'));
-    expect(onUpdateDisplayPrefs).toHaveBeenCalledWith({ showChecked: false });
+    expect(onUpdateDisplayPrefs).toHaveBeenCalledWith({ showCheckedOverrides: { l1: false } });
   });
 
   it('creates a list', async () => {
@@ -450,5 +450,66 @@ describe('PackingListsView muted indicator', () => {
   it('shows nothing when List notifications are globally off', () => {
     renderView({ notifyEditsDefault: false, listNotifyOverrides: { l1: { edits: false } } });
     expect(within(tabs()).queryByTestId('muted-icon')).not.toBeInTheDocument();
+  });
+});
+
+// Show/hide completed is a per-list choice layered over a global default, so
+// one list can hide its completed items without silencing every other list.
+describe('PackingListsView per-list completed visibility', () => {
+  const secondList = (): PackingList => ({
+    ...listFixture(), id: 'l2', name: 'Home projects', position: 1,
+  });
+  const openMenu = () => fireEvent.click(screen.getByRole('button', { name: /list options/i }));
+
+  it('follows the global default when the list has no override', () => {
+    renderView({ showChecked: false, showCheckedOverrides: {} });
+    expect(screen.queryByText('Socks')).not.toBeInTheDocument();
+  });
+
+  it('lets a list override the default in either direction', () => {
+    const { unmount } = renderView({ showChecked: false, showCheckedOverrides: { l1: true } });
+    expect(screen.getByText('Socks')).toBeInTheDocument();
+    unmount();
+
+    renderView({ showChecked: true, showCheckedOverrides: { l1: false } });
+    expect(screen.queryByText('Socks')).not.toBeInTheDocument();
+  });
+
+  it('toggling writes an override for THIS list only, leaving the default alone', () => {
+    const onUpdate = vi.fn();
+    renderView({ showChecked: true, showCheckedOverrides: { l2: false }, onUpdateDisplayPrefs: onUpdate });
+    openMenu();
+    fireEvent.click(screen.getByText('Hide completed items'));
+    expect(onUpdate).toHaveBeenCalledWith({ showCheckedOverrides: { l2: false, l1: false } });
+    // The global default must be untouched by a per-list toggle.
+    expect(onUpdate.mock.calls[0][0]).not.toHaveProperty('showChecked');
+  });
+
+  it('the menu label reflects the effective value, not the global default', () => {
+    renderView({ showChecked: true, showCheckedOverrides: { l1: false } });
+    openMenu();
+    expect(screen.getByText('Show completed items')).toBeInTheDocument();
+  });
+
+  it('"use for all" pushes the effective value to the default and clears overrides', () => {
+    const onUpdate = vi.fn();
+    mockLists = [listFixture(), secondList()];
+    renderView({ showChecked: true, showCheckedOverrides: { l1: false }, onUpdateDisplayPrefs: onUpdate });
+    openMenu();
+    fireEvent.click(screen.getByText('Use this for all lists'));
+    expect(onUpdate).toHaveBeenCalledWith({ showChecked: false, showCheckedOverrides: {} });
+  });
+
+  it('hides "use for all" when every list already agrees with the default', () => {
+    renderView({ showChecked: true, showCheckedOverrides: {} });
+    openMenu();
+    expect(screen.queryByText('Use this for all lists')).not.toBeInTheDocument();
+  });
+
+  it('offers "use for all" when another list still carries an override', () => {
+    mockLists = [listFixture(), secondList()];
+    renderView({ showChecked: true, showCheckedOverrides: { l2: false } });
+    openMenu();
+    expect(screen.getByText('Use this for all lists')).toBeInTheDocument();
   });
 });

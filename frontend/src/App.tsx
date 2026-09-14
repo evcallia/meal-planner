@@ -561,12 +561,14 @@ function TravelPage({
           user={user}
           editHighlightColor={settings.editHighlightColor}
           showChecked={settings.packingShowChecked}
+          showCheckedOverrides={settings.packingShowCheckedOverrides}
           hideBags={settings.packingHideBags}
           sortBy={settings.packingSortBy}
           selectedBags={settings.packingSelectedBagIds}
           excludedBags={settings.packingExcludedBagIds}
           onUpdateDisplayPrefs={(updates) => onUpdateSettings({
             ...(updates.showChecked !== undefined ? { packingShowChecked: updates.showChecked } : {}),
+            ...(updates.showCheckedOverrides !== undefined ? { packingShowCheckedOverrides: updates.showCheckedOverrides } : {}),
             ...(updates.hideBags !== undefined ? { packingHideBags: updates.hideBags } : {}),
             ...(updates.sortBy !== undefined ? { packingSortBy: updates.sortBy } : {}),
             ...(updates.selectedBags !== undefined ? { packingSelectedBagIds: updates.selectedBags } : {}),
