@@ -2,7 +2,7 @@
 package recipekeeper
 
 import (
-	"strings"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,7 +40,12 @@ func (r *Reconciler) now() time.Time {
 func (r *Reconciler) ApplyInbound(items []ShoppingListItem) (Changes, error) {
 	var ch Changes
 	for _, in := range items {
-		if in.ShoppingListID != "" && in.ShoppingListID != r.ListID {
+		// Strict comparison: importing a malformed or foreign-list item into
+		// the shared household grocery list is worse than importing nothing.
+		// An unset r.ListID therefore imports nothing — deliberate fail-safe
+		// behavior until a later task resolves the list id before the first
+		// sync.
+		if in.ShoppingListID != r.ListID {
 			continue
 		}
 		if isTombstoned(r.DB, in.ID) {
@@ -57,6 +62,9 @@ func (r *Reconciler) applyOne(in ShoppingListItem, ch *Changes) error {
 	var link models.RecipeKeeperLink
 	err := r.DB.First(&link, "rk_item_id = ?", in.ID).Error
 	hasLink := err == nil
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
 
 	if in.IsDeleted {
 		if !hasLink {
@@ -66,8 +74,12 @@ func (r *Reconciler) applyOne(in ShoppingListItem, ch *Changes) error {
 	}
 
 	if hasLink {
-		// Our own push echoing back through the doorbell.
-		if in.LastModified != nil && *in.LastModified == link.RKLastModified {
+		if in.LastModified == nil {
+			// No new information from the server: nothing to apply.
+			return nil
+		}
+		if *in.LastModified == link.RKLastModified {
+			// Our own push echoing back through the doorbell.
 			return nil
 		}
 		return r.moveLink(&link, in, ch)
@@ -75,10 +87,17 @@ func (r *Reconciler) applyOne(in ShoppingListItem, ch *Changes) error {
 	return r.attachNew(in, ch)
 }
 
-// detachLink drops a link and decrements its row, deleting the row when the
-// last link goes and no MP-only units remain.
+// detachLink drops a link and decrements its row, deleting the row only once
+// BOTH its quantity is spent AND no other link still references it. Quantity
+// alone isn't enough: quantity >= COUNT(links) is the collapse invariant, but
+// nothing enforces it against a manual user edit (e.g. a row with 3 links
+// whose quantity gets edited down to 1) — checking linkCount here stops a
+// row with surviving links from being deleted out from under them.
 func (r *Reconciler) detachLink(link *models.RecipeKeeperLink, ch *Changes) error {
-	row := findRow(r.DB, link.MPName, link.MPChecked)
+	row, err := findRow(r.DB, link.MPName, link.MPChecked)
+	if err != nil {
+		return err
+	}
 	if row == nil {
 		return r.DB.Delete(link).Error
 	}
@@ -87,12 +106,11 @@ func (r *Reconciler) detachLink(link *models.RecipeKeeperLink, ch *Changes) erro
 		return err
 	}
 	qty := quantityOf(&item) - 1
-	if qty <= 0 {
+	if qty <= 0 && linkCount(r.DB, item.Name, item.Checked) == 0 {
 		ch.Deleted = append(ch.Deleted, item.ID)
 		return r.DB.Delete(&item).Error
 	}
 	setQuantity(&item, qty)
-	item.UpdatedAt = r.now()
 	ch.Updated = append(ch.Updated, item.ID)
 	return r.DB.Save(&item).Error
 }
@@ -100,9 +118,12 @@ func (r *Reconciler) detachLink(link *models.RecipeKeeperLink, ch *Changes) erro
 // moveLink applies a server-side name or check change, relocating the link to
 // the row matching its new (name, checked) key. Both the grocery row and the
 // link's cached RK state are written, so the outbound diff stays clean and the
-// two sides cannot oscillate.
+// two sides cannot oscillate. Comparison is by collapse key, not raw name —
+// collapseKey normalizes and trims, so e.g. "Lemon" -> "Lemon " must NOT read
+// as a different row (that would detach-and-recreate a single-link row,
+// resetting its id/StoreID/Position/section for no real change).
 func (r *Reconciler) moveLink(link *models.RecipeKeeperLink, in ShoppingListItem, ch *Changes) error {
-	sameRow := strings.EqualFold(link.RKName, in.Name) && link.RKChecked == in.IsChecked
+	sameRow := collapseKey(link.RKName, link.RKChecked) == collapseKey(in.Name, in.IsChecked)
 	if !sameRow {
 		if err := r.detachLink(link, ch); err != nil {
 			return err
@@ -120,7 +141,10 @@ func (r *Reconciler) moveLink(link *models.RecipeKeeperLink, in ShoppingListItem
 // attachNew adds a unit for an item we have not seen, collapsing onto an
 // existing row of the same (name, checked) when one exists.
 func (r *Reconciler) attachNew(in ShoppingListItem, ch *Changes) error {
-	row := findRow(r.DB, in.Name, in.IsChecked)
+	row, err := findRow(r.DB, in.Name, in.IsChecked)
+	if err != nil {
+		return err
+	}
 	if row == nil {
 		created, err := r.createRow(in)
 		if err != nil {
@@ -130,7 +154,6 @@ func (r *Reconciler) attachNew(in ShoppingListItem, ch *Changes) error {
 		ch.Added = append(ch.Added, row.ID)
 	} else {
 		setQuantity(row, quantityOf(row)+1)
-		row.UpdatedAt = r.now()
 		if err := r.DB.Save(row).Error; err != nil {
 			return err
 		}
@@ -208,7 +231,10 @@ func (r *Reconciler) placeSection(name string) (uuid.UUID, error) {
 	if err := r.DB.First(&sec, "LOWER(name) = LOWER(?)", "uncategorized").Error; err == nil {
 		return sec.ID, nil
 	}
-	sec = models.GrocerySection{ID: models.NewID(), Name: "Uncategorized", CreatedAt: r.now()}
+	var maxPos struct{ P int }
+	r.DB.Model(&models.GrocerySection{}).
+		Select("COALESCE(MAX(position), -1) AS p").Scan(&maxPos)
+	sec = models.GrocerySection{ID: models.NewID(), Name: "Uncategorized", Position: maxPos.P + 1, CreatedAt: r.now()}
 	if err := r.DB.Create(&sec).Error; err != nil {
 		return uuid.Nil, err
 	}

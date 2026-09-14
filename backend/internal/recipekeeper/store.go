@@ -2,6 +2,7 @@
 package recipekeeper
 
 import (
+	"log"
 	"strconv"
 	"strings"
 
@@ -61,21 +62,37 @@ func linkCount(db *gorm.DB, name string, checked bool) int {
 	return int(n)
 }
 
-// findRow returns the grocery item for a collapse key, or nil.
-func findRow(db *gorm.DB, name string, checked bool) *models.GroceryItem {
+// findRow returns the grocery item for a collapse key, or nil if none exists.
+// The query error is returned rather than swallowed: callers use a nil result
+// to decide whether to CREATE a new row, so a transient DB error mistaken for
+// "not found" would create a duplicate. Ordering is deterministic
+// (position asc, id asc) so which row wins is defined if duplicates exist.
+func findRow(db *gorm.DB, name string, checked bool) (*models.GroceryItem, error) {
 	var items []models.GroceryItem
-	db.Where("checked = ?", checked).Find(&items)
+	if err := db.Where("checked = ?", checked).
+		Order("position asc, id asc").Find(&items).Error; err != nil {
+		return nil, err
+	}
 	want := normalizeName(name)
 	for i := range items {
 		if normalizeName(items[i].Name) == want {
-			return &items[i]
+			return &items[i], nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
+// isTombstoned reports whether an RK item id was deleted locally and must not
+// be re-imported. It fails CLOSED: a query error is treated as tombstoned
+// (skipping this one item) rather than open, because the tombstone table IS
+// the resurrection guard — skipping an item is recoverable on the next pull,
+// resurrecting a deleted one is not.
 func isTombstoned(db *gorm.DB, rkItemID string) bool {
 	var n int64
-	db.Model(&models.RecipeKeeperTombstone{}).Where("rk_item_id = ?", rkItemID).Count(&n)
+	if err := db.Model(&models.RecipeKeeperTombstone{}).
+		Where("rk_item_id = ?", rkItemID).Count(&n).Error; err != nil {
+		log.Printf("recipekeeper: tombstone check failed for %s, treating as tombstoned: %v", rkItemID, err)
+		return true
+	}
 	return n > 0
 }

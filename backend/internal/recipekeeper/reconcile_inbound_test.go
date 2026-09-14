@@ -112,7 +112,7 @@ func TestInboundDeleteDecrementsQuantity(t *testing.T) {
 	if it == nil {
 		t.Fatal("item deleted, want it to survive with quantity 1")
 	}
-	if it.Quantity != nil && *it.Quantity != "1" {
+	if quantityOf(it) != 1 {
 		t.Errorf("quantity = %v, want 1", it.Quantity)
 	}
 }
@@ -131,6 +131,80 @@ func TestInboundDeleteOfLastLinkRemovesItem(t *testing.T) {
 	}
 	if itemByName(t, db, "Basil", false) != nil {
 		t.Error("item should be gone once its last link is deleted")
+	}
+}
+
+// Deleting the last link leaves MP-only units (added directly in Meal
+// Planner, outside RK sync) behind — the row must survive holding just those
+// units, with no dangling link.
+func TestInboundDeleteOfLastLinkKeepsMPOnlyUnits(t *testing.T) {
+	db := testDB(t)
+	r := testReconciler(t, db)
+	_, _ = r.ApplyInbound([]ShoppingListItem{rkItem("a-id", "Basil", withRecipe("r1"))})
+
+	// Simulate the user bumping quantity in the app itself, outside RK sync.
+	it := itemByName(t, db, "Basil", false)
+	setQuantity(it, 3)
+	if err := db.Save(it).Error; err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	lm := "2026-09-14T01:00:00.0000001Z"
+	del := rkItem("a-id", "Basil", deleted)
+	del.LastModified = &lm
+	if _, err := r.ApplyInbound([]ShoppingListItem{del}); err != nil {
+		t.Fatalf("ApplyInbound: %v", err)
+	}
+
+	survivor := itemByName(t, db, "Basil", false)
+	if survivor == nil {
+		t.Fatal("row should survive: MP-only units remain")
+	}
+	if quantityOf(survivor) != 2 {
+		t.Errorf("quantity = %d, want 2", quantityOf(survivor))
+	}
+	var links int64
+	db.Model(&models.RecipeKeeperLink{}).Where("mp_name = ?", "basil").Count(&links)
+	if links != 0 {
+		t.Errorf("links = %d, want 0", links)
+	}
+}
+
+// Regression for the collapse invariant (quantity >= COUNT(links)): if a
+// user's manual quantity edit drops the quantity below the row's link count,
+// deleting one of the SURVIVING links must not delete the row out from under
+// the links that are still there.
+func TestInboundDeleteDoesNotOrphanRemainingLinks(t *testing.T) {
+	db := testDB(t)
+	r := testReconciler(t, db)
+	_, _ = r.ApplyInbound([]ShoppingListItem{
+		rkItem("a-id", "Lemon", withRecipe("r1")),
+		rkItem("b-id", "Lemon", withRecipe("r2")),
+		rkItem("c-id", "Lemon", withRecipe("r3")),
+	})
+
+	// Break the invariant: 3 links, but quantity edited down to 1.
+	it := itemByName(t, db, "Lemon", false)
+	setQuantity(it, 1)
+	if err := db.Save(it).Error; err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	lm := "2026-09-14T01:00:00.0000001Z"
+	del := rkItem("a-id", "Lemon", deleted)
+	del.LastModified = &lm
+	if _, err := r.ApplyInbound([]ShoppingListItem{del}); err != nil {
+		t.Fatalf("ApplyInbound: %v", err)
+	}
+
+	survivor := itemByName(t, db, "Lemon", false)
+	if survivor == nil {
+		t.Fatal("row deleted despite 2 surviving links pointing at it")
+	}
+	var links int64
+	db.Model(&models.RecipeKeeperLink{}).Where("mp_name = ?", "lemon").Count(&links)
+	if links != 2 {
+		t.Errorf("links = %d, want 2 (the two not deleted)", links)
 	}
 }
 
@@ -162,6 +236,25 @@ func TestInboundIgnoresUnchangedLastModified(t *testing.T) {
 	}
 	if len(ch.Added)+len(ch.Updated)+len(ch.Deleted) != 0 {
 		t.Errorf("replaying an identical entity produced changes: %+v", ch)
+	}
+}
+
+// A nil LastModified carries no new information and must be a true no-op —
+// it must not fall through to moveLink and re-Save the link.
+func TestInboundNilLastModifiedIsNoOp(t *testing.T) {
+	db := testDB(t)
+	r := testReconciler(t, db)
+	in := rkItem("a-id", "Kale", withRecipe("r1"))
+	_, _ = r.ApplyInbound([]ShoppingListItem{in})
+
+	again := rkItem("a-id", "Kale", withRecipe("r1"))
+	again.LastModified = nil
+	ch, err := r.ApplyInbound([]ShoppingListItem{again})
+	if err != nil {
+		t.Fatalf("ApplyInbound: %v", err)
+	}
+	if len(ch.Added)+len(ch.Updated)+len(ch.Deleted) != 0 {
+		t.Errorf("nil LastModified produced changes: %+v", ch)
 	}
 }
 
