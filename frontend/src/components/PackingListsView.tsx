@@ -906,11 +906,18 @@ export function PackingListsView({
         )}
       </div>
 
-      {flash && (
+      {/* Portaled to <body> with fixed coords: rendered inline it sat at the top
+          of the list, out of sight once you'd scrolled down. A `.glass` ancestor
+          would also trap a plain `fixed` child in its stacking context, so the
+          portal — the same approach as the per-section menu — is what makes it
+          reliably float above everything (z above the nav's z-30). */}
+      {flash && createPortal(
+        <div className="fixed left-1/2 -translate-x-1/2 z-[60] w-full max-w-lg px-4 packing-flash-in"
+          style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
         <div
           role="status"
           data-testid="packing-flash"
-          className="mt-2 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300"
+          className="rounded-xl shadow-lg bg-emerald-50 dark:bg-emerald-900 border border-emerald-200 dark:border-emerald-500/30 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-200"
         >
           <div className="flex items-center gap-3">
             <span className="flex-1 min-w-0">{flash.message}</span>
@@ -933,6 +940,8 @@ export function PackingListsView({
             </button>
           </div>
         </div>
+        </div>,
+        document.body,
       )}
 
       {lists.length === 0 && (

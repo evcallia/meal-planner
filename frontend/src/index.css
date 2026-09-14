@@ -243,5 +243,13 @@ body {
 }
 .status-toast-in { animation: status-toast-in 240ms ease; }
 
+/* Same entrance as the status toast. The -50% X keeps the centering transform
+   that positions the bar, so the animation must carry it on every frame. */
+@keyframes packing-flash-in {
+  from { opacity: 0; transform: translate(-50%, -12px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+.packing-flash-in { animation: packing-flash-in 240ms ease; }
+
 /* Prevent iOS rubber-band/overscroll from dragging fixed bars (nav) out of place */
 html, body { overscroll-behavior: none; }

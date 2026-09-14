@@ -563,6 +563,18 @@ describe('PackingListsView per-list completed visibility', () => {
     expect(screen.queryByRole('button', { name: /completed items are hidden/i })).not.toBeInTheDocument();
   });
 
+  // Rendered inline, the bar sat at the top of the list and was invisible once
+  // you'd scrolled down a long one. It floats over the page instead.
+  it('floats over the page instead of sitting in the scrolling content', () => {
+    renderView({ showChecked: true, showCheckedOverrides: {} });
+    openMenu();
+    fireEvent.click(screen.getByText('Hide completed items'));
+    const layer = screen.getByTestId('packing-flash').parentElement!;
+    // Portaled out of the view, so no scrolling/clipping ancestor can hide it.
+    expect(layer.parentElement).toBe(document.body);
+    expect(layer.className).toMatch(/\bfixed\b/);
+  });
+
   it('can be dismissed early with the close button', () => {
     renderView({ showChecked: true, showCheckedOverrides: {} });
     openMenu();
