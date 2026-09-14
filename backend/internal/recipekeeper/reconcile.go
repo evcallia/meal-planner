@@ -3,6 +3,8 @@ package recipekeeper
 
 import (
 	"errors"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -246,4 +248,201 @@ func (r *Reconciler) placeSection(name string) (uuid.UUID, error) {
 // Uncategorized fallback applies.
 func (r *Reconciler) sectionFromRKCategory(string) (uuid.UUID, bool) {
 	return uuid.Nil, false
+}
+
+// stripZ converts a server timestamp to the form the client must echo back.
+// Server values carry Z; pushed values must not (docs/recipe-keeper-api.md).
+func stripZ(s string) string { return strings.TrimSuffix(s, "Z") }
+
+// PendingPushes diffs every link against its grocery row and returns the
+// complete entities to push. Outbound state is derived, not queued: a failed
+// push simply reappears on the next pass, and a restart loses nothing.
+func (r *Reconciler) PendingPushes() ([]ShoppingListItem, error) {
+	var out []ShoppingListItem
+
+	// Tombstones: either a delete to push, or an undo to reverse.
+	var tombs []models.RecipeKeeperTombstone
+	if err := r.DB.Find(&tombs).Error; err != nil {
+		return nil, err
+	}
+	for _, tomb := range tombs {
+		var link models.RecipeKeeperLink
+		hasLink := r.DB.First(&link, "rk_item_id = ?", tomb.RKItemID).Error == nil
+
+		var row *models.GroceryItem
+		if hasLink {
+			var err error
+			row, err = findRow(r.DB, link.MPName, link.MPChecked)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		// Undo: the row is back. Recipe Keeper's deletes are soft, so reversing
+		// one is an ordinary field update rather than a restore path.
+		if hasLink && row != nil {
+			if tomb.PushedAt == nil {
+				// The delete never went out — just forget it.
+				if err := r.DB.Delete(&tomb).Error; err != nil {
+					return nil, err
+				}
+				continue
+			}
+			out = append(out, r.entityFor(link, link.RKName, link.RKChecked, false))
+			continue
+		}
+
+		if tomb.PushedAt != nil {
+			continue // already deleted on the server
+		}
+		if !hasLink {
+			// Link already gone; synthesize the minimum the server needs.
+			out = append(out, ShoppingListItem{
+				ID: tomb.RKItemID, ShoppingListID: r.ListID, IsDeleted: true,
+			})
+			continue
+		}
+		out = append(out, r.entityFor(link, link.RKName, link.RKChecked, true))
+	}
+
+	// Then field diffs for links whose row has drifted from cached RK state.
+	var links []models.RecipeKeeperLink
+	if err := r.DB.Find(&links).Error; err != nil {
+		return nil, err
+	}
+	for _, link := range links {
+		if isTombstoned(r.DB, link.RKItemID) {
+			continue // handled above
+		}
+		row, err := findRow(r.DB, link.MPName, link.MPChecked)
+		if err != nil {
+			return nil, err
+		}
+		if row == nil {
+			// An unresolvable link with no tombstone is an orphan. Log and drop
+			// it: deletion is only ever expressed by a tombstone, never inferred.
+			log.Printf("recipekeeper: orphan link %s (%s/%v), dropping",
+				link.RKItemID, link.MPName, link.MPChecked)
+			if err := r.DB.Delete(&models.RecipeKeeperLink{}, "rk_item_id = ?", link.RKItemID).Error; err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if collapseKey(row.Name, row.Checked) == collapseKey(link.RKName, link.RKChecked) {
+			continue
+		}
+		out = append(out, r.entityFor(link, row.Name, row.Checked, false))
+	}
+	return out, nil
+}
+
+// entityFor builds a complete entity from the link's cached fields, replacing
+// only what changed. The protocol has no partial updates: any field omitted or
+// stale here overwrites the server's value.
+func (r *Reconciler) entityFor(link models.RecipeKeeperLink, name string, checkedNow, isDelete bool) ShoppingListItem {
+	synced := true
+	item := ShoppingListItem{
+		ID:                     link.RKItemID,
+		Name:                   name,
+		ShoppingListID:         r.ListID,
+		IsChecked:              checkedNow,
+		Position:               link.RKPosition,
+		RecipeID:               link.RKRecipeID,
+		IsSyncedToExternalList: &synced,
+		IsDeleted:              isDelete,
+	}
+	if lm := stripZ(link.RKLastModified); lm != "" {
+		item.LastModified = &lm
+	}
+	if checkedNow {
+		// Naive UTC with no zone suffix, matching the client's own encoding.
+		d := r.now().UTC().Format("2006-01-02T15:04:05.0000000")
+		item.CheckedDate = &d
+	}
+	return item
+}
+
+// ApplyAcks writes the server's authoritative timestamps back onto links and
+// marks pushed tombstones. Skipping this would leave every link permanently
+// dirty, re-pushing the same change forever.
+func (r *Reconciler) ApplyAcks(acks []AckItem) error {
+	now := r.now()
+	for _, ack := range acks {
+		var link models.RecipeKeeperLink
+		hasLink := r.DB.First(&link, "rk_item_id = ?", ack.ID).Error == nil
+
+		var tomb models.RecipeKeeperTombstone
+		if err := r.DB.First(&tomb, "rk_item_id = ?", ack.ID).Error; err == nil {
+			var row *models.GroceryItem
+			if hasLink {
+				var ferr error
+				row, ferr = findRow(r.DB, link.MPName, link.MPChecked)
+				if ferr != nil {
+					return ferr
+				}
+			}
+			// An un-delete: the row came back, so the tombstone is spent.
+			if hasLink && row != nil {
+				if err := r.DB.Delete(&tomb).Error; err != nil {
+					return err
+				}
+				link.RKLastModified = ack.LastModified
+				if err := r.DB.Save(&link).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			tomb.PushedAt = &now
+			lm := ack.LastModified
+			tomb.AckLastModified = &lm
+			if err := r.DB.Save(&tomb).Error; err != nil {
+				return err
+			}
+			// The link is KEPT until the tombstone is pruned, so an undo arriving
+			// after the push still has an entity to rebuild from.
+			continue
+		}
+
+		if !hasLink {
+			continue
+		}
+		row, err := findRow(r.DB, link.MPName, link.MPChecked)
+		if err != nil {
+			return err
+		}
+		if row != nil {
+			link.RKName = row.Name
+			link.RKChecked = row.Checked
+		}
+		link.RKLastModified = ack.LastModified
+		if err := r.DB.Save(&link).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TombstoneLinks records that a grocery row was deleted locally, so each of its
+// RK rows gets a delete push and cannot be re-imported meanwhile. Addressed by
+// collapse key, since the row may already be gone by the time this runs.
+func (r *Reconciler) TombstoneLinks(name string, checked bool) error {
+	for _, link := range linksFor(r.DB, name, checked) {
+		tomb := models.RecipeKeeperTombstone{RKItemID: link.RKItemID, DeletedAt: r.now()}
+		if err := r.DB.Where("rk_item_id = ?", link.RKItemID).
+			FirstOrCreate(&tomb).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RetargetLinks moves a row's links between its checked and unchecked collapse
+// keys. Meal Planner checks an item by flipping a flag on the SAME row, but
+// links are keyed by (name, checked) — without this the link would resolve to
+// nothing, be classified as an orphan, and be dropped, so the check would never
+// reach Recipe Keeper.
+func (r *Reconciler) RetargetLinks(name string, from, to bool) error {
+	return r.DB.Model(&models.RecipeKeeperLink{}).
+		Where("mp_name = ? AND mp_checked = ?", normalizeName(name), from).
+		Update("mp_checked", to).Error
 }

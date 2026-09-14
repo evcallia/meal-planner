@@ -322,6 +322,15 @@ func TestInboundRenameSplitsCollapseGroup(t *testing.T) {
 	if moved.MPName != "meyer lemon" {
 		t.Errorf("link MPName = %q, want %q", moved.MPName, "meyer lemon")
 	}
+
+	// The rename came FROM the server, so it must not bounce back as a push.
+	pushes, err := r.PendingPushes()
+	if err != nil {
+		t.Fatalf("PendingPushes: %v", err)
+	}
+	if len(pushes) != 0 {
+		t.Errorf("inbound rename produced pushes: %+v", pushes)
+	}
 }
 
 // Items belonging to another RK list are not ours.
