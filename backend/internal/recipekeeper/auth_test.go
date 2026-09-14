@@ -101,11 +101,11 @@ func TestTokenRenewsBeforeExpiry(t *testing.T) {
 
 func TestAuthErrorHandling(t *testing.T) {
 	tests := []struct {
-		name       string
-		status     int
-		body       string
-		wantAuth   bool
-		wantError  bool
+		name      string
+		status    int
+		body      string
+		wantAuth  bool
+		wantError bool
 	}{
 		{"400 bad credentials", http.StatusBadRequest, `{"error":"invalid_grant"}`, true, true},
 		{"401 unauthorized", http.StatusUnauthorized, `{"error":"unauthorized"}`, true, true},
