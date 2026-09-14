@@ -20,6 +20,7 @@ import (
 
 	"mealplanner/internal/app"
 	"mealplanner/internal/config"
+	"mealplanner/internal/ical"
 	"mealplanner/internal/db"
 )
 
@@ -42,6 +43,21 @@ func main() {
 	if err := settings.ValidateSecurity(); err != nil {
 		log.Fatalf("security validation failed: %v", err)
 	}
+
+	// Calendar times are stored as naive wall clocks in the household's zone,
+	// so that zone has to be right or every foreign-timezone event is off by
+	// its offset. Logged because getting it wrong is invisible until someone
+	// notices a meeting at the wrong hour.
+	if settings.CalendarTimeZone != "" {
+		loc, err := time.LoadLocation(settings.CalendarTimeZone)
+		if err != nil {
+			log.Printf("[Calendar] CALENDAR_TIMEZONE %q is not a known zone (%v) — falling back to %s",
+				settings.CalendarTimeZone, err, ical.EventZone())
+		} else {
+			ical.SetEventZone(loc)
+		}
+	}
+	log.Printf("[Calendar] event times render in %s", ical.EventZone())
 
 	gormDB, err := db.Open(settings)
 	if err != nil {

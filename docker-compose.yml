@@ -38,6 +38,10 @@ services:
       APPLE_CALENDAR_EMAIL: ${APPLE_CALENDAR_EMAIL:-}
       APPLE_CALENDAR_APP_PASSWORD: ${APPLE_CALENDAR_APP_PASSWORD:-}
       APPLE_CALENDAR_NAMES: ${APPLE_CALENDAR_NAMES:-}
+      # Household zone (IANA) for calendar event times, e.g. America/New_York.
+      # Separate from TZ (which is only log timestamps) so changing log output
+      # can't shift everyone's calendar. Unset = UTC; set it per deployment.
+      CALENDAR_TIMEZONE: ${CALENDAR_TIMEZONE:-}
       # Auth (docs/auth.md) — any OIDC provider and/or password login
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
