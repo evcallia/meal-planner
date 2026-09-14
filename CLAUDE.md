@@ -22,8 +22,48 @@ bash <project-root>/run-tests.sh
 
 Key details:
 - On macOS with Homebrew, export `PATH="/opt/homebrew/bin:$PATH"` if npm/node isn't found
-- Go may live at `$HOME/sdk/go/bin` or `/usr/local/go/bin` — add to PATH if `go` isn't found
+- **Go commands need the sandbox disabled.** Go is installed (Homebrew, `/opt/homebrew/bin/go`), but the sandbox blocks all three things it needs: the build cache (`~/Library/Caches/go-build`), the module cache (`~/go`), and `proxy.golang.org` for downloads. Redirecting `GOCACHE`/`GOMODCACHE` into the scratchpad doesn't help — the download still fails. Run Go unsandboxed
+- **Test timezone matters.** `internal/ical` converts zone-qualified event times into `time.Local` (see the calendar section), so a test that parses a `TZID=`/`Z` datetime must pin the zone with `withZone(t, ...)` or it passes only on a machine in the zone it was written for. Sweep with `TZ=UTC go test -count=1 ./internal/ical/` and a non-UTC zone
+- Docker is the fallback when a native run isn't wanted (the `mealplanner-gomod` volume caches modules, so only the first run downloads). Note it pins **go1.26** while local is go1.27, and they do not agree on every test — see the known failure below:
+  ```bash
+  docker run --rm -v "$PWD/backend":/src -v mealplanner-gomod:/go/pkg/mod -w /src \
+    golang:1.26-alpine sh -c 'go build ./... && go vet ./... && go test ./...'
+  ```
+- **Known pre-existing failure:** `TestInitializeCacheAndShutdown` (`internal/ical/service_test.go`) fails under **go1.27** in a full-package run ("initial refresh should have written metadata: record not found"), in every timezone, and passes in isolation with `-run`. It passes under go1.26. Reproduced on `f8dc551`, so it predates the rename work — it is test-ordering/state leakage, not a regression to chase
 - Shell cwd may reset — always use absolute paths or `cd` in the same command
+
+## Dev Server (bring it up after every change)
+Every change gets verified in the running app, not just in tests. Rebuild and restart from the checkout you're working in, then confirm it answers:
+
+```bash
+docker compose up -d --build                                  # ~1-2 min
+curl -s https://meal-planner-dev.evancallia.com/api/health     # -> {"status":"ok"}
+```
+
+`COMPOSE_FILE` in `.env` chains `docker-compose-dev.yml` + `docker-compose-dev.override.yml`, so plain `docker compose` needs no `-f` flags. Traefik serves it at **https://meal-planner-dev.evancallia.com** (the `.override.yml` adds the `proxy`/`external` networks and the routing labels). Prod is a separate stack (project `mealplanner`, container `meal-planner`, `meal-planner.evancallia.com`, its own `shared-postgres`) and is never touched by this.
+
+**First run in a fresh worktree** — both files are gitignored, so a new worktree has neither:
+```bash
+cp /Users/evan.callia/projects/meal-planner/.env .
+cp /Users/evan.callia/projects/meal-planner/docker-compose-dev.override.yml .
+```
+
+**Then point the db at the shared dev volume — this is the easy one to get wrong.** Compose derives the project name from the DIRECTORY, so a worktree called `my-feature` mints a brand-new **empty** `my-feature_postgres_data` rather than reusing the dev database. Add to `docker-compose-dev.override.yml`:
+```yaml
+volumes:
+  postgres_data:
+    external: true
+    name: meal-planner_postgres_data
+```
+Verify: `docker inspect <dir>-db-1 --format '{{range .Mounts}}{{.Name}}{{end}}'` must print `meal-planner_postgres_data`.
+
+Symptom if you miss it: meals/pantry/grocery look roughly normal (they're shared-global) but **Tasks and Lists are empty** — those are per-user by `owner_sub`, and signing in against a fresh DB self-registers a NEW account keyed by the raw provider sub, leaving your session cookie on an identity that owns nothing. Fix: reattach the volume, then **log out and back in** so `resolveIdentity` maps the provider sub onto your canonical one (sessions trust the cookie and don't re-resolve per request).
+
+**Cleanup once the PR is merged:**
+```bash
+docker compose down        # NEVER -v
+```
+`down` removes the containers and network but keeps every volume. **`-v` would delete the dev database** — and with the external-volume block above, that's the shared `meal-planner_postgres_data` every worktree uses, not a throwaway. If the worktree also minted its own empty `<dir>_postgres_data` before you fixed the mapping, remove just that one (`docker volume rm <dir>_postgres_data`) after confirming it's the empty one — `docker ps -a --filter volume=<name>` should list no containers. Then optionally `git worktree remove <path>`, which also deletes the `.env` and override copied above.
 
 ## Go Backend (backend/)
 The backend is a Go rewrite of the original FastAPI app (same API contract). Layout:
