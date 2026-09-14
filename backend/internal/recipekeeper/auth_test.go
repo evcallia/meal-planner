@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -98,20 +99,77 @@ func TestTokenRenewsBeforeExpiry(t *testing.T) {
 	}
 }
 
-func TestTokenErrorsOnBadCredentials(t *testing.T) {
+func TestAuthErrorHandling(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		body       string
+		wantAuth   bool
+		wantError  bool
+	}{
+		{"400 bad credentials", http.StatusBadRequest, `{"error":"invalid_grant"}`, true, true},
+		{"401 unauthorized", http.StatusUnauthorized, `{"error":"unauthorized"}`, true, true},
+		{"500 server error", http.StatusInternalServerError, `{"error":"server error"}`, false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.status)
+				fmt.Fprint(w, tt.body)
+			}))
+			defer srv.Close()
+
+			a := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "bad",
+				HTTP: srv.Client(), Now: time.Now}
+			_, err := a.Token(context.Background())
+
+			if (err == nil) != !tt.wantError {
+				t.Errorf("error = %v, want error = %v", err, tt.wantError)
+			}
+			if tt.wantError && IsAuthError(err) != tt.wantAuth {
+				t.Errorf("IsAuthError(%v) = %v, want %v", err, IsAuthError(err), tt.wantAuth)
+			}
+		})
+	}
+}
+
+func TestIsAuthErrorFalseForTransportError(t *testing.T) {
+	// Use a closed listener to simulate unreachable server
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	addr := ln.Addr().String()
+	ln.Close()
+
+	a := &Authenticator{
+		BaseURL: "http://" + addr, Username: "u", Password: "p",
+		HTTP: &http.Client{Timeout: 100 * time.Millisecond},
+		Now:  time.Now,
+	}
+	_, err := a.Token(context.Background())
+	if err == nil {
+		t.Fatal("want error for unreachable server")
+	}
+	if IsAuthError(err) {
+		t.Errorf("IsAuthError(%v) = true, want false for transport error", err)
+	}
+}
+
+func TestTokenRenewalBoundary(t *testing.T) {
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, `{"error":"invalid_grant"}`)
+		calls++
+		// Token expires exactly at now + renewMargin (24h boundary)
+		fmt.Fprintf(w, `{"access_token":%q}`, makeJWT(now.Add(24*time.Hour)))
 	}))
 	defer srv.Close()
 
-	a := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "bad",
-		HTTP: srv.Client(), Now: time.Now}
-	_, err := a.Token(context.Background())
-	if err == nil {
-		t.Fatal("want error on 400, got nil")
-	}
-	if !IsAuthError(err) {
-		t.Errorf("IsAuthError(%v) = false, want true", err)
+	a := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+
+	_, _ = a.Token(context.Background())
+	_, _ = a.Token(context.Background())
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2 (token at exact renewal boundary must refetch)", calls)
 	}
 }

@@ -26,7 +26,9 @@ func (h Headers) apply(req *http.Request) {
 	req.Header.Set("X-RK-ReceiptId", h.ReceiptID)
 	req.Header.Set("X-RK-Analytics", "")
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Encoding", "gzip, deflate")
+	req.Header.Set("User-Agent", "RecipeKeeper/231 CFNetwork/3860.700.2 Darwin/25.6.0")
+	// Accept-Encoding is deliberately NOT set: net/http only decompresses
+	// transparently when it sets that header itself, and the server gzips.
 }
 
 // DefaultHeaders mirrors the captured iOS client. DeviceID must be stable
