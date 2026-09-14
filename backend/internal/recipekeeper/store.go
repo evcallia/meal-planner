@@ -36,6 +36,13 @@ func collapseKey(name string, checked bool) string {
 // RecipeKeeperLink rows against grocery items for serialization.
 func RowKey(name string, checked bool) string { return collapseKey(name, checked) }
 
+// QuantityOf is quantityOf, exported so the app package can detect a
+// quantity decrease using the exact same string-to-int rule ConsumeUnits
+// applies (unparseable or absent Quantity means "1 unit") — a handler that
+// parsed it differently could diff a decrease ConsumeUnits would not see, or
+// vice versa.
+func QuantityOf(item *models.GroceryItem) int { return quantityOf(item) }
+
 func quantityOf(item *models.GroceryItem) int {
 	if item.Quantity == nil || *item.Quantity == "" {
 		return 1

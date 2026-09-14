@@ -126,11 +126,15 @@ func TestReorderGroceryItemsSectionNotFound(t *testing.T) {
 	}
 }
 
+// A missing item is treated as an update that already landed, not a 404.
+// Recipe Keeper can delete a row behind Meal Planner's back; a queued
+// offline change PATCHing a row it has since removed must not burn client
+// retries (see handleUpdateGroceryItem).
 func TestUpdateGroceryItemNotFound(t *testing.T) {
 	ta := newTestApp(t)
 	resp := ta.PATCH("/api/grocery/items/"+uuid.NewString(), map[string]any{"checked": true})
-	if resp.Status != 404 {
-		t.Fatalf("status = %d, want 404", resp.Status)
+	if resp.Status != 200 {
+		t.Fatalf("status = %d, want 200", resp.Status)
 	}
 }
 

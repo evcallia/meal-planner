@@ -19,6 +19,7 @@ import (
 	"mealplanner/internal/ical"
 	"mealplanner/internal/models"
 	"mealplanner/internal/realtime"
+	"mealplanner/internal/recipekeeper"
 )
 
 // Mock user matching conftest.mock_user.
@@ -228,6 +229,31 @@ func seedRecipeKeeperLinkAt(t *testing.T, ta *testApp, itemName string, checked 
 	recipe := models.RecipeKeeperRecipe{RKRecipeID: recipeID, Title: title}
 	if err := ta.App.DB.Save(&recipe).Error; err != nil {
 		t.Fatalf("seed recipe keeper recipe: %v", err)
+	}
+}
+
+// enableRecipeKeeper wires ta.App.RecipeKeeper to a real Reconciler backed by
+// the test DB, so handler code guarded on `a.RecipeKeeper != nil` actually
+// runs. Client/Auth point at a local server that always answers 401 rather
+// than being left nil or pointed at a dead address: every RecipeKeeper-facing
+// handler fires a detached recipeKeeperKick() goroutine that calls
+// SyncOnce -> Client.Sync -> Auth.Token, and a nil Client/Auth would
+// nil-pointer-panic that goroutine — which crashes the whole test binary,
+// not just the test. A fast, deterministic 401 keeps that goroutine harmless
+// without needing a fully-functional fake API.
+func enableRecipeKeeper(t *testing.T, ta *testApp) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	authr := &recipekeeper.Authenticator{
+		BaseURL: srv.URL, Username: "test", Password: "test", HTTP: &http.Client{},
+	}
+	ta.App.RecipeKeeper = &recipekeeper.Service{
+		DB:     ta.App.DB,
+		Rec:    &recipekeeper.Reconciler{DB: ta.App.DB, ListID: "test-list"},
+		Client: recipekeeper.NewClient(srv.URL, authr, recipekeeper.Headers{}),
 	}
 }
 

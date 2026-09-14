@@ -505,3 +505,104 @@ func (r *Reconciler) RetargetLinks(fromName string, fromChecked bool, toName str
 		Where("mp_name = ? AND mp_checked = ?", from, fromChecked).
 		Updates(map[string]any{"mp_name": to, "mp_checked": toChecked}).Error
 }
+
+// ConsumeUnits marks n units of an item as acquired, moving them from the
+// unchecked row to the checked row. Local (MP-only) units are spent first
+// because they cost nothing to give up; only then are recipe-linked rows
+// checked, lowest rk_position first for determinism.
+//
+// Nothing is pushed here. Moving a link leaves it disagreeing with its row, and
+// the next PendingPushes picks that up — one code path for every kind of change.
+func (r *Reconciler) ConsumeUnits(itemID uuid.UUID, n int) error {
+	if n <= 0 {
+		return nil
+	}
+	var item models.GroceryItem
+	if err := r.DB.First(&item, "id = ?", itemID).Error; err != nil {
+		return err
+	}
+	links := linksFor(r.DB, item.Name, item.Checked)
+
+	qty := quantityOf(&item)
+	if n > qty {
+		n = qty
+	}
+	localUnits := qty - len(links)
+	fromLinks := n - localUnits
+	if fromLinks < 0 {
+		fromLinks = 0
+	}
+	if fromLinks > len(links) {
+		fromLinks = len(links)
+	}
+
+	dest, created, err := r.checkedRowFor(item)
+	if err != nil {
+		return err
+	}
+	// A freshly created dest row has zero prior units — quantityOf(dest)
+	// cannot be used as that base because nil/unset Quantity means "1", not
+	// "0" (see setQuantity), so a brand-new row would silently double-count
+	// the very first unit moved onto it.
+	base := 0
+	if !created {
+		base = quantityOf(dest)
+	}
+	if fromLinks > 0 {
+		for _, link := range links[:fromLinks] {
+			if err := r.moveLinkToRow(link, dest); err != nil {
+				return err
+			}
+		}
+		setQuantity(dest, base+fromLinks)
+	} else {
+		// Purely local consumption still lands on the checked row, so the UI
+		// shows what was acquired.
+		setQuantity(dest, base+n)
+	}
+	dest.UpdatedAt = r.now()
+	if err := r.DB.Save(dest).Error; err != nil {
+		return err
+	}
+
+	remaining := qty - n
+	if remaining <= 0 {
+		return r.DB.Delete(&item).Error
+	}
+	setQuantity(&item, remaining)
+	item.UpdatedAt = r.now()
+	return r.DB.Save(&item).Error
+}
+
+// checkedRowFor finds or creates the checked sibling of a row. The bool
+// reports whether a new row was created, so callers know its "prior
+// quantity" is really zero rather than the quantityOf default of one.
+func (r *Reconciler) checkedRowFor(src models.GroceryItem) (*models.GroceryItem, bool, error) {
+	row, err := findRow(r.DB, src.Name, true)
+	if err != nil {
+		return nil, false, err
+	}
+	if row != nil {
+		return row, false, nil
+	}
+	row = &models.GroceryItem{
+		ID:        models.NewID(),
+		SectionID: src.SectionID,
+		Name:      src.Name,
+		Checked:   true,
+		Position:  src.Position,
+		StoreID:   src.StoreID,
+		CreatedAt: r.now(),
+		UpdatedAt: r.now(),
+	}
+	if err := r.DB.Create(row).Error; err != nil {
+		return nil, false, err
+	}
+	return row, true, nil
+}
+
+func (r *Reconciler) moveLinkToRow(link models.RecipeKeeperLink, dest *models.GroceryItem) error {
+	link.MPName = normalizeName(dest.Name)
+	link.MPChecked = dest.Checked
+	return r.DB.Save(&link).Error
+}
