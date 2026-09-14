@@ -11,11 +11,13 @@ import (
 )
 
 // eventZone is the household's timezone: the zone a zone-qualified event is
-// rendered into before its wall clock is stored. Defaults to the process zone
-// and is set explicitly at startup from CALENDAR_TIMEZONE — prod runs with
-// TZ unset (i.e. UTC), so relying on the process zone alone rendered foreign
-// events at a UTC wall clock there. Tests override it via SetEventZone.
-var eventZone = time.Local
+// rendered into before its wall clock is stored. Set at startup from
+// CALENDAR_TIMEZONE; the default is UTC, deliberately NOT the process zone —
+// keying off `TZ` made the same event render two hours apart in dev (which
+// sets TZ=America/Los_Angeles) and prod (which leaves it at UTC), and it also
+// made test results depend on the machine they ran on. Tests override it via
+// SetEventZone / withZone.
+var eventZone = time.UTC
 
 // SetEventZone sets the zone used for the conversion above. A nil location is
 // ignored, so a bad config leaves the previous (process) zone in place rather

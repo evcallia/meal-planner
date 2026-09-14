@@ -50,14 +50,22 @@ func TestSetEventZoneIgnoresNil(t *testing.T) {
 	}
 }
 
-// The actual production shape: docker-compose.yml leaves TZ unset, so the
-// process zone is UTC while the household is in California. Config has to win
-// over the process zone, or the Paris event lands at 16:30 (a 4:30 PM golf
+// The default is UTC, so an unconfigured deployment renders a foreign event at
+// its UTC wall clock — wrong for a California household, but the SAME wrong
+// everywhere, which is the point: it no longer depends on the container's TZ.
+func TestDefaultZoneIsUTCNotProcessZone(t *testing.T) {
+	if EventZone() != time.UTC {
+		t.Fatalf("default eventZone = %s, want UTC (must not follow time.Local)", EventZone())
+	}
+}
+
+// The production shape: CALENDAR_TIMEZONE supplies the household zone and must
+// win over the UTC default, or the Paris event lands at 16:30 (a 4:30 PM golf
 // lesson) instead of 09:30.
-func TestConfigZoneBeatsUTCProcessZone(t *testing.T) {
+func TestConfigZoneBeatsUTCDefault(t *testing.T) {
 	prev := EventZone()
 	t.Cleanup(func() { eventZone = prev })
-	eventZone = time.UTC // stand in for time.Local on a TZ-less container
+	eventZone = time.UTC
 
 	la, err := time.LoadLocation("America/Los_Angeles")
 	if err != nil {

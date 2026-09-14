@@ -25,9 +25,9 @@ type Settings struct {
 	AppleCalendarNames       string // comma-separated list of calendar names to sync
 	// CalendarTimeZone is the HOUSEHOLD's zone (IANA), the one calendar event
 	// times are rendered into before being stored as naive wall clocks. Empty
-	// falls back to the process zone (`TZ`). It is deliberately separate from
-	// `TZ`: `TZ` also controls log timestamps, and an operator changing that
-	// must not silently shift everyone's calendar by the offset.
+	// means UTC. It is deliberately separate from `TZ`: `TZ` also controls log
+	// timestamps, and an operator changing that must not silently shift
+	// everyone's calendar by the offset.
 	CalendarTimeZone string
 
 	// OIDC (any spec-compliant provider — Authentik, Authelia, Keycloak, …)
