@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, ReactNode } from 'react';
 import { Settings } from '../hooks/useSettings';
-import { getCalendarCacheStatus, refreshCalendarCache, CalendarCacheStatus, getHiddenCalendarEvents, unhideCalendarEvent, HiddenCalendarEvent, sendTestPushNotification } from '../api/client';
+import { getCalendarCacheStatus, refreshCalendarCache, CalendarCacheStatus, getHiddenCalendarEvents, unhideCalendarEvent, HiddenCalendarEvent, sendTestPushNotification, getRecipeKeeperLists, selectRecipeKeeperList, syncRecipeKeeperNow, RecipeKeeperListOption, RecipeKeeperStatus } from '../api/client';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { isPushSupported, getPushSubscription, enablePush, disablePush } from '../utils/push';
 import { PasswordSetter } from './PasswordSetter';
@@ -41,6 +41,11 @@ interface SettingsModalProps {
   onFetchPendingChanges?: () => Promise<PendingChange[]>;
   onGetSyncErrors?: () => Map<number, string>;
   onSkipPendingChange?: (id: number) => Promise<void>;
+  // Recipe Keeper connection (see hooks/useRecipeKeeperStatus). Omitted or
+  // `enabled: false` (no server credentials configured) renders nothing —
+  // there's nothing a household without the integration needs to see here.
+  recipeKeeperStatus?: RecipeKeeperStatus | null;
+  onRecipeKeeperStatusChange?: (status: RecipeKeeperStatus) => void;
 }
 
 interface EnrichedPendingChange extends PendingChange {
@@ -342,7 +347,138 @@ function formatRelativeTime(dateString: string | null): string {
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 }
 
-export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode, accountName, onLogout, pendingCount, onClearPendingChanges, onFetchPendingChanges, onGetSyncErrors, onSkipPendingChange }: SettingsModalProps) {
+// One read-only row plus a list picker and "Sync now" button — no
+// credential fields, since those are env vars and a password box that can't
+// write them would be a lie. Its own component so the list fetch only runs
+// once the "Recipe Keeper" section is actually expanded (SettingsSection
+// doesn't mount `children` until `open`).
+function RecipeKeeperSettings({ status, onStatusChange }: {
+  status: RecipeKeeperStatus;
+  onStatusChange: (status: RecipeKeeperStatus) => void;
+}) {
+  const [lists, setLists] = useState<RecipeKeeperListOption[]>([]);
+  const [listsLoading, setListsLoading] = useState(true);
+  const [listsError, setListsError] = useState<string | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  // A list picked but awaiting the "this re-imports everything" confirmation
+  // — only shown when changing AWAY from an already-selected list; the
+  // first-ever pick needs no warning (nothing to reset yet).
+  const [pendingListId, setPendingListId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setListsLoading(true);
+    getRecipeKeeperLists()
+      .then(l => { if (!cancelled) setLists(l); })
+      .catch(e => { if (!cancelled) setListsError(e instanceof Error ? e.message : 'Failed to load lists'); })
+      .finally(() => { if (!cancelled) setListsLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const applySelection = useCallback(async (listId: string) => {
+    setPendingListId(null);
+    setSwitching(true);
+    setActionError(null);
+    try {
+      onStatusChange(await selectRecipeKeeperList(listId));
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Failed to switch lists');
+    } finally {
+      setSwitching(false);
+    }
+  }, [onStatusChange]);
+
+  const handlePick = useCallback((listId: string) => {
+    if (!listId || listId === status.selected_list_id) return;
+    if (status.selected_list_id) {
+      // Changing an already-selected list re-imports from scratch server-side.
+      setPendingListId(listId);
+      return;
+    }
+    applySelection(listId);
+  }, [status.selected_list_id, applySelection]);
+
+  const handleSyncNow = useCallback(async () => {
+    setSyncing(true);
+    setActionError(null);
+    try {
+      onStatusChange(await syncRecipeKeeperNow());
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  }, [onStatusChange]);
+
+  return (
+    <>
+      <div>
+        <span className="text-gray-900 dark:text-gray-100 font-medium">Shopping list</span>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-1.5">
+          Which Recipe Keeper list to mirror into your grocery list.
+        </p>
+        {listsLoading ? (
+          <p className="text-sm text-gray-400 dark:text-gray-500">Loading lists…</p>
+        ) : listsError ? (
+          <p className="text-sm text-red-500 dark:text-red-400">{listsError}</p>
+        ) : (
+          <select
+            aria-label="Recipe Keeper shopping list"
+            value={status.selected_list_id || ''}
+            onChange={e => handlePick(e.target.value)}
+            disabled={switching}
+            className="w-full text-sm px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:opacity-50"
+          >
+            <option value="" disabled>Select a list…</option>
+            {lists.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+        )}
+        {pendingListId && (
+          <div className="mt-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-xs text-amber-700 dark:text-amber-400 space-y-2">
+            <p>
+              Switching lists re-imports everything from scratch — existing recipe links
+              reset, and the first sync afterward takes about 15 seconds.
+            </p>
+            <div className="flex items-center justify-end gap-3">
+              <button onClick={() => setPendingListId(null)} className="text-gray-500 dark:text-gray-400">Cancel</button>
+              <button onClick={() => applySelection(pendingListId)} className="font-medium text-amber-700 dark:text-amber-400">
+                Switch anyway
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <span className="text-gray-900 dark:text-gray-100 font-medium">Connection</span>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          {status.auth_failed
+            ? 'Sign-in failed — check the Recipe Keeper credentials.'
+            : status.last_error
+              ? `Last error: ${status.last_error}`
+              : 'Connected'}
+        </p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Last sync: {formatRelativeTime(status.last_sync)}
+        </p>
+      </div>
+
+      {actionError && <p className="text-sm text-red-500 dark:text-red-400">{actionError}</p>}
+
+      <button
+        onClick={handleSyncNow}
+        disabled={syncing}
+        className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        {syncing ? 'Syncing…' : 'Sync now'}
+      </button>
+    </>
+  );
+}
+
+export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode, accountName, onLogout, pendingCount, onClearPendingChanges, onFetchPendingChanges, onGetSyncErrors, onSkipPendingChange, recipeKeeperStatus, onRecipeKeeperStatusChange }: SettingsModalProps) {
   const [cacheStatus, setCacheStatus] = useState<CalendarCacheStatus | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
@@ -1154,6 +1290,14 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
             )}
           </div>
           </SettingsSection>
+{/* Recipe Keeper — omitted entirely when the backend has no credentials
+    configured (a household without the integration has nothing to see
+    here); recipeKeeperStatus is null until the first poll lands too. */}
+          {recipeKeeperStatus?.enabled && onRecipeKeeperStatusChange && (
+            <SettingsSection title="Recipe Keeper">
+              <RecipeKeeperSettings status={recipeKeeperStatus} onStatusChange={onRecipeKeeperStatusChange} />
+            </SettingsSection>
+          )}
 {/* Pending Changes */}
           {pendingCount != null && pendingCount > 0 && onClearPendingChanges && (
             <div className="pt-2">

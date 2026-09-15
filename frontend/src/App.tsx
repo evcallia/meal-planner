@@ -19,6 +19,7 @@ import { useRealtime } from './hooks/useRealtime';
 import { useKeyboardOpen } from './hooks/useKeyboardOpen';
 import { useVisualViewportPin } from './hooks/useVisualViewportPin';
 import { useActivity } from './hooks/useActivity';
+import { useRecipeKeeperStatus } from './hooks/useRecipeKeeperStatus';
 import { ensurePushSubscription } from './utils/push';
 import { claimStaleUpdate } from './utils/appUpdate';
 import { getCurrentUser, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents, refreshCalendarCache, getTrackerLists, getPackingLists } from './api/client';
@@ -689,6 +690,12 @@ function AppContent() {
     }
   }, [visiblePages, currentPage, handlePageChange]);
   const activity = useActivity(!!user, user?.sub, settings);
+  const recipeKeeper = useRecipeKeeperStatus(!!user);
+  // Contributes +1 to the bell badge alongside unseen activity/update-
+  // available — see ActivityPanel's pinned row. Auth failures and outages
+  // both surface here; the backend gates which reach last_error at all
+  // (immediate for auth, after 3 failed attempts for transient blips).
+  const recipeKeeperErrorActive = !!(recipeKeeper.status?.enabled && recipeKeeper.status.last_error);
   const isOnline = useOnlineStatus();
   useRealtime();
   const keyboardOpen = useKeyboardOpen();
@@ -1584,7 +1591,7 @@ function AppContent() {
             pendingCount={pendingCount}
             settings={settings}
             onShowSettings={() => setShowSettings(true)}
-            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            unseenActivity={showActivity ? 0 : activity.unseenCount + (recipeKeeperErrorActive ? 1 : 0)}
             onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
@@ -1598,7 +1605,7 @@ function AppContent() {
             pendingCount={pendingCount}
             settings={settings}
             onShowSettings={() => setShowSettings(true)}
-            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            unseenActivity={showActivity ? 0 : activity.unseenCount + (recipeKeeperErrorActive ? 1 : 0)}
             onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
@@ -1613,7 +1620,7 @@ function AppContent() {
             settings={settings}
             onUpdateSettings={updateSettings}
             onShowSettings={() => setShowSettings(true)}
-            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            unseenActivity={showActivity ? 0 : activity.unseenCount + (recipeKeeperErrorActive ? 1 : 0)}
             onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
@@ -1628,7 +1635,7 @@ function AppContent() {
             settings={settings}
             onUpdateSettings={updateSettings}
             onShowSettings={() => setShowSettings(true)}
-            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            unseenActivity={showActivity ? 0 : activity.unseenCount + (recipeKeeperErrorActive ? 1 : 0)}
             onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
@@ -1643,7 +1650,7 @@ function AppContent() {
             settings={settings}
             onUpdateSettings={updateSettings}
             onShowSettings={() => setShowSettings(true)}
-            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            unseenActivity={showActivity ? 0 : activity.unseenCount + (recipeKeeperErrorActive ? 1 : 0)}
             onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
@@ -1661,6 +1668,7 @@ function AppContent() {
           updateAvailable={updateAvailable}
           onApplyUpdate={applyUpdate}
           updating={updating}
+          recipeKeeperStatus={recipeKeeper.status}
         />
       )}
       {showSettings && (
@@ -1677,6 +1685,8 @@ function AppContent() {
           onFetchPendingChanges={fetchPendingChanges}
           onGetSyncErrors={getSyncErrors}
           onSkipPendingChange={skipPendingChange}
+          recipeKeeperStatus={recipeKeeper.status}
+          onRecipeKeeperStatusChange={recipeKeeper.applyStatus}
         />
       )}
 
