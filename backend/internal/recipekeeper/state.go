@@ -27,8 +27,13 @@ const (
 	stateSelectedListName = "selected_list_name"
 )
 
-// epochWatermark pulls everything: the .NET zero date.
-const epochWatermark = "0001-01-01T00:00:00Z"
+// epochWatermark bootstraps a bucket's first pull: old enough that
+// everything is newer. It is deliberately NOT .NET's DateTime.MinValue
+// ("0001-01-01T00:00:00Z") — the server returns 500 "An unhandled
+// exception occurred" for that value, verified against the live API,
+// almost certainly a timezone-conversion underflow on their side. Test
+// doubles accept anything, so only live traffic catches this.
+const epochWatermark = "1970-01-01T00:00:00.0000000Z"
 
 func getState(db *gorm.DB, key, fallback string) string {
 	var row models.RecipeKeeperState

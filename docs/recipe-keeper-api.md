@@ -234,11 +234,17 @@ and a multi-megabyte one (see [Recipe](#recipe)).
 
 ### Watermark bootstrapping
 
-To pull everything for a bucket, send an epoch-zero watermark
-(`"0001-01-01T00:00:00Z"`) with empty `SyncEntities` / `LocalChangesIds`, then follow
+To pull everything for a bucket, send a watermark old enough that everything is
+newer, with empty `SyncEntities` / `LocalChangesIds`, then follow
 `HasMoreUpdatedServerItems`. Timestamps are .NET round-trip format, UTC, with up to
 7 fractional digits — note **pushed** entities carry no `Z` suffix while **server**
 values do.
+
+**Do not use .NET's `DateTime.MinValue` (`"0001-01-01T00:00:00Z"`) for this.**
+Verified against the live API: it 500s, with an error body that is literally
+`An unhandled exception occurred` (both with and without the `Z` suffix), almost
+certainly a timezone-conversion underflow on their side. A 1970 epoch works —
+we send `"1970-01-01T00:00:00.0000000Z"`.
 
 > **Unverified:** `UpdatedServerItems` was empty in every captured exchange — the
 > device was always the sole writer. Its contents are *inferred* to be full entity
