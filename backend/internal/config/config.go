@@ -73,6 +73,11 @@ type Settings struct {
 	RecipeKeeperUsername  string
 	RecipeKeeperPassword  string
 	RecipeKeeperReceiptID string
+	// RecipeKeeperPollSeconds is how often the background loop polls
+	// Recipe Keeper for changes, independent of the doorbell (which this
+	// integration cannot rely on — see recipekeeper.ResolvePollInterval,
+	// which clamps this to a 30s floor).
+	RecipeKeeperPollSeconds int
 }
 
 // loadDotEnv parses a .env file of KEY=VALUE lines. Missing file is fine.
@@ -189,10 +194,11 @@ func Load(envPath string) *Settings {
 
 		StaticDir: l.str("STATIC_DIR", "static"),
 
-		RecipeKeeperEnabled:   l.boolean("RECIPE_KEEPER_ENABLED", false),
-		RecipeKeeperUsername:  l.str("RECIPE_KEEPER_USERNAME", ""),
-		RecipeKeeperPassword:  l.str("RECIPE_KEEPER_PASSWORD", ""),
-		RecipeKeeperReceiptID: l.str("RECIPE_KEEPER_RECEIPT_ID", ""),
+		RecipeKeeperEnabled:     l.boolean("RECIPE_KEEPER_ENABLED", false),
+		RecipeKeeperUsername:    l.str("RECIPE_KEEPER_USERNAME", ""),
+		RecipeKeeperPassword:    l.str("RECIPE_KEEPER_PASSWORD", ""),
+		RecipeKeeperReceiptID:   l.str("RECIPE_KEEPER_RECEIPT_ID", ""),
+		RecipeKeeperPollSeconds: l.integer("RECIPE_KEEPER_POLL_SECONDS", 60),
 	}
 }
 

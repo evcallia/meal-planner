@@ -141,6 +141,7 @@ func main() {
 					"recipe-keeper")
 			},
 		}
+		rkService.PollInterval = recipekeeper.ResolvePollInterval(settings.RecipeKeeperPollSeconds)
 		// Exposed on App so /api/recipe-keeper/status and /sync can reach it;
 		// nil (the zero value) on App when the integration isn't configured.
 		application.RecipeKeeper = rkService
@@ -150,6 +151,7 @@ func main() {
 			if recipekeeper.SelectedListID(gormDB) == "" {
 				log.Printf("recipe keeper: no shopping list selected yet — call GET /api/recipe-keeper/lists to see available lists, then PUT /api/recipe-keeper/list to choose one; the sync loop is starting now and will pick it up automatically once you do, no restart needed")
 			}
+			log.Printf("recipe keeper: polling every %s", rkService.PollInterval)
 			var rkCtx context.Context
 			rkCtx, cancelRecipeKeeper = context.WithCancel(context.Background())
 			go rkService.Run(rkCtx)

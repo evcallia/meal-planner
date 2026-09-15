@@ -357,8 +357,19 @@ authoritative" means operationally.
 
 1. `item_defaults.section_name` for that name — MP's existing learned memory wins
 2. else RK's category name (via `ShoppingListCategoryItem` → `ShoppingListCategory`),
-   **only if a section with that name already exists in MP**
-3. else `Uncategorized`
+   **creating that section in MP (appended at the end, `MAX(position)+1`) if one by
+   that name doesn't already exist**
+3. else `Uncategorized`, when RK has no category for the item at all
+
+**2026-09-15 revision:** the original decision was to place into an existing
+section only and never create one, reasoning MP's sections should stay fully
+user-curated. Measured against the real account, that dumped most imports into
+Uncategorized — the RK category on a real item (`ginger` → "Canned Goods &
+Soups") routinely has no MP counterpart yet. The user explicitly overrode the
+original decision: creating the section is a better outcome than Uncategorized,
+since it turns a real vendor signal into a Home the item already needs. This
+still runs only once, on arrival — nothing later moves the item — and
+`item_defaults` still wins over it.
 
 Store assignment follows the existing `item_defaults.store_id` path unchanged. RK has
 no store concept, so stores never round-trip.

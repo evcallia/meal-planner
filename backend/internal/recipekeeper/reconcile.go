@@ -215,7 +215,8 @@ func derefOr(p *string, fallback string) string {
 
 // createRow makes a grocery row for a newly-seen RK item. Section placement is
 // resolved once, in priority order: MP's own learned default, then RK's category
-// name if a section by that name already exists, then Uncategorized.
+// name — creating that section if MP doesn't already have one — then
+// Uncategorized only when RK has no category for the item at all.
 func (r *Reconciler) createRow(in ShoppingListItem) (*models.GroceryItem, error) {
 	sectionID, err := r.placeSection(in.Name)
 	if err != nil {

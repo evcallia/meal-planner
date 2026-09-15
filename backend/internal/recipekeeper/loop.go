@@ -19,6 +19,31 @@ const (
 	backoffBase    = 30 * time.Second
 	backoffMax     = 30 * time.Minute
 
+	// defaultPollSeconds is RECIPE_KEEPER_POLL_SECONDS' default: the primary
+	// mechanism that pulls inbound changes now (see Service.PollInterval and
+	// Run) — the doorbell fires only for registered app devices and, against
+	// the real vendor API, has been observed to return 201 ("nothing
+	// changed") for this client even when the server-side data genuinely
+	// changed. A cheap delta once the watermark is warm was measured
+	// sub-second, so polling this often is reasonable.
+	defaultPollSeconds = 60
+	// minPollSeconds floors RECIPE_KEEPER_POLL_SECONDS: polling faster than
+	// this is not "cheap delta" territory any more, it's hammering a third
+	// party's live API. ResolvePollInterval clamps to this and logs when it
+	// does.
+	minPollSeconds = 30
+
+	// grocerySyncTimeout bounds TriggerGrocerySync's SyncOnce call. Must
+	// comfortably exceed a real full drain — measured live at 14s for the
+	// first one — so it is a backstop against a hung connection, never a
+	// limit on normal work; a cancelled drain makes no progress at all,
+	// because the watermark is only persisted once a drain completes.
+	grocerySyncTimeout = 5 * time.Minute
+	// recipeSyncTimeout bounds TriggerRecipeSync's SyncRecipes call. Recipe
+	// entities embed base64 photos, so a cold pull runs to hundreds of MB —
+	// far longer than a grocery drain — hence the much larger backstop.
+	recipeSyncTimeout = 30 * time.Minute
+
 	// transientAlertAt is how many consecutive NON-auth failures must happen
 	// before the bell surfaces "Can't reach Recipe Keeper" — a blip shouldn't
 	// alert, a pattern should.
@@ -51,6 +76,21 @@ const (
 	maxItemSyncPages = 1000
 )
 
+// ResolvePollInterval converts RECIPE_KEEPER_POLL_SECONDS into the Duration
+// Service.PollInterval expects: zero/negative falls back to
+// defaultPollSeconds, and anything below minPollSeconds is clamped up to it
+// (logged, since a misconfigured value silently hammering the vendor API
+// would otherwise be invisible).
+func ResolvePollInterval(seconds int) time.Duration {
+	if seconds <= 0 {
+		seconds = defaultPollSeconds
+	} else if seconds < minPollSeconds {
+		log.Printf("recipekeeper: RECIPE_KEEPER_POLL_SECONDS=%d is below the %ds floor, clamping to %ds", seconds, minPollSeconds, minPollSeconds)
+		seconds = minPollSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 type Status struct {
 	Enabled    bool       `json:"enabled"`
 	LastSync   *time.Time `json:"last_sync"`
@@ -72,6 +112,14 @@ type Service struct {
 	DB       *gorm.DB
 	OnChange func(Changes)
 
+	// PollInterval is how often Run's periodic poll loop calls
+	// TriggerGrocerySync, independent of the doorbell. Zero means
+	// defaultPollSeconds; production wiring goes through
+	// ResolvePollInterval so this is always already clamped/defaulted by
+	// the time Run sees it. Tests set it directly to a short duration to
+	// exercise periodic polling without a real 60s wait.
+	PollInterval time.Duration
+
 	// mu guards every field below. Task 9 adds POST /api/recipe-keeper/sync,
 	// which calls SyncOnce concurrently with the background Run loop, so
 	// these can no longer be plain unsynchronized ints/bools.
@@ -79,6 +127,16 @@ type Service struct {
 	failures     int  // consecutive failures of ANY kind; drives backoff
 	authFailures int  // consecutive AUTH failures specifically; drives the latch
 	stopped      bool // true once the auth latch has tripped — Run must stop
+
+	// grocerySyncPending/recipeSyncPending coalesce a kick that arrives
+	// while that sync is already in flight: TriggerGrocerySync/
+	// TriggerRecipeSync set the flag instead of dropping the kick, and the
+	// in-flight goroutine loops once more after finishing if the flag got
+	// set — collapsing any number of kicks arriving mid-sync into exactly
+	// one extra run, never zero (the old drop-on-busy bug) and never one
+	// per kick.
+	grocerySyncPending bool
+	recipeSyncPending  bool
 
 	// recipeSyncMu guards SyncRecipes so only one full Recipe pull is ever in
 	// flight. Recipe entities embed base64 photos (~100-300 KB each), so the
@@ -410,49 +468,89 @@ func (s *Service) SyncRecipes(ctx context.Context) error {
 }
 
 // TriggerRecipeSync kicks off a recipe-title cache refresh in the background.
-// It is a no-op when a sync is already in flight — the mutex is held for the
-// life of the goroutine, so a burst of triggers (startup racing the first
-// SyncOnce, then every subsequent SyncOnce) collapses to one running pull at
-// a time.
+// When a pull is already in flight, it coalesces rather than dropping: it
+// sets recipeSyncPending and returns, and the in-flight goroutine notices
+// the flag once it finishes and runs exactly one more pull before releasing
+// the mutex — so a burst of triggers (startup racing the first SyncOnce,
+// then every subsequent SyncOnce) collapses to at most one extra run, never
+// zero and never one per trigger.
 func (s *Service) TriggerRecipeSync() {
 	if !s.recipeSyncMu.TryLock() {
+		s.mu.Lock()
+		s.recipeSyncPending = true
+		s.mu.Unlock()
 		return
 	}
-	ctx := s.backgroundContext()
+	parent := s.backgroundContext()
 	go func() {
 		defer s.recipeSyncMu.Unlock()
-		if err := s.SyncRecipes(ctx); err != nil {
-			// Route through recordError like any other sync failure — an
-			// auth failure during a recipe pull is exactly as real (and as
-			// worth latching off) as one during a grocery pull, and a
-			// transient one should count toward the same backoff/alert
-			// bookkeeping rather than being log-only.
-			s.recordError(err)
+		for {
+			ctx, cancel := context.WithTimeout(parent, recipeSyncTimeout)
+			err := s.SyncRecipes(ctx)
+			cancel()
+			if err != nil {
+				// Route through recordError like any other sync failure — an
+				// auth failure during a recipe pull is exactly as real (and as
+				// worth latching off) as one during a grocery pull, and a
+				// transient one should count toward the same backoff/alert
+				// bookkeeping rather than being log-only.
+				s.recordError(err)
+			}
+
+			s.mu.Lock()
+			pending := s.recipeSyncPending
+			s.recipeSyncPending = false
+			s.mu.Unlock()
+			if !pending || s.isStopped() {
+				return
+			}
 		}
 	}()
 }
 
 // TriggerGrocerySync kicks an out-of-band SyncOnce after a local grocery
 // mutation touched Recipe Keeper links, so the resulting push goes out
-// within seconds instead of waiting for the safety timer. It no-ops —
-// rather than piling up a concurrent sync — when one is already in flight,
-// and it never even starts once the auth-failure latch has tripped:
-// retrying a rejected password on every grocery edit is the exact
-// account-lockout risk that latch exists to prevent. Bounded to 30s so a
-// slow or hung upstream can't accumulate goroutines indefinitely.
+// within seconds instead of waiting for the safety timer. It never even
+// starts once the auth-failure latch has tripped: retrying a rejected
+// password on every grocery edit is the exact account-lockout risk that
+// latch exists to prevent.
+//
+// When a sync is already in flight, it coalesces rather than dropping: it
+// sets grocerySyncPending and returns, and the in-flight goroutine notices
+// the flag once it finishes and runs exactly one more sync before releasing
+// the mutex — so a burst of kicks arriving mid-sync (e.g. checking off
+// several items right after selecting a list, while the long initial drain
+// is still running) collapses to at most one extra run, never zero (the
+// dropped-kick bug) and never one per kick. Bounded to grocerySyncTimeout so
+// a slow or hung upstream can't accumulate goroutines indefinitely, and so
+// it is generously above a real full drain — a cancelled drain makes no
+// progress, because the watermark is only persisted once a drain completes.
 func (s *Service) TriggerGrocerySync() {
 	if s.isStopped() {
 		return
 	}
 	if !s.grocerySyncMu.TryLock() {
+		s.mu.Lock()
+		s.grocerySyncPending = true
+		s.mu.Unlock()
 		return
 	}
 	parent := s.backgroundContext()
 	go func() {
 		defer s.grocerySyncMu.Unlock()
-		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
-		defer cancel()
-		_ = s.SyncOnce(ctx)
+		for {
+			ctx, cancel := context.WithTimeout(parent, grocerySyncTimeout)
+			_ = s.SyncOnce(ctx)
+			cancel()
+
+			s.mu.Lock()
+			pending := s.grocerySyncPending
+			s.grocerySyncPending = false
+			s.mu.Unlock()
+			if !pending || s.isStopped() {
+				return
+			}
+		}
 	}()
 }
 
@@ -539,9 +637,12 @@ func (s *Service) Status() Status {
 	return st
 }
 
-// Run drives the long-poll doorbell until ctx is cancelled. A 200 means
-// something changed; a 201 means the poll simply expired. A safety timer covers
-// anything missed while the process was down.
+// Run drives the sync loop until ctx is cancelled. Periodic polling (see
+// PollInterval) is the PRIMARY mechanism: measured live, the doorbell never
+// returns 200 for this client (it appears scoped to registered app devices)
+// even when the server-side data genuinely changed, so it is kept only as an
+// opportunistic optimization — a 200 syncs immediately, a 201 just costs
+// nothing. A safety timer covers anything missed while the process was down.
 func (s *Service) Run(ctx context.Context) {
 	s.mu.Lock()
 	s.bgCtx = ctx
@@ -558,6 +659,33 @@ func (s *Service) Run(ctx context.Context) {
 		log.Printf("recipekeeper: sync disabled after repeated auth failures; fix credentials and restart, or trigger a manual sync, to resume")
 		return
 	}
+
+	pollInterval := s.PollInterval
+	if pollInterval <= 0 {
+		pollInterval = defaultPollSeconds * time.Second
+	}
+	poll := time.NewTicker(pollInterval)
+	defer poll.Stop()
+	// Runs on its own goroutine, decoupled from the doorbell long-poll below
+	// (which normally blocks for up to ~90s at a time) — a ticker checked
+	// only between Notify calls would effectively poll on the doorbell's
+	// cadence, not its own. TriggerGrocerySync is the coalescing,
+	// latch-respecting entry point, so this is safe to call on every tick
+	// even if a sync (from here, the doorbell, or a manual trigger) is
+	// already in flight.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-poll.C:
+				if s.isStopped() {
+					return
+				}
+				s.TriggerGrocerySync()
+			}
+		}
+	}()
 
 	safety := time.NewTicker(safetyInterval)
 	defer safety.Stop()

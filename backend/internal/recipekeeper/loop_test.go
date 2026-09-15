@@ -282,7 +282,11 @@ func TestSyncRecipesPopulatesCacheAndPaginates(t *testing.T) {
 // TestTriggerRecipeSyncSkipsWhileInFlight locks in the mutex guard: a second
 // trigger while a pull is already running must be a no-op, not a second
 // concurrent hundred-MB pull.
-func TestTriggerRecipeSyncSkipsWhileInFlight(t *testing.T) {
+// TestTriggerRecipeSyncCoalescesWhileInFlight proves a burst of triggers
+// arriving while a recipe pull is already in flight collapses into exactly
+// one extra pull afterwards — not zero (the old drop-on-busy bug) and not
+// one per trigger.
+func TestTriggerRecipeSyncCoalescesWhileInFlight(t *testing.T) {
 	db := testDB(t)
 	rec := testReconciler(t, db)
 
@@ -320,7 +324,12 @@ func TestTriggerRecipeSyncSkipsWhileInFlight(t *testing.T) {
 		t.Fatal("first recipe sync never reached the server")
 	}
 
-	svc.TriggerRecipeSync() // must be a no-op: the guard is held by the first call
+	// Several more triggers landing while the first pull is still in
+	// flight (blocked on <-release below) — these must coalesce into
+	// exactly one extra pull, not be dropped and not each start their own.
+	svc.TriggerRecipeSync()
+	svc.TriggerRecipeSync()
+	svc.TriggerRecipeSync()
 
 	close(release)
 	deadline := time.After(2 * time.Second)
@@ -336,8 +345,8 @@ func TestTriggerRecipeSyncSkipsWhileInFlight(t *testing.T) {
 		}
 	}
 
-	if got := atomic.LoadInt32(&calls); got != 1 {
-		t.Errorf("calls = %d, want 1 (second trigger should have been skipped while the first was in flight)", got)
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("calls = %d, want 2 (the first pull plus exactly one coalesced extra pull for the burst of triggers that arrived mid-flight)", got)
 	}
 }
 
@@ -433,6 +442,142 @@ func TestRecordSuccessClearsPriorError(t *testing.T) {
 	svc.recordSuccess()
 	if got := svc.Status().LastError; got != "" {
 		t.Errorf("LastError = %q, want empty after recordSuccess", got)
+	}
+}
+
+// TestRunPollsPeriodicallyWithoutDoorbellSignal proves Run syncs on its own
+// regular schedule even when the doorbell NEVER signals a change (every
+// Notify call returns 201) — measured live, this is exactly what happens
+// against the real Recipe Keeper server for this client. PollInterval is set
+// to a few milliseconds so the test can observe several poll-driven syncs
+// without anywhere near a real 60s wait.
+func TestRunPollsPeriodicallyWithoutDoorbellSignal(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var syncCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		if r.URL.Path == "/api/syncnotification" {
+			// The doorbell never fires for this client — every long-poll
+			// simply expires.
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		atomic.AddInt32(&syncCalls, 1)
+		_ = json.NewEncoder(w).Encode(SyncResponse{})
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+		PollInterval: 20 * time.Millisecond,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.Run(ctx)
+
+	// The initial sync in Run accounts for 1 call; periodic polling (not the
+	// doorbell, which never returns 200 here) must push it well past that
+	// within a couple hundred milliseconds.
+	deadline := time.After(2 * time.Second)
+	for {
+		if atomic.LoadInt32(&syncCalls) >= 4 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("only %d sync(s) happened in 2s with PollInterval=20ms and no doorbell signal; periodic polling never kicked in", atomic.LoadInt32(&syncCalls))
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// TestResolvePollIntervalClampsBelowFloor proves a configured poll interval
+// faster than minPollSeconds is clamped up to it rather than honored as-is —
+// polling that fast is hammering a third party's live API, not a cheap
+// delta.
+func TestResolvePollIntervalClampsBelowFloor(t *testing.T) {
+	if got, want := ResolvePollInterval(5), time.Duration(minPollSeconds)*time.Second; got != want {
+		t.Errorf("ResolvePollInterval(5) = %v, want clamped to %v", got, want)
+	}
+	if got, want := ResolvePollInterval(0), time.Duration(defaultPollSeconds)*time.Second; got != want {
+		t.Errorf("ResolvePollInterval(0) = %v, want default %v", got, want)
+	}
+	if got, want := ResolvePollInterval(120), 120*time.Second; got != want {
+		t.Errorf("ResolvePollInterval(120) = %v, want unchanged %v", got, want)
+	}
+}
+
+// deadlineCapturingTransport is a fake http.RoundTripper used to observe the
+// deadline on the *client-side* context passed into an outbound request —
+// note this is NOT the same thing as the request's wire-level timing, and
+// specifically not the same as an httptest.Server handler's r.Context(),
+// which is governed by the SERVER's own timeouts and carries none of the
+// client's context.WithTimeout information across the network. Answering
+// entirely in-process is what makes the deadline directly observable.
+type deadlineCapturingTransport struct {
+	deadlines chan time.Time
+}
+
+func (f *deadlineCapturingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	body := `{}`
+	if req.URL.Path == "/token" {
+		body = `{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`
+	} else if dl, ok := req.Context().Deadline(); ok {
+		select {
+		case f.deadlines <- dl:
+		default:
+		}
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}, nil
+}
+
+// TestTriggerGrocerySyncTimeoutExceeds30Seconds proves SyncOnce is no longer
+// bounded by the old 30s timeout, which was shorter than a real full drain
+// (measured live at 14s for the FIRST one, before the watermark was warm —
+// a cold cursor or a bigger household easily exceeds 30s). A cancelled
+// drain makes no progress at all, since the watermark is only persisted
+// once a drain completes.
+func TestTriggerGrocerySyncTimeoutExceeds30Seconds(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	deadlines := make(chan time.Time, 1)
+	httpClient := &http.Client{Transport: &deadlineCapturingTransport{deadlines: deadlines}}
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: "http://recipe-keeper.invalid", Username: "u", Password: "p",
+		HTTP: httpClient, Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: "http://recipe-keeper.invalid", HTTP: httpClient, Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	start := time.Now()
+	svc.TriggerGrocerySync()
+
+	var dl time.Time
+	select {
+	case dl = <-deadlines:
+	case <-time.After(2 * time.Second):
+		t.Fatal("grocery sync request never reached the fake transport")
+	}
+
+	if got := dl.Sub(start); got <= 30*time.Second {
+		t.Errorf("SyncOnce's context deadline was %v out, want > 30s (the old timeout that a real full drain could exceed)", got)
 	}
 }
 
@@ -537,7 +682,13 @@ func TestAuthFailureLatchStopsRun(t *testing.T) {
 // collapse into one in-flight reconcile, not N concurrent SyncOnce calls
 // racing on the same PendingPushes/watermark (the production echo-loop
 // symptom).
-func TestTriggerGrocerySyncSkipsWhileInFlight(t *testing.T) {
+// TestTriggerGrocerySyncCoalescesWhileInFlight proves a burst of grocery
+// mutations landing while a sync is already in flight collapses into
+// exactly one extra sync afterwards — not zero (the dropped-kick bug that
+// meant a check-off made shortly after selecting a list, while the long
+// initial drain was still running, never reached Recipe Keeper) and not one
+// extra sync per kick.
+func TestTriggerGrocerySyncCoalescesWhileInFlight(t *testing.T) {
 	db := testDB(t)
 	rec := testReconciler(t, db)
 
@@ -594,7 +745,9 @@ func TestTriggerGrocerySyncSkipsWhileInFlight(t *testing.T) {
 	}
 
 	// Several more mutations landing while the first sync is still in
-	// flight — none of these may start a second concurrent sync.
+	// flight — none of these may start a CONCURRENT second sync, but they
+	// must not be dropped either: together they should coalesce into
+	// exactly one extra sync once the first finishes.
 	svc.TriggerGrocerySync()
 	svc.TriggerGrocerySync()
 	svc.TriggerGrocerySync()
@@ -613,8 +766,8 @@ func TestTriggerGrocerySyncSkipsWhileInFlight(t *testing.T) {
 		}
 	}
 
-	if got := atomic.LoadInt32(&calls); got != 1 {
-		t.Errorf("calls = %d, want 1 (later triggers should have been skipped while the first was in flight)", got)
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("calls = %d, want 2 (the first sync plus exactly one coalesced extra sync for the burst of kicks that arrived mid-flight)", got)
 	}
 }
 

@@ -98,16 +98,29 @@ func (r *Reconciler) StoreCategories(cats, catItems []json.RawMessage) error {
 	return nil
 }
 
-// sectionFromRKCategory resolves RK's category to an EXISTING MP section.
-// It never creates one: Meal Planner's sections are authoritative, so RK may
-// only suggest a home that already exists.
+// sectionFromRKCategory resolves RK's category to an MP section, creating
+// one — appended at the end, MAX(position)+1 — when MP doesn't already have
+// a section by that name. Dumping every import into Uncategorized just
+// because MP hadn't seen the category name yet moved the user's sorting
+// problem from Recipe Keeper into Meal Planner instead of solving it; MP
+// stays authoritative in every other sense (this still runs only once, on
+// arrival — see createRow — and item_defaults still takes precedence, see
+// placeSection).
 func (r *Reconciler) sectionFromRKCategory(name string) (uuid.UUID, bool) {
 	catName, ok := r.rkCategoryForItem(name)
 	if !ok {
 		return uuid.Nil, false
 	}
 	var sec models.GrocerySection
-	if err := r.DB.First(&sec, "LOWER(name) = LOWER(?)", catName).Error; err != nil {
+	if err := r.DB.First(&sec, "LOWER(name) = LOWER(?)", catName).Error; err == nil {
+		return sec.ID, true
+	}
+	var maxPos struct{ P int }
+	r.DB.Model(&models.GrocerySection{}).
+		Select("COALESCE(MAX(position), -1) AS p").Scan(&maxPos)
+	sec = models.GrocerySection{ID: models.NewID(), Name: catName, Position: maxPos.P + 1, CreatedAt: r.now()}
+	if err := r.DB.Create(&sec).Error; err != nil {
+		log.Printf("recipekeeper: failed to create section %q from RK category: %v", catName, err)
 		return uuid.Nil, false
 	}
 	return sec.ID, true
