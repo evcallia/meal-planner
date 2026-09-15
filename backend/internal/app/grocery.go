@@ -669,6 +669,11 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 	}
 	a.DB.Where("id = ?", itemID).First(&item)
 
+	// consumeTouchedSecondRow is set when ConsumeUnits created or modified a
+	// checked sibling row as a side effect (the common case — see its own
+	// doc comment). That row exists in the database now but no client has
+	// been told about it; the broadcast below must not claim otherwise.
+	consumeTouchedSecondRow := false
 	if a.RecipeKeeper != nil {
 		// Links are keyed by (name, checked) — Meal Planner mutates the row
 		// in place, so renaming or checking must retarget any link to follow
@@ -681,9 +686,11 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 			}
 		}
 		if pendingConsume > 0 {
-			if err := a.RecipeKeeper.Rec.ConsumeUnits(item.ID, pendingConsume); err != nil {
+			touched, err := a.RecipeKeeper.Rec.ConsumeUnits(item.ID, pendingConsume)
+			if err != nil {
 				log.Printf("recipekeeper: consume units: %v", err)
 			}
+			consumeTouchedSecondRow = touched
 			// ConsumeUnits persists the row's reduced quantity itself (and
 			// may have deleted it once fully consumed, or created its
 			// checked sibling) — reload so the broadcast and response
@@ -695,7 +702,18 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 	// Check/uncheck and renames get precise phrasing; the generic derivation
 	// ("updated X") covers quantity/store tweaks.
 	updatePayload := J{
-		"action": "item-updated", "sectionId": item.SectionID.String(), "item": a.groceryItemJSON(&item),
+		"sectionId": item.SectionID.String(), "item": a.groceryItemJSON(&item),
+	}
+	if consumeTouchedSecondRow {
+		// ConsumeUnits touched a checked sibling row this event says nothing
+		// about — "4 needed, got 1" must not leave the new "(1) Lemon"
+		// checked row invisible until an unrelated refetch. Omitting
+		// "action" triggers the documented fallback: every hook (and the
+		// cache warmer) does a full refetch when the action is missing,
+		// which is the simplest way to guarantee the client ends up correct
+		// without teaching this handler to build a second item-added delta.
+	} else {
+		updatePayload["action"] = "item-updated"
 	}
 	if _, ok := updates["checked"]; ok {
 		verb := "unchecked"

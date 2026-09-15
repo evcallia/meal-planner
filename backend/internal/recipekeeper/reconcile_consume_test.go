@@ -21,7 +21,7 @@ func TestConsumeUnitsSpendsLocalUnitsFirst(t *testing.T) {
 	setQuantity(item, 3)
 	db.Save(item)
 
-	if err := r.ConsumeUnits(item.ID, 1); err != nil {
+	if _, err := r.ConsumeUnits(item.ID, 1); err != nil {
 		t.Fatalf("ConsumeUnits: %v", err)
 	}
 
@@ -50,7 +50,7 @@ func TestConsumeUnitsChecksLinksWhenLocalExhausted(t *testing.T) {
 	_, _ = r.ApplyInbound([]ShoppingListItem{a, b})
 
 	item := itemByName(t, db, "Lemon", false)
-	if err := r.ConsumeUnits(item.ID, 1); err != nil {
+	if _, err := r.ConsumeUnits(item.ID, 1); err != nil {
 		t.Fatalf("ConsumeUnits: %v", err)
 	}
 
@@ -76,6 +76,41 @@ func TestConsumeUnitsChecksLinksWhenLocalExhausted(t *testing.T) {
 	}
 }
 
+// ConsumeUnits reports whether it touched a second (checked) row, so
+// broadcast callers know when a row exists that no client has been told
+// about (see handleUpdateGroceryItem, which relies on exactly this).
+func TestConsumeUnitsReportsWhetherASecondRowWasTouched(t *testing.T) {
+	db := testDB(t)
+	r := testReconciler(t, db)
+	_, _ = r.ApplyInbound([]ShoppingListItem{rkItem("a-id", "Fig", withRecipe("r1"))})
+
+	unchecked := itemByName(t, db, "Fig", false)
+	touched, err := r.ConsumeUnits(unchecked.ID, 1)
+	if err != nil {
+		t.Fatalf("ConsumeUnits: %v", err)
+	}
+	if !touched {
+		t.Error("consuming off an unchecked row creates/updates a checked sibling — want touchedSecondRow = true")
+	}
+
+	// Consuming again, this time directly off the row that is ALREADY
+	// checked, must not report a second row: dest and the source resolve to
+	// the very same row (see the sameRow comment in ConsumeUnits).
+	checkedRow := itemByName(t, db, "Fig", true)
+	if checkedRow == nil {
+		t.Fatal("want a checked Fig row after the first consume")
+	}
+	setQuantity(checkedRow, 3)
+	db.Save(checkedRow)
+	touched, err = r.ConsumeUnits(checkedRow.ID, 1)
+	if err != nil {
+		t.Fatalf("ConsumeUnits: %v", err)
+	}
+	if touched {
+		t.Error("consuming directly off the checked row is a same-row update — want touchedSecondRow = false")
+	}
+}
+
 // Consuming everything empties the source row entirely.
 func TestConsumeUnitsAllRemovesSourceRow(t *testing.T) {
 	db := testDB(t)
@@ -83,7 +118,7 @@ func TestConsumeUnitsAllRemovesSourceRow(t *testing.T) {
 	_, _ = r.ApplyInbound([]ShoppingListItem{rkItem("a-id", "Fig", withRecipe("r1"))})
 	item := itemByName(t, db, "Fig", false)
 
-	if err := r.ConsumeUnits(item.ID, 1); err != nil {
+	if _, err := r.ConsumeUnits(item.ID, 1); err != nil {
 		t.Fatalf("ConsumeUnits: %v", err)
 	}
 	if itemByName(t, db, "Fig", false) != nil {

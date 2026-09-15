@@ -130,6 +130,100 @@ func TestSyncSendsAuthAndNullsUnusedBuckets(t *testing.T) {
 	}
 }
 
+// A 401 mid-sync must be treated as "the token we hold is no longer good",
+// not as a transient outage: invalidate it, fetch a fresh one, and retry the
+// same request once. A server that accepts the fresh token must see no error
+// at all.
+func TestSyncRetriesOnceOn401ThenSucceeds(t *testing.T) {
+	tokenCalls := 0
+	syncCalls := 0
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			tokenCalls++
+			// Every token fetch returns a technically-valid-looking JWT; the
+			// point is the SERVER rejects it once regardless of exp.
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		syncCalls++
+		if syncCalls == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{}`))
+	})
+
+	_, err := c.Sync(context.Background(), SyncRequest{
+		ShoppingListItem: &ItemBucket{MaxLastModified: "0001-01-01T00:00:00Z"},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if syncCalls != 2 {
+		t.Errorf("sync calls = %d, want 2 (one retry after the 401)", syncCalls)
+	}
+	if tokenCalls != 2 {
+		t.Errorf("token calls = %d, want 2 (cached token invalidated, fresh one fetched)", tokenCalls)
+	}
+}
+
+// If the retried request is ALSO rejected, the token wasn't a fluke — this
+// must surface as an auth error (so the caller's latch/alerting engages),
+// and must not retry a second time.
+func TestSyncReturnsAuthErrorWhenRetryAlsoRejected(t *testing.T) {
+	syncCalls := 0
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		syncCalls++
+		w.WriteHeader(http.StatusForbidden)
+	})
+
+	_, err := c.Sync(context.Background(), SyncRequest{
+		ShoppingListItem: &ItemBucket{MaxLastModified: "0001-01-01T00:00:00Z"},
+	})
+	if err == nil {
+		t.Fatal("want error when both attempts are rejected")
+	}
+	if !IsAuthError(err) {
+		t.Errorf("IsAuthError(%v) = false, want true", err)
+	}
+	if syncCalls != 2 {
+		t.Errorf("sync calls = %d, want exactly 2 (one retry, then stop)", syncCalls)
+	}
+}
+
+// Notify must get the same reactive re-auth treatment as Sync — both go
+// through the shared do() path.
+func TestNotifyRetriesOnce401ThenSucceeds(t *testing.T) {
+	notifyCalls := 0
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		notifyCalls++
+		if notifyCalls == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	changed, err := c.Notify(context.Background())
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if changed {
+		t.Error("want changed = false (201 on the successful retry)")
+	}
+	if notifyCalls != 2 {
+		t.Errorf("notify calls = %d, want 2", notifyCalls)
+	}
+}
+
 func TestNotifyMapsStatusToChanged(t *testing.T) {
 	for _, tc := range []struct {
 		status int

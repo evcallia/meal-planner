@@ -513,13 +513,20 @@ func (r *Reconciler) RetargetLinks(fromName string, fromChecked bool, toName str
 //
 // Nothing is pushed here. Moving a link leaves it disagreeing with its row, and
 // the next PendingPushes picks that up — one code path for every kind of change.
-func (r *Reconciler) ConsumeUnits(itemID uuid.UUID, n int) error {
+//
+// The returned bool reports whether a SECOND row (the checked sibling) was
+// created or had its quantity changed, as opposed to the common case where
+// itemID's own row was already the checked row (sameRow below) and every
+// effect lands on it alone. Callers must tell clients about that second row
+// too — it is otherwise a row in the database no client was ever told about
+// (see handleUpdateGroceryItem).
+func (r *Reconciler) ConsumeUnits(itemID uuid.UUID, n int) (touchedSecondRow bool, err error) {
 	if n <= 0 {
-		return nil
+		return false, nil
 	}
 	var item models.GroceryItem
 	if err := r.DB.First(&item, "id = ?", itemID).Error; err != nil {
-		return err
+		return false, err
 	}
 	links := linksFor(r.DB, item.Name, item.Checked)
 
@@ -538,7 +545,7 @@ func (r *Reconciler) ConsumeUnits(itemID uuid.UUID, n int) error {
 
 	dest, created, err := r.checkedRowFor(item)
 	if err != nil {
-		return err
+		return false, err
 	}
 	// If item is itself already checked, checkedRowFor's findRow(name, true)
 	// matches item's own row — dest and item are then two Go values over the
@@ -550,6 +557,7 @@ func (r *Reconciler) ConsumeUnits(itemID uuid.UUID, n int) error {
 	// the kind of ordering dependency a later refactor could break.
 	sameRow := dest.ID == item.ID
 	if !sameRow {
+		touchedSecondRow = true
 		// A freshly created dest row has zero prior units — quantityOf(dest)
 		// cannot be used as that base because nil/unset Quantity means "1", not
 		// "0" (see setQuantity), so a brand-new row would silently double-count
@@ -561,7 +569,7 @@ func (r *Reconciler) ConsumeUnits(itemID uuid.UUID, n int) error {
 		if fromLinks > 0 {
 			for _, link := range links[:fromLinks] {
 				if err := r.moveLinkToRow(link, dest); err != nil {
-					return err
+					return false, err
 				}
 			}
 			setQuantity(dest, base+fromLinks)
@@ -572,17 +580,17 @@ func (r *Reconciler) ConsumeUnits(itemID uuid.UUID, n int) error {
 		}
 		dest.UpdatedAt = r.now()
 		if err := r.DB.Save(dest).Error; err != nil {
-			return err
+			return false, err
 		}
 	}
 
 	remaining := qty - n
 	if remaining <= 0 {
-		return r.DB.Delete(&item).Error
+		return touchedSecondRow, r.DB.Delete(&item).Error
 	}
 	setQuantity(&item, remaining)
 	item.UpdatedAt = r.now()
-	return r.DB.Save(&item).Error
+	return touchedSecondRow, r.DB.Save(&item).Error
 }
 
 // checkedRowFor finds or creates the checked sibling of a row. The bool

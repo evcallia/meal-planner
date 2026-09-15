@@ -214,6 +214,82 @@ func TestUpdateGroceryItemDecreaseQuantityConsumesLocalThenLinks(t *testing.T) {
 	}
 }
 
+// The headline path — "4 needed, got 1" — must leave the client able to see
+// the checked row ConsumeUnits creates as a side effect. handleUpdateGroceryItem
+// broadcasts exactly one grocery.updated event for this PATCH, and the new
+// checked row is a second grocery item the event's own "item" field says
+// nothing about — so that event must omit "action" entirely, which is the
+// documented signal every hook (and the cache warmer) treats as "refetch the
+// whole list", rather than claiming a plain item-updated that leaves the new
+// row invisible until an unrelated refetch.
+func TestUpdateGroceryItemConsumeCreatingCheckedRowOmitsActionForFullRefetch(t *testing.T) {
+	ta := newTestApp(t)
+	enableRecipeKeeper(t, ta)
+	section := seedGrocerySection(t, ta, "Produce", 0)
+	item := models.GroceryItem{SectionID: section.ID, Name: "Lemon", Checked: false, Position: 0, Quantity: strp("4")}
+	if err := ta.App.DB.Create(&item).Error; err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+	seedRecipeKeeperLinkAt(t, ta, "Lemon", false, "a-id", "rec-1", "Fig Cocktail", 10)
+
+	col := ta.Collect(TestSub)
+	resp := ta.PATCH("/api/grocery/items/"+item.ID.String(), map[string]any{"quantity": "1"})
+	if resp.Status != 200 {
+		t.Fatalf("status = %d: %s", resp.Status, resp.Body)
+	}
+
+	// The checked sibling really was created in the database — this is the
+	// row no client would otherwise learn about.
+	var checkedCount int64
+	ta.App.DB.Model(&models.GroceryItem{}).Where("name = ? AND checked = ?", "Lemon", true).Count(&checkedCount)
+	if checkedCount != 1 {
+		t.Fatalf("checked Lemon rows = %d, want 1", checkedCount)
+	}
+
+	events := col.Events()
+	sawFallback := false
+	for _, e := range events {
+		if e["type"] != "grocery.updated" {
+			continue
+		}
+		payload, _ := e["payload"].(map[string]any)
+		if _, hasAction := payload["action"]; !hasAction {
+			sawFallback = true
+		}
+	}
+	if !sawFallback {
+		t.Fatalf("want a grocery.updated event with no \"action\" key (triggers the full-refetch fallback) when ConsumeUnits touches a second row, got events = %+v", events)
+	}
+}
+
+// A decrease that does NOT create/touch a second row (the item was already
+// checked, so ConsumeUnits' dest resolves to the very same row) must keep the
+// normal, precise "item-updated" action — omitting it here would make every
+// checked-item quantity nudge fall back to a full refetch for no reason.
+func TestUpdateGroceryItemConsumeOnAlreadyCheckedItemKeepsItemUpdatedAction(t *testing.T) {
+	ta := newTestApp(t)
+	enableRecipeKeeper(t, ta)
+	section := seedGrocerySection(t, ta, "Produce", 0)
+	item := models.GroceryItem{SectionID: section.ID, Name: "Lemon", Checked: true, Position: 0, Quantity: strp("3")}
+	if err := ta.App.DB.Create(&item).Error; err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+
+	col := ta.Collect(TestSub)
+	resp := ta.PATCH("/api/grocery/items/"+item.ID.String(), map[string]any{"quantity": "2"})
+	if resp.Status != 200 {
+		t.Fatalf("status = %d: %s", resp.Status, resp.Body)
+	}
+
+	payload := col.LastPayload("grocery.updated")
+	if payload == nil {
+		t.Fatal("no grocery.updated event")
+	}
+	if payload["action"] != "item-updated" {
+		t.Errorf("action = %v, want item-updated (no second row was touched)", payload["action"])
+	}
+}
+
 // Regression guard for the double-decrement bug found during review: the
 // ordinary "quantity" column write and ConsumeUnits both persist the row's
 // final quantity, and running both would subtract the decrease twice

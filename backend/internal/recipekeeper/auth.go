@@ -108,6 +108,20 @@ func (a *Authenticator) Token(ctx context.Context) (string, error) {
 	return a.token, nil
 }
 
+// InvalidateToken clears the cached token, forcing the next Token call to
+// re-authenticate rather than hand back a token that just got rejected.
+// This is the reactive half of renewal: Token above is time-driven (renews
+// renewMargin before the JWT's own exp), but the server can reject a token
+// we still think is valid — e.g. a session revoked server-side — well before
+// exp. Client callers invoke this on an unexpected 401/403 and retry once;
+// see (*Client).do.
+func (a *Authenticator) InvalidateToken() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.token = ""
+	a.expiry = time.Time{}
+}
+
 // jwtExpiry reads the exp claim. The signature is never verified — this token is
 // an opaque bearer credential to us, and only the server can validate it.
 func jwtExpiry(token string) (time.Time, error) {

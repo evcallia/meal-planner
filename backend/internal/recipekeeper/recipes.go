@@ -42,33 +42,6 @@ func (r *Reconciler) StoreRecipes(raw []json.RawMessage) error {
 	return nil
 }
 
-// RecipeTitles returns the distinct recipes a grocery item came from. A
-// collapsed item legitimately has several; an unknown id is skipped rather than
-// rendered as a bare GUID.
-func (r *Reconciler) RecipeTitles(name string, checked bool) ([]RecipeRef, error) {
-	var links []models.RecipeKeeperLink
-	if err := r.DB.Order("rk_position asc").Find(&links,
-		"mp_name = ? AND mp_checked = ? AND rk_recipe_id IS NOT NULL",
-		normalizeName(name), checked).Error; err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	out := []RecipeRef{}
-	for _, link := range links {
-		id := *link.RKRecipeID
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		var rec models.RecipeKeeperRecipe
-		if err := r.DB.First(&rec, "rk_recipe_id = ?", id).Error; err != nil {
-			continue
-		}
-		out = append(out, RecipeRef{ID: rec.RKRecipeID, Title: rec.Title})
-	}
-	return out, nil
-}
-
 // rkCategoryForItem maps an item name to RK's category name via the
 // ShoppingListCategoryItem bucket, which joins by NAME, not by id.
 func (r *Reconciler) rkCategoryForItem(name string) (string, bool) {

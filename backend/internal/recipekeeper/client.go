@@ -119,7 +119,21 @@ func NewClient(baseURL string, auth *Authenticator, hdr Headers) *Client {
 	}
 }
 
+// do issues one Sync/Notify request. It implements the spec's "reactive
+// fallback" for token lifecycle: renewal above (Authenticator.Token) is
+// time-driven off the JWT's own exp, but the server can reject a token we
+// still consider valid (e.g. a session revoked server-side) long before
+// that. An unexpected 401/403 here invalidates the cached token and retries
+// exactly once with a freshly fetched one; if the retry ALSO gets 401/403,
+// the token wasn't the problem (or the new one was rejected too) — that is
+// reported as an authError so IsAuthError matches and the caller's auth
+// latch/alerting engages, rather than silently falling into the transient
+// "can't reach" backoff path with the wrong diagnosis.
 func (c *Client) do(ctx context.Context, path string, body []byte) (*http.Response, error) {
+	return c.doAttempt(ctx, path, body, true)
+}
+
+func (c *Client) doAttempt(ctx context.Context, path string, body []byte, allowRetry bool) (*http.Response, error) {
 	tok, err := c.Auth.Token(ctx)
 	if err != nil {
 		return nil, err
@@ -131,7 +145,20 @@ func (c *Client) do(ctx context.Context, path string, body []byte) (*http.Respon
 	c.Hdr.apply(req)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	return c.HTTP.Do(req)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
+		return resp, nil
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if !allowRetry {
+		return nil, authError{fmt.Errorf("recipekeeper: request rejected after re-auth (%d)", resp.StatusCode)}
+	}
+	c.Auth.InvalidateToken()
+	return c.doAttempt(ctx, path, body, false)
 }
 
 func (c *Client) Sync(ctx context.Context, sreq SyncRequest) (*SyncResponse, error) {

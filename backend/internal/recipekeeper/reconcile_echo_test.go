@@ -285,12 +285,26 @@ func TestReplaceStyleIDChurnPreservesLinks(t *testing.T) {
 		t.Errorf("surviving links = %+v, want rk_item_id a-id and b-id intact", links)
 	}
 
-	// Attribution must survive the id churn too.
-	refs, err := r.RecipeTitles("Lemon", false)
-	if err != nil {
-		t.Fatalf("RecipeTitles: %v", err)
+	// Attribution must survive the id churn too: every surviving link must
+	// still resolve to a cached recipe title (the same join the shipped
+	// recipeRefsForKey/recipeRefsByKey in package app perform when
+	// serializing a response).
+	titles := map[string]string{}
+	var recipes []models.RecipeKeeperRecipe
+	db.Find(&recipes)
+	for _, rec := range recipes {
+		titles[rec.RKRecipeID] = rec.Title
 	}
-	if len(refs) != 2 {
-		t.Errorf("recipe refs after churn = %d, want 2", len(refs))
+	resolved := 0
+	for _, link := range links {
+		if link.RKRecipeID == nil {
+			continue
+		}
+		if title, ok := titles[*link.RKRecipeID]; ok && title != "" {
+			resolved++
+		}
+	}
+	if resolved != 2 {
+		t.Errorf("recipe refs after churn = %d, want 2 (links = %+v, recipes = %+v)", resolved, links, recipes)
 	}
 }

@@ -51,34 +51,9 @@ func TestStoreRecipesKeepsOnlyIdAndTitle(t *testing.T) {
 	}
 }
 
-func TestRecipeTitlesForCollapsedItem(t *testing.T) {
-	db := testDB(t)
-	r := testReconciler(t, db)
-
-	_, _ = r.ApplyInbound([]ShoppingListItem{
-		rkItem("a-id", "Lemon", withRecipe("rec-1")),
-		rkItem("b-id", "Lemon", withRecipe("rec-2")),
-	})
-	if err := r.StoreRecipes([]json.RawMessage{
-		json.RawMessage(`{"Id":"rec-1","Title":"Fig Cocktail"}`),
-		json.RawMessage(`{"Id":"rec-2","Title":"Thai Curry"}`),
-	}); err != nil {
-		t.Fatalf("StoreRecipes: %v", err)
-	}
-
-	item := itemByName(t, db, "Lemon", false)
-	refs, err := r.RecipeTitles(item.Name, item.Checked)
-	if err != nil {
-		t.Fatalf("RecipeTitles: %v", err)
-	}
-	if len(refs) != 2 {
-		t.Fatalf("refs = %d, want 2", len(refs))
-	}
-	seen := map[string]bool{}
-	for _, ref := range refs {
-		seen[ref.Title] = true
-	}
-	if !seen["Fig Cocktail"] || !seen["Thai Curry"] {
-		t.Errorf("titles = %+v", refs)
-	}
-}
+// Recipe attribution for a collapsed item (several links, several titles) is
+// covered on the shipped serialization path — recipeRefsForKey/recipeRefsByKey
+// in package app — by TestGroceryItemWithMultipleRecipeLinks and
+// TestRecipeOrderMatchesBetweenBulkAndSingleRowPaths. Reconciler.RecipeTitles
+// used to duplicate that same query independently, with zero production
+// callers; it was deleted rather than kept in sync by hand.
