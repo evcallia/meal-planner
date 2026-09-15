@@ -115,20 +115,26 @@ func recipeRefsByKey(db *gorm.DB) map[string][]recipekeeper.RecipeRef {
 	for _, rec := range recipes {
 		titles[rec.RKRecipeID] = rec.Title
 	}
-	seen := map[string]bool{}
+	// idx records each recipe's index within out[rowKey] the first time it's
+	// seen for that row, so later links for the same (row, recipe) pair —
+	// Recipe Keeper stores one link per recipe-ingredient occurrence, e.g. an
+	// item added to a recipe several times — increment that ref's Count
+	// instead of appending a duplicate.
+	idx := map[string]int{}
 	for _, link := range links {
 		id := *link.RKRecipeID
-		rowKey := recipekeeper.RowKey(link.MPName, link.MPChecked)
-		dedupeKey := rowKey + "|" + id
-		if seen[dedupeKey] {
-			continue
-		}
-		seen[dedupeKey] = true
 		title, ok := titles[id]
 		if !ok {
 			continue
 		}
-		out[rowKey] = append(out[rowKey], recipekeeper.RecipeRef{ID: id, Title: title})
+		rowKey := recipekeeper.RowKey(link.MPName, link.MPChecked)
+		dedupeKey := rowKey + "|" + id
+		if i, seen := idx[dedupeKey]; seen {
+			out[rowKey][i].Count++
+			continue
+		}
+		idx[dedupeKey] = len(out[rowKey])
+		out[rowKey] = append(out[rowKey], recipekeeper.RecipeRef{ID: id, Title: title, Count: 1})
 	}
 	return out
 }
@@ -166,16 +172,21 @@ func recipeRefsForKey(db *gorm.DB, name string, checked bool) []recipekeeper.Rec
 	for _, rec := range recipes {
 		titles[rec.RKRecipeID] = rec.Title
 	}
-	seen := map[string]bool{}
+	// idx mirrors recipeRefsByKey: the first link for a recipe appends a ref,
+	// every later link for that same recipe increments its Count.
+	idx := map[string]int{}
 	for _, link := range links {
 		id := *link.RKRecipeID
-		if seen[id] {
+		title, ok := titles[id]
+		if !ok {
 			continue
 		}
-		seen[id] = true
-		if title, ok := titles[id]; ok {
-			out = append(out, recipekeeper.RecipeRef{ID: id, Title: title})
+		if i, seen := idx[id]; seen {
+			out[i].Count++
+			continue
 		}
+		idx[id] = len(out)
+		out = append(out, recipekeeper.RecipeRef{ID: id, Title: title, Count: 1})
 	}
 	return out
 }

@@ -69,6 +69,14 @@ export interface MealIdea {
 export interface RecipeRef {
   id: string;
   title: string;
+  // How many of the row's links point at this recipe (Recipe Keeper stores
+  // one link per recipe-ingredient occurrence, so e.g. an item added to a
+  // recipe six times collapses to one ref with count 6). MP-only units are
+  // quantity minus the SUM of every ref's count, never the number of refs.
+  // Optional for the same reason `recipes` itself is optional: the server
+  // always sends it, but rows cached (IndexedDB/localStorage) before this
+  // field existed omit it — treat a missing count as 1 everywhere.
+  count?: number;
 }
 
 export interface GroceryItem {

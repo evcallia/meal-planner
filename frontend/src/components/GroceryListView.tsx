@@ -63,7 +63,12 @@ function recipeExcluded(item: GrocerySection['items'][number], excluded: Set<str
   const recipes = item.recipes ?? [];
   if (recipes.length === 0) return false;
   if (!recipes.every(r => excluded.has(r.id))) return false;
-  const mpOnlyUnits = parseQuantity(item.quantity) - recipes.length;
+  // Sum each ref's `count`, not recipes.length — Recipe Keeper stores one
+  // link per recipe-ingredient occurrence, so an item added to the same
+  // recipe several times collapses to one ref with count > 1 (see
+  // ChecklistParts.tsx's mpOnlyUnits, same root cause).
+  const linked = recipes.reduce((sum, r) => sum + (r.count ?? 1), 0);
+  const mpOnlyUnits = parseQuantity(item.quantity) - linked;
   return mpOnlyUnits <= 0;
 }
 

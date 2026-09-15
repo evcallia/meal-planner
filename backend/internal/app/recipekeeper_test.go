@@ -92,6 +92,82 @@ func TestGroceryItemWithMultipleRecipeLinks(t *testing.T) {
 	}
 }
 
+// A grocery row where every link points at the SAME recipe (e.g. an
+// ingredient added to that recipe several times) must collapse to ONE ref
+// carrying the link count — not six refs, and not one ref stuck at count 1.
+// This is the reported bug: the frontend computes MP-only units as quantity
+// minus the SUM of these counts, so a dropped count produces phantom
+// "No recipe" units for an item that's fully accounted for.
+func TestGroceryItemRepeatedRecipeLinksCollapseToOneRefWithCount(t *testing.T) {
+	ta := newTestApp(t)
+	sec := seedGrocerySection(t, ta, "Produce", 0)
+	seedGroceryItem(t, ta, sec.ID, "Shallot", 0, false)
+	for i := 0; i < 6; i++ {
+		seedRecipeKeeperLinkAt(t, ta, "Shallot", false,
+			"rk-"+string(rune('a'+i)), "rec-1", "Beef Soft Tacos", i)
+	}
+
+	resp := ta.GET("/api/grocery")
+	if resp.Status != 200 {
+		t.Fatalf("status = %d: %s", resp.Status, resp.Body)
+	}
+	var recipes []any
+	for _, s := range resp.List() {
+		items, _ := s.(map[string]any)["items"].([]any)
+		for _, raw := range items {
+			it := raw.(map[string]any)
+			if it["name"] == "Shallot" {
+				recipes, _ = it["recipes"].([]any)
+			}
+		}
+	}
+	if len(recipes) != 1 {
+		t.Fatalf("recipes = %+v, want 1 ref", recipes)
+	}
+	ref := recipes[0].(map[string]any)
+	if ref["id"] != "rec-1" || ref["count"] != float64(6) {
+		t.Errorf("ref = %+v, want id=rec-1 count=6", ref)
+	}
+}
+
+// Links spread across two recipes must report each recipe's own count
+// independently, still ordered by rk_position asc.
+func TestGroceryItemRecipeLinksAcrossTwoRecipesHaveIndependentCounts(t *testing.T) {
+	ta := newTestApp(t)
+	sec := seedGrocerySection(t, ta, "Produce", 0)
+	seedGroceryItem(t, ta, sec.ID, "Avocado", 0, false)
+	seedRecipeKeeperLinkAt(t, ta, "Avocado", false, "rk-1", "rec-1", "Guacamole", 1)
+	seedRecipeKeeperLinkAt(t, ta, "Avocado", false, "rk-2", "rec-2", "Avocado Toast", 2)
+	seedRecipeKeeperLinkAt(t, ta, "Avocado", false, "rk-3", "rec-1", "Guacamole", 3)
+	seedRecipeKeeperLinkAt(t, ta, "Avocado", false, "rk-4", "rec-1", "Guacamole", 4)
+
+	resp := ta.GET("/api/grocery")
+	if resp.Status != 200 {
+		t.Fatalf("status = %d: %s", resp.Status, resp.Body)
+	}
+	var recipes []any
+	for _, s := range resp.List() {
+		items, _ := s.(map[string]any)["items"].([]any)
+		for _, raw := range items {
+			it := raw.(map[string]any)
+			if it["name"] == "Avocado" {
+				recipes, _ = it["recipes"].([]any)
+			}
+		}
+	}
+	if len(recipes) != 2 {
+		t.Fatalf("recipes = %+v, want 2 refs", recipes)
+	}
+	first := recipes[0].(map[string]any)
+	second := recipes[1].(map[string]any)
+	if first["id"] != "rec-1" || first["count"] != float64(3) {
+		t.Errorf("first = %+v, want id=rec-1 count=3", first)
+	}
+	if second["id"] != "rec-2" || second["count"] != float64(1) {
+		t.Errorf("second = %+v, want id=rec-2 count=1", second)
+	}
+}
+
 // The bulk (list) and targeted (single-row) recipe-attribution paths must
 // return recipes in the same order for the same grocery row. Both order by
 // rk_position asc — seeded here out of insertion/alphabetical order so an
@@ -148,6 +224,55 @@ func TestRecipeOrderMatchesBetweenBulkAndSingleRowPaths(t *testing.T) {
 		if singleOrder[i] != want[i] {
 			t.Errorf("single order[%d] = %s, want %s (full: %v)", i, singleOrder[i], want[i], singleOrder)
 		}
+	}
+}
+
+// Same parity requirement as TestRecipeOrderMatchesBetweenBulkAndSingleRowPaths,
+// but for counts: the bulk (list) path (recipeRefsByKey) and the targeted
+// single-row path (recipeRefsForKey) must agree on each recipe's count for
+// the same grocery row, not just its presence/order.
+func TestRecipeCountsMatchBetweenBulkAndSingleRowPaths(t *testing.T) {
+	ta := newTestApp(t)
+	sec := seedGrocerySection(t, ta, "Produce", 0)
+	item := seedGroceryItem(t, ta, sec.ID, "Shallot", 0, false)
+	seedRecipeKeeperLinkAt(t, ta, "Shallot", false, "rk-1", "rec-1", "Beef Soft Tacos", 1)
+	seedRecipeKeeperLinkAt(t, ta, "Shallot", false, "rk-2", "rec-1", "Beef Soft Tacos", 2)
+	seedRecipeKeeperLinkAt(t, ta, "Shallot", false, "rk-3", "rec-1", "Beef Soft Tacos", 3)
+
+	listResp := ta.GET("/api/grocery")
+	if listResp.Status != 200 {
+		t.Fatalf("list status = %d: %s", listResp.Status, listResp.Body)
+	}
+	var listCount any
+	for _, s := range listResp.List() {
+		items, _ := s.(map[string]any)["items"].([]any)
+		for _, raw := range items {
+			it := raw.(map[string]any)
+			if it["name"] != "Shallot" {
+				continue
+			}
+			refs := it["recipes"].([]any)
+			if len(refs) != 1 {
+				t.Fatalf("list refs = %+v, want 1", refs)
+			}
+			listCount = refs[0].(map[string]any)["count"]
+		}
+	}
+
+	// The update endpoint returns the item through the targeted single-row
+	// path (a.groceryItemJSON -> recipeRefsForKey), not the bulk map.
+	singleResp := ta.PATCH("/api/grocery/items/"+item.ID.String(), map[string]any{"quantity": "3"})
+	if singleResp.Status != 200 {
+		t.Fatalf("update status = %d: %s", singleResp.Status, singleResp.Body)
+	}
+	singleRefs := singleResp.Obj()["recipes"].([]any)
+	if len(singleRefs) != 1 {
+		t.Fatalf("single refs = %+v, want 1", singleRefs)
+	}
+	singleCount := singleRefs[0].(map[string]any)["count"]
+
+	if listCount != float64(3) || singleCount != float64(3) {
+		t.Errorf("listCount = %v, singleCount = %v, want both 3", listCount, singleCount)
 	}
 }
 

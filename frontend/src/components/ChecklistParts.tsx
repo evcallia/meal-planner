@@ -161,8 +161,15 @@ export function RecipeIcon({ className = 'w-3 h-3' }: { className?: string }) {
 // Keeper Sync" — quantity is authoritative, links are a subset of it).
 // Rendered as a final unlabelled "No recipe (N)" row in the popover so the
 // count still adds up to the item's full quantity.
-function mpOnlyUnits(quantity: string | null, recipeCount: number): number {
-  return Math.max(0, parseQuantity(quantity) - recipeCount);
+//
+// Must subtract the SUM of each ref's `count`, not `recipes.length` —
+// Recipe Keeper stores one link per recipe-ingredient occurrence, so an item
+// added to the same recipe six times collapses to ONE ref with count 6.
+// Using the ref count there produced a phantom "No recipe" row for an item
+// that was fully accounted for (e.g. quantity 6, one recipe, `6 - 1 = 5`).
+function mpOnlyUnits(quantity: string | null, recipes: RecipeRef[]): number {
+  const linked = recipes.reduce((sum, r) => sum + (r.count ?? 1), 0);
+  return Math.max(0, parseQuantity(quantity) - linked);
 }
 
 /**
@@ -220,7 +227,7 @@ function RecipeLine({ recipes, quantity, hidden }: { recipes: RecipeRef[]; quant
   const shown = recipes.slice(0, 2).map(r => r.title);
   const extra = recipes.length - shown.length;
   const label = shown.join(', ') + (extra > 0 ? ` +${extra}` : '');
-  const noRecipeCount = mpOnlyUnits(quantity, recipes.length);
+  const noRecipeCount = mpOnlyUnits(quantity, recipes);
 
   return (
     <>
@@ -250,7 +257,7 @@ function RecipeLine({ recipes, quantity, hidden }: { recipes: RecipeRef[]; quant
           </div>
           {recipes.map(r => (
             <div key={r.id} className="px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 truncate">
-              {r.title}
+              {r.title}{(r.count ?? 1) > 1 ? ` ×${r.count}` : ''}
             </div>
           ))}
           {noRecipeCount > 0 && (

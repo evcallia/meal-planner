@@ -13,6 +13,12 @@ import (
 type RecipeRef struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
+	// Count is how many of the grocery row's links point at this recipe.
+	// Recipe Keeper stores one link per recipe-ingredient occurrence, so an
+	// item added to the same recipe several times collapses to a single
+	// ref here with Count > 1 — quantity minus the SUM of every ref's Count
+	// (not the number of distinct refs) is how many units are MP-only.
+	Count int `json:"count"`
 }
 
 // StoreRecipes caches id -> title from Recipe entities, discarding everything

@@ -139,7 +139,10 @@ export interface LocalGroceryItem {
   // Recipe Keeper attribution, carried straight through from the server.
   // Optional for the same reason as global_position: older cached rows and
   // locally-created items omit it. Not indexed — no schema bump needed.
-  recipes?: { id: string; title: string }[];
+  // `count` (how many links point at this recipe) is itself optional here
+  // because rows cached before it was added lack it; consumers treat a
+  // missing count as 1 (see ChecklistParts.tsx's mpOnlyUnits).
+  recipes?: { id: string; title: string; count?: number }[];
 }
 
 export interface LocalCalendarEvent {

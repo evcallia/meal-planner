@@ -45,10 +45,10 @@ describe('ChecklistItemRow - recipe attribution', () => {
     const item: ChecklistItem = {
       ...baseItem,
       recipes: [
-        { id: 'r1', title: 'Fig Cocktail' },
-        { id: 'r2', title: 'Thai Curry' },
-        { id: 'r3', title: 'Ceviche' },
-        { id: 'r4', title: 'Lemonade' },
+        { id: 'r1', title: 'Fig Cocktail', count: 1 },
+        { id: 'r2', title: 'Thai Curry', count: 1 },
+        { id: 'r3', title: 'Ceviche', count: 1 },
+        { id: 'r4', title: 'Lemonade', count: 1 },
       ],
     };
     render(<Harness item={item} />);
@@ -58,7 +58,7 @@ describe('ChecklistItemRow - recipe attribution', () => {
   it('shows both names with no "+N" when exactly two recipes', () => {
     const item: ChecklistItem = {
       ...baseItem,
-      recipes: [{ id: 'r1', title: 'Fig Cocktail' }, { id: 'r2', title: 'Thai Curry' }],
+      recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 1 }, { id: 'r2', title: 'Thai Curry', count: 1 }],
     };
     render(<Harness item={item} />);
     expect(screen.getByTestId('recipe-chip')).toHaveTextContent('Fig Cocktail, Thai Curry');
@@ -70,9 +70,9 @@ describe('ChecklistItemRow - recipe attribution', () => {
     const item: ChecklistItem = {
       ...baseItem,
       recipes: [
-        { id: 'r1', title: 'Fig Cocktail' },
-        { id: 'r2', title: 'Thai Curry' },
-        { id: 'r3', title: 'Ceviche' },
+        { id: 'r1', title: 'Fig Cocktail', count: 1 },
+        { id: 'r2', title: 'Thai Curry', count: 1 },
+        { id: 'r3', title: 'Ceviche', count: 1 },
       ],
     };
     const commitEditingRef = { current: null } as React.MutableRefObject<(() => void) | null>;
@@ -110,7 +110,7 @@ describe('ChecklistItemRow - recipe attribution', () => {
     const item: ChecklistItem = {
       ...baseItem,
       quantity: '4',
-      recipes: [{ id: 'r1', title: 'Fig Cocktail' }],
+      recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 1 }],
     };
     render(<Harness item={item} />);
     fireEvent.click(screen.getByTestId('recipe-chip'));
@@ -121,18 +121,53 @@ describe('ChecklistItemRow - recipe attribution', () => {
     const item: ChecklistItem = {
       ...baseItem,
       quantity: '2',
-      recipes: [{ id: 'r1', title: 'Fig Cocktail' }, { id: 'r2', title: 'Thai Curry' }],
+      recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 1 }, { id: 'r2', title: 'Thai Curry', count: 1 }],
     };
     render(<Harness item={item} />);
     fireEvent.click(screen.getByTestId('recipe-chip'));
     expect(screen.queryByText(/No recipe/)).not.toBeInTheDocument();
   });
 
+  // Reported bug: a grocery row where every unit came from the SAME recipe
+  // (Recipe Keeper stores one link per recipe-ingredient occurrence — e.g.
+  // an item added to a recipe six times) must not compute leftover MP-only
+  // units from the number of DISTINCT recipes (1) instead of the SUM of
+  // their counts (6) — that produced a phantom "No recipe (5)" row for an
+  // item that's fully accounted for.
+  it('omits the "No recipe" row when one recipe accounts for every unit via its count', () => {
+    const item: ChecklistItem = {
+      ...baseItem,
+      quantity: '6',
+      recipes: [{ id: 'r1', title: 'Beef Soft Tacos', count: 6 }],
+    };
+    render(<Harness item={item} />);
+    fireEvent.click(screen.getByTestId('recipe-chip'));
+    expect(screen.queryByText(/No recipe/)).not.toBeInTheDocument();
+  });
+
+  it('shows ×N beside a recipe only when its count is greater than 1', () => {
+    const item: ChecklistItem = {
+      ...baseItem,
+      quantity: '7',
+      recipes: [
+        { id: 'r1', title: 'Beef Soft Tacos', count: 6 },
+        { id: 'r2', title: 'Salsa Verde', count: 1 },
+      ],
+    };
+    render(<Harness item={item} />);
+    fireEvent.click(screen.getByTestId('recipe-chip'));
+    const popover = screen.getByTestId('recipe-popover');
+    expect(within(popover).getByText('Beef Soft Tacos ×6')).toBeInTheDocument();
+    // Singles stay bare — no "×1" noise.
+    expect(within(popover).getByText('Salsa Verde')).toBeInTheDocument();
+    expect(within(popover).queryByText(/Salsa Verde ×1/)).not.toBeInTheDocument();
+  });
+
   it('leads the recipe line with the shared outline icon; the store label carries no icon of its own', () => {
     // Stores keep their existing solid/plain-text marker; only the recipe
     // line gets the icon — same store-vs-recipe visual language as the
     // chip bars (StoreFilterBar's kind="recipe").
-    const item: ChecklistItem = { ...baseItem, recipes: [{ id: 'r1', title: 'Fig Cocktail' }] };
+    const item: ChecklistItem = { ...baseItem, recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 1 }] };
     const commitEditingRef = { current: null } as React.MutableRefObject<(() => void) | null>;
     render(
       <ChecklistItemRow
@@ -162,7 +197,7 @@ describe('ChecklistItemRow - recipe attribution', () => {
   it('hides the recipe line entirely when hideRecipes is set', () => {
     const item: ChecklistItem = {
       ...baseItem,
-      recipes: [{ id: 'r1', title: 'Fig Cocktail' }],
+      recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 1 }],
     };
     render(<Harness item={item} hideRecipes />);
     expect(screen.queryByTestId('recipe-chip')).not.toBeInTheDocument();
@@ -176,7 +211,7 @@ describe('ChecklistItemRow - recipe attribution', () => {
     const item: ChecklistItem = {
       ...baseItem,
       quantity: '2 lbs',
-      recipes: [{ id: 'r1', title: 'Fig Cocktail' }],
+      recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 1 }],
     };
     render(<Harness item={item} />);
     fireEvent.click(screen.getByTestId('recipe-chip'));
@@ -187,7 +222,7 @@ describe('ChecklistItemRow - recipe attribution', () => {
   it('suppresses inline editing when allowEdit is false (group-by-recipe view)', () => {
     const onEditingItemChange = vi.fn();
     const commitEditingRef = { current: null } as React.MutableRefObject<(() => void) | null>;
-    const item: ChecklistItem = { ...baseItem, recipes: [{ id: 'r1', title: 'Fig Cocktail' }] };
+    const item: ChecklistItem = { ...baseItem, recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 1 }] };
     render(
       <ChecklistItemRow
         item={item}
@@ -218,7 +253,7 @@ describe('ChecklistItemRow - recipe attribution', () => {
     // edit started in category view before switching to group-by-recipe),
     // this row must still render as a normal row, not a second edit form.
     const commitEditingRef = { current: null } as React.MutableRefObject<(() => void) | null>;
-    const item: ChecklistItem = { ...baseItem, recipes: [{ id: 'r1', title: 'Fig Cocktail' }] };
+    const item: ChecklistItem = { ...baseItem, recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 1 }] };
     render(
       <ChecklistItemRow
         item={item}
