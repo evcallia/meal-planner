@@ -107,15 +107,20 @@ func main() {
 			missingCreds = append(missingCreds, "RECIPE_KEEPER_PASSWORD")
 		}
 		rkHeaders := recipekeeper.DefaultHeaders(recipekeeper.DeviceID(gormDB), settings.RecipeKeeperReceiptID)
+		// One dedicated transport, shared by the token client and the
+		// sync/notify client — see recipekeeper.NewTransport for why a
+		// shared http.DefaultTransport caused sync to wedge on stale
+		// pooled connections.
+		rkTransport := recipekeeper.NewTransport()
 		rkAuth := &recipekeeper.Authenticator{
 			BaseURL:  recipeKeeperBaseURL,
 			Username: settings.RecipeKeeperUsername,
 			Password: settings.RecipeKeeperPassword,
-			HTTP:     &http.Client{Timeout: 30 * time.Second},
+			HTTP:     &http.Client{Timeout: 30 * time.Second, Transport: rkTransport},
 			Hdr:      rkHeaders,
 		}
 		rkService := &recipekeeper.Service{
-			Client: recipekeeper.NewClient(recipeKeeperBaseURL, rkAuth, rkHeaders),
+			Client: recipekeeper.NewClient(recipeKeeperBaseURL, rkAuth, rkHeaders, rkTransport),
 			// No list id here: it's a GUID that lives only inside Recipe
 			// Keeper's own API, so nobody can supply it ahead of time. The
 			// Reconciler starts unselected; SyncOnce refreshes it from

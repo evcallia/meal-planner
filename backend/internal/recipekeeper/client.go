@@ -108,12 +108,19 @@ type Client struct {
 }
 
 // NewClient builds a client with a cookie jar, so the Azure ARRAffinity
-// stickiness cookie is honoured across calls.
-func NewClient(baseURL string, auth *Authenticator, hdr Headers) *Client {
+// stickiness cookie is honoured across calls. transport is the RoundTripper
+// backing the client; pass nil to get a dedicated one via NewTransport. Pass
+// the SAME *http.Transport used to build the Authenticator's http.Client so
+// /token, /api/sync and /api/syncnotification share one connection pool and
+// one IdleConnTimeout (see NewTransport for why that matters).
+func NewClient(baseURL string, auth *Authenticator, hdr Headers, transport *http.Transport) *Client {
 	jar, _ := cookiejar.New(nil)
+	if transport == nil {
+		transport = NewTransport()
+	}
 	return &Client{
 		BaseURL: baseURL,
-		HTTP:    &http.Client{Jar: jar, Timeout: notifyTimeout + 15*time.Second},
+		HTTP:    &http.Client{Jar: jar, Timeout: notifyTimeout + 15*time.Second, Transport: transport},
 		Auth:    auth,
 		Hdr:     hdr,
 	}

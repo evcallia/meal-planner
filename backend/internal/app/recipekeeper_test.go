@@ -253,7 +253,7 @@ func enableRecipeKeeperWithLists(t *testing.T, ta *testApp, entities []map[strin
 	ta.App.RecipeKeeper = &recipekeeper.Service{
 		DB:     ta.App.DB,
 		Rec:    &recipekeeper.Reconciler{DB: ta.App.DB},
-		Client: recipekeeper.NewClient(srv.URL, authr, recipekeeper.Headers{}),
+		Client: recipekeeper.NewClient(srv.URL, authr, recipekeeper.Headers{}, nil),
 	}
 }
 

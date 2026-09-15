@@ -255,7 +255,7 @@ func enableRecipeKeeper(t *testing.T, ta *testApp) {
 	ta.App.RecipeKeeper = &recipekeeper.Service{
 		DB:     ta.App.DB,
 		Rec:    rec,
-		Client: recipekeeper.NewClient(srv.URL, authr, recipekeeper.Headers{}),
+		Client: recipekeeper.NewClient(srv.URL, authr, recipekeeper.Headers{}, nil),
 	}
 	// Service.SyncOnce refreshes Rec's list id from recipe_keeper_state at the
 	// start of every cycle and skips the whole cycle when none is selected
