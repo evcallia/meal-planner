@@ -20,8 +20,8 @@ import (
 
 	"mealplanner/internal/app"
 	"mealplanner/internal/config"
-	"mealplanner/internal/ical"
 	"mealplanner/internal/db"
+	"mealplanner/internal/ical"
 	"mealplanner/internal/recipekeeper"
 )
 
