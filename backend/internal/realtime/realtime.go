@@ -26,18 +26,47 @@ type Broadcaster struct {
 	closed bool
 	// Done is closed on shutdown so SSE handlers can unblock promptly.
 	Done chan struct{}
+	// Connected receives a value every time Subscribe takes the subscriber
+	// count from 0 to 1. This is the ONLY coupling point from realtime to
+	// anything that cares about subscriber presence (e.g. the Recipe Keeper
+	// sync service firing an immediate poll when a client connects, see
+	// cmd/server/main.go) — a plain channel, never an import, so realtime
+	// stays ignorant of who's listening and must not import recipekeeper.
+	// Buffered 1 and sent non-blockingly: a missed send just means the
+	// observer notices the transition on its next timer tick instead of
+	// instantly, never a stuck goroutine or a blocked Subscribe call.
+	Connected chan struct{}
 }
 
 func NewBroadcaster() *Broadcaster {
-	return &Broadcaster{subs: map[*Subscriber]struct{}{}, Done: make(chan struct{})}
+	return &Broadcaster{
+		subs:      map[*Subscriber]struct{}{},
+		Done:      make(chan struct{}),
+		Connected: make(chan struct{}, 1),
+	}
+}
+
+// Count reports the current number of active subscribers.
+func (b *Broadcaster) Count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.subs)
 }
 
 func (b *Broadcaster) Subscribe(sub string) *Subscriber {
 	s := &Subscriber{Ch: make(chan string, maxQueueSize), sub: sub}
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	added := false
 	if !b.closed {
+		added = len(b.subs) == 0
 		b.subs[s] = struct{}{}
+	}
+	b.mu.Unlock()
+	if added {
+		select {
+		case b.Connected <- struct{}{}:
+		default:
+		}
 	}
 	return s
 }

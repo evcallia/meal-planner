@@ -136,9 +136,9 @@ func TestTransportSurvivesSilentlyDeadPooledConnection(t *testing.T) {
 
 // TestNewTransportIsDedicatedWithShortIdleConnTimeout guards the actual fix:
 // the Recipe Keeper clients must not share http.DefaultTransport (which is
-// also used elsewhere in the process, e.g. for long-polling), and must
-// discard idle pooled connections comfortably before the 60s poll interval
-// could let the server close one out from under us.
+// also used elsewhere in the process), and must discard idle pooled
+// connections comfortably before the poll interval could let the server
+// close one out from under us.
 func TestNewTransportIsDedicatedWithShortIdleConnTimeout(t *testing.T) {
 	tr := NewTransport()
 	if dt, ok := http.DefaultTransport.(*http.Transport); ok && tr == dt {
@@ -147,12 +147,11 @@ func TestNewTransportIsDedicatedWithShortIdleConnTimeout(t *testing.T) {
 	if tr.IdleConnTimeout <= 0 || tr.IdleConnTimeout > 30*time.Second {
 		t.Fatalf("IdleConnTimeout = %v, want (0, 30s]", tr.IdleConnTimeout)
 	}
-	// The same transport backs the /api/syncnotification long-poll (see
-	// NewClient), so ResponseHeaderTimeout must never be shorter than the
-	// poll's own timeout budget or it would cut the ~60s hold short.
-	if tr.ResponseHeaderTimeout != 0 && tr.ResponseHeaderTimeout <= notifyTimeout {
-		t.Fatalf("ResponseHeaderTimeout = %v must exceed notifyTimeout %v, or the long-poll would be cut short",
-			tr.ResponseHeaderTimeout, notifyTimeout)
+	// ResponseHeaderTimeout must stay comfortably above any single request
+	// this transport is allowed to run long (see responseHeaderTimeout's
+	// doc comment).
+	if tr.ResponseHeaderTimeout != responseHeaderTimeout {
+		t.Fatalf("ResponseHeaderTimeout = %v, want %v", tr.ResponseHeaderTimeout, responseHeaderTimeout)
 	}
 }
 

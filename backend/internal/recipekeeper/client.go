@@ -11,9 +11,11 @@ import (
 	"time"
 )
 
-// notifyTimeout must exceed the server's ~60s long-poll hold, or we abort our
-// own polls.
-const notifyTimeout = 90 * time.Second
+// clientTimeout bounds the overall round trip (headers + body) for any
+// request through Client.HTTP. Kept comfortably above the transport's own
+// responseHeaderTimeout so it never fires first and mask that timeout's
+// error with a less specific one.
+const clientTimeout = responseHeaderTimeout + 15*time.Second
 
 // Generous: a full Recipe pull legitimately runs to hundreds of MB because
 // recipe entities embed base64 photos. The cap exists to stop an unbounded
@@ -111,8 +113,8 @@ type Client struct {
 // stickiness cookie is honoured across calls. transport is the RoundTripper
 // backing the client; pass nil to get a dedicated one via NewTransport. Pass
 // the SAME *http.Transport used to build the Authenticator's http.Client so
-// /token, /api/sync and /api/syncnotification share one connection pool and
-// one IdleConnTimeout (see NewTransport for why that matters).
+// the token endpoint and the sync endpoint share one connection pool and one
+// IdleConnTimeout (see NewTransport for why that matters).
 func NewClient(baseURL string, auth *Authenticator, hdr Headers, transport *http.Transport) *Client {
 	jar, _ := cookiejar.New(nil)
 	if transport == nil {
@@ -120,7 +122,7 @@ func NewClient(baseURL string, auth *Authenticator, hdr Headers, transport *http
 	}
 	return &Client{
 		BaseURL: baseURL,
-		HTTP:    &http.Client{Jar: jar, Timeout: notifyTimeout + 15*time.Second, Transport: transport},
+		HTTP:    &http.Client{Jar: jar, Timeout: clientTimeout, Transport: transport},
 		Auth:    auth,
 		Hdr:     hdr,
 	}
@@ -230,28 +232,4 @@ func (c *Client) Sync(ctx context.Context, sreq SyncRequest) (*SyncResponse, err
 		return nil, fmt.Errorf("recipekeeper: decode sync: %w", err)
 	}
 	return &out, nil
-}
-
-// Notify parks a long poll. It returns true when the server signals a change
-// (200) and false when the poll simply expired (201). Both carry empty bodies —
-// the status code is the entire message.
-func (c *Client) Notify(ctx context.Context) (bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, notifyTimeout)
-	defer cancel()
-
-	resp, err := c.do(ctx, "/api/syncnotification", []byte(`""`))
-	if err != nil {
-		return false, fmt.Errorf("recipekeeper: notify: %w", err)
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-
-	switch resp.StatusCode {
-	case http.StatusOK:
-		return true, nil
-	case http.StatusCreated:
-		return false, nil
-	default:
-		return false, fmt.Errorf("recipekeeper: notify status %d", resp.StatusCode)
-	}
 }

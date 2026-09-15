@@ -107,10 +107,10 @@ func main() {
 			missingCreds = append(missingCreds, "RECIPE_KEEPER_PASSWORD")
 		}
 		rkHeaders := recipekeeper.DefaultHeaders(recipekeeper.DeviceID(gormDB), settings.RecipeKeeperReceiptID)
-		// One dedicated transport, shared by the token client and the
-		// sync/notify client — see recipekeeper.NewTransport for why a
-		// shared http.DefaultTransport caused sync to wedge on stale
-		// pooled connections.
+		// One dedicated transport, shared by the token client and the sync
+		// client — see recipekeeper.NewTransport for why a shared
+		// http.DefaultTransport caused sync to wedge on stale pooled
+		// connections.
 		rkTransport := recipekeeper.NewTransport()
 		rkAuth := &recipekeeper.Authenticator{
 			BaseURL:  recipeKeeperBaseURL,
@@ -147,6 +147,13 @@ func main() {
 			},
 		}
 		rkService.PollInterval = recipekeeper.ResolvePollInterval(settings.RecipeKeeperPollSeconds)
+		rkService.IdlePollInterval = recipekeeper.ResolveIdlePollInterval(settings.RecipeKeeperIdlePollSeconds)
+		// Adaptive polling needs to know about SSE subscriber presence —
+		// realtime.Broadcaster owns that, and stays ignorant of recipekeeper
+		// in return (see Broadcaster.Connected's doc comment): these are a
+		// plain func value and a plain channel, not an import either way.
+		rkService.SubscriberCount = application.Broadcaster.Count
+		rkService.Connected = application.Broadcaster.Connected
 		// Exposed on App so /api/recipe-keeper/status and /sync can reach it;
 		// nil (the zero value) on App when the integration isn't configured.
 		application.RecipeKeeper = rkService
@@ -156,7 +163,8 @@ func main() {
 			if recipekeeper.SelectedListID(gormDB) == "" {
 				log.Printf("recipe keeper: no shopping list selected yet — call GET /api/recipe-keeper/lists to see available lists, then PUT /api/recipe-keeper/list to choose one; the sync loop is starting now and will pick it up automatically once you do, no restart needed")
 			}
-			log.Printf("recipe keeper: polling every %s", rkService.PollInterval)
+			log.Printf("recipe keeper: polling every %s while connected, every %s while idle",
+				rkService.PollInterval, rkService.IdlePollInterval)
 			var rkCtx context.Context
 			rkCtx, cancelRecipeKeeper = context.WithCancel(context.Background())
 			go rkService.Run(rkCtx)

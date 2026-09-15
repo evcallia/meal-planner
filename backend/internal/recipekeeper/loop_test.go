@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -445,58 +446,335 @@ func TestRecordSuccessClearsPriorError(t *testing.T) {
 	}
 }
 
-// TestRunPollsPeriodicallyWithoutDoorbellSignal proves Run syncs on its own
-// regular schedule even when the doorbell NEVER signals a change (every
-// Notify call returns 201) — measured live, this is exactly what happens
-// against the real Recipe Keeper server for this client. PollInterval is set
-// to a few milliseconds so the test can observe several poll-driven syncs
-// without anywhere near a real 60s wait.
-func TestRunPollsPeriodicallyWithoutDoorbellSignal(t *testing.T) {
-	db := testDB(t)
-	rec := testReconciler(t, db)
-
-	var syncCalls int32
+// syncCountingServer builds a test server that answers /token unconditionally
+// and every /api/sync request with an empty SyncResponse, counting the
+// GROCERY-shaped ones (carrying a non-null ShoppingListItem bucket) in
+// *calls. Shared by the adaptive-polling tests below, which only care about
+// the RATE of poll-driven grocery syncs, not their content — Run's initial
+// SyncOnce success also opportunistically fires a recipe-title cache warm-up
+// (recordSuccess -> TriggerRecipeSync), a second, unrelated /api/sync
+// request on its own mutex/cadence that would otherwise pollute the count
+// (same reasoning as TestTriggerGrocerySyncCoalescesWhileInFlight).
+func syncCountingServer(t *testing.T, calls *int32) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/token" {
 			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
 			return
 		}
-		if r.URL.Path == "/api/syncnotification" {
-			// The doorbell never fires for this client — every long-poll
-			// simply expires.
-			w.WriteHeader(http.StatusCreated)
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			ShoppingListItem json.RawMessage `json:"ShoppingListItemSyncEntityRequest"`
+		}
+		_ = json.Unmarshal(body, &req)
+		if len(req.ShoppingListItem) == 0 || string(req.ShoppingListItem) == "null" {
+			_ = json.NewEncoder(w).Encode(SyncResponse{})
 			return
 		}
-		atomic.AddInt32(&syncCalls, 1)
+		atomic.AddInt32(calls, 1)
 		_ = json.NewEncoder(w).Encode(SyncResponse{})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return srv
+}
 
+func testAuth(srv *httptest.Server) *Authenticator {
 	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
-	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+	return &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
 		HTTP: srv.Client(), Now: func() time.Time { return now }}
+}
+
+// TestRunIdlePollsOnLongIntervalNotShort proves that with no SSE subscribers
+// connected — SubscriberCount left nil, which Run must treat as "always
+// disconnected" — Run polls on IdlePollInterval (long) rather than
+// PollInterval (short). Sync is entirely poll-driven now that the doorbell
+// is gone (see docs/recipe-keeper-api.md), so getting this cadence choice
+// wrong means hammering Recipe Keeper's live API every time a household has
+// the app closed on every device.
+func TestRunIdlePollsOnLongIntervalNotShort(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var calls int32
+	srv := syncCountingServer(t, &calls)
 	svc := &Service{
-		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: testAuth(srv)},
 		Rec:    rec, DB: db,
-		PollInterval: 20 * time.Millisecond,
+		// If Run mistakenly used the fast cadence while idle, 150ms would
+		// yield well over a dozen syncs; the slow cadence should yield none
+		// beyond the initial sync in that window.
+		PollInterval:     5 * time.Millisecond,
+		IdlePollInterval: 2 * time.Second,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go svc.Run(ctx)
 
-	// The initial sync in Run accounts for 1 call; periodic polling (not the
-	// doorbell, which never returns 200 here) must push it well past that
-	// within a couple hundred milliseconds.
+	time.Sleep(150 * time.Millisecond)
+	if got := atomic.LoadInt32(&calls); got > 1 {
+		t.Errorf("calls = %d in 150ms with PollInterval=5ms/IdlePollInterval=2s and no subscribers; want only the initial sync (idle cadence honored), not the fast one", got)
+	}
+}
+
+// TestRunConnectedPollsOnShortInterval proves that once at least one SSE
+// subscriber is connected, Run switches to PollInterval (short) rather than
+// IdlePollInterval (long).
+func TestRunConnectedPollsOnShortInterval(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var calls int32
+	srv := syncCountingServer(t, &calls)
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: testAuth(srv)},
+		Rec:    rec, DB: db,
+		PollInterval:     20 * time.Millisecond,
+		IdlePollInterval: 5 * time.Second,
+		SubscriberCount:  func() int { return 1 },
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.Run(ctx)
+
 	deadline := time.After(2 * time.Second)
 	for {
-		if atomic.LoadInt32(&syncCalls) >= 4 {
+		if atomic.LoadInt32(&calls) >= 4 {
 			return
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("only %d sync(s) happened in 2s with PollInterval=20ms and no doorbell signal; periodic polling never kicked in", atomic.LoadInt32(&syncCalls))
+			t.Fatalf("only %d sync(s) happened in 2s with PollInterval=20ms and a connected subscriber; the fast cadence never kicked in", atomic.LoadInt32(&calls))
 		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// TestRunConnectTriggersImmediateSync proves a client connecting fires a
+// sync right away rather than waiting for the next tick. Both intervals are
+// set to an hour, so any sync observed after the initial one within the test
+// window can only have come from the Connected signal.
+func TestRunConnectTriggersImmediateSync(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var calls int32
+	srv := syncCountingServer(t, &calls)
+	connectedCh := make(chan struct{}, 1)
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: testAuth(srv)},
+		Rec:    rec, DB: db,
+		PollInterval:     time.Hour,
+		IdlePollInterval: time.Hour,
+		Connected:        connectedCh,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.Run(ctx)
+
+	// Wait for the initial sync so it isn't mistaken for the connect-driven one.
+	deadline := time.After(2 * time.Second)
+	for atomic.LoadInt32(&calls) < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("Run's initial sync never happened")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	connectedCh <- struct{}{}
+
+	deadline = time.After(2 * time.Second)
+	for atomic.LoadInt32(&calls) < 2 {
+		select {
+		case <-deadline:
+			t.Fatal("a Connected signal did not trigger an immediate sync (PollInterval and IdlePollInterval were both 1h, so nothing else could have)")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// TestRunDisconnectFallsBackToIdleInterval proves that once the last
+// subscriber disconnects, Run's cadence drops back to IdlePollInterval.
+// There is no disconnect signal (only SubscriberCount), so this is only
+// noticed on the tick after the count reaches zero — the assertion allows
+// for exactly that one straggler.
+func TestRunDisconnectFallsBackToIdleInterval(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var calls int32
+	srv := syncCountingServer(t, &calls)
+	var count int32 = 1
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: testAuth(srv)},
+		Rec:    rec, DB: db,
+		PollInterval:     20 * time.Millisecond,
+		IdlePollInterval: 2 * time.Second,
+		SubscriberCount:  func() int { return int(atomic.LoadInt32(&count)) },
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.Run(ctx)
+
+	// Let the fast, connected cadence rack up several syncs first.
+	deadline := time.After(2 * time.Second)
+	for atomic.LoadInt32(&calls) < 4 {
+		select {
+		case <-deadline:
+			t.Fatal("connected cadence never kicked in")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	atomic.StoreInt32(&count, 0)
+	afterDisconnect := atomic.LoadInt32(&calls)
+	time.Sleep(150 * time.Millisecond)
+	if got := atomic.LoadInt32(&calls); got > afterDisconnect+2 {
+		t.Errorf("calls grew from %d to %d in 150ms after the last subscriber disconnected; want the idle cadence (2s) honored, allowing at most one straggler sync from the timer that was already armed at the fast interval", afterDisconnect, got)
+	}
+}
+
+// TestRunConnectDuringInFlightSyncCoalescesToOneExtra proves a client
+// connecting while a poll-driven sync is already in flight results in
+// exactly one additional sync afterward, not a second concurrent one — Run's
+// Connected case calls TriggerGrocerySync, the same coalescing entry point
+// TestTriggerGrocerySyncCoalescesWhileInFlight already locks in for a burst
+// of grocery edits, now exercised end-to-end through Run.
+func TestRunConnectDuringInFlightSyncCoalescesToOneExtra(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var calls int32
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		// A successful SyncOnce opportunistically triggers a recipe-title
+		// cache warm-up (recordSuccess -> TriggerRecipeSync), a second,
+		// unrelated /api/sync request guarded by its own mutex — ignore it,
+		// same reasoning as TestTriggerGrocerySyncCoalescesWhileInFlight.
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			ShoppingListItem json.RawMessage `json:"ShoppingListItemSyncEntityRequest"`
+		}
+		_ = json.Unmarshal(body, &req)
+		if len(req.ShoppingListItem) == 0 || string(req.ShoppingListItem) == "null" {
+			_ = json.NewEncoder(w).Encode(SyncResponse{})
+			return
+		}
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			// Run's own initial sync, before the loop's select is even
+			// reached — answer immediately so it can't be mistaken for the
+			// in-flight sync this test blocks on below.
+			_ = json.NewEncoder(w).Encode(SyncResponse{})
+			return
+		}
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+		_ = json.NewEncoder(w).Encode(SyncResponse{})
+	}))
+	defer srv.Close()
+
+	connectedCh := make(chan struct{}, 1)
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: testAuth(srv)},
+		Rec:    rec, DB: db,
+		// Long enough that neither cadence fires on its own during the test
+		// window — every sync after the initial one must be attributable to
+		// a Connected signal, not a tick.
+		PollInterval:     time.Hour,
+		IdlePollInterval: time.Hour,
+		Connected:        connectedCh,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.Run(ctx)
+
+	deadline := time.After(2 * time.Second)
+	for atomic.LoadInt32(&calls) < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("Run's initial sync never happened")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	connectedCh <- struct{}{}
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("connect signal never triggered a sync")
+	}
+
+	// A second connect arriving while the first is still in flight must not
+	// start a concurrent second sync — it must coalesce. TriggerGrocerySync
+	// itself never blocks (it spawns a goroutine), so Run's loop is free to
+	// receive this immediately even though the first sync is still parked
+	// on <-release.
+	connectedCh <- struct{}{}
+	time.Sleep(50 * time.Millisecond)
+
+	close(release)
+
+	deadline = time.After(2 * time.Second)
+	for {
+		if svc.grocerySyncMu.TryLock() {
+			svc.grocerySyncMu.Unlock()
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("grocery sync guard was never released")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Errorf("calls = %d, want 3 (the initial sync, the in-flight sync from the first connect, and exactly one coalesced extra sync for the second connect)", got)
+	}
+}
+
+// TestNoDoorbellReferencesRemain is a grep-style guard for the doorbell's
+// removal: nothing in this package should reference the long-poll endpoint
+// or redefine a Notify method without a deliberate, documented decision to
+// bring it back (see docs/recipe-keeper-api.md for what that would need).
+func TestNoDoorbellReferencesRemain(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		if e.Name() == "loop_test.go" {
+			// This file's own comments (and this test itself) legitimately
+			// name the removed endpoint/method when explaining the removal.
+			continue
+		}
+		b, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", e.Name(), err)
+		}
+		src := string(b)
+		if strings.Contains(strings.ToLower(src), "syncnotification") {
+			t.Errorf("%s references syncnotification — the doorbell was removed, see docs/recipe-keeper-api.md", e.Name())
+		}
+		if strings.Contains(src, "func (c *Client) Notify(") {
+			t.Errorf("%s redefines Client.Notify — the doorbell was removed, see docs/recipe-keeper-api.md", e.Name())
 		}
 	}
 }
@@ -592,10 +870,6 @@ func TestRunExitsOnContextCancellation(t *testing.T) {
 			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
 			return
 		}
-		if r.URL.Path == "/api/syncnotification" {
-			w.WriteHeader(http.StatusCreated) // 201: poll expired, nothing changed
-			return
-		}
 		_ = json.NewEncoder(w).Encode(SyncResponse{})
 	}))
 	defer srv.Close()
@@ -626,9 +900,10 @@ func TestRunExitsOnContextCancellation(t *testing.T) {
 }
 
 // TestAuthFailureLatchStopsRun proves repeated auth failures stop the poll
-// loop entirely instead of retrying a bad password forever — the loop is
-// tripped directly via SyncOnce (real, fast) rather than waited out through
-// Run's own backoff between auth retries, which is deliberately slow.
+// loop entirely instead of retrying a bad password forever — the latch is
+// tripped directly via repeated SyncOnce calls (real, fast) rather than
+// waited out through Run's own poll cadence, which defaults to a full
+// minute or more per attempt.
 func TestAuthFailureLatchStopsRun(t *testing.T) {
 	db := testDB(t)
 	rec := testReconciler(t, db)

@@ -599,6 +599,40 @@ polls — which is exactly what the aborted requests in our capture were.
 This makes a *push*-driven importer possible: no periodic polling of `/api/sync`, just
 one cheap parked connection that wakes you when something actually changes.
 
+### Status in this project: implemented, then removed
+
+This project built exactly the client described above — one long-poll parked at all
+times, `200` → sync, `201` → re-poll — and then deleted it. The endpoint itself behaves
+exactly as documented above (`200`/`201`, empty bodies, ~60s hold): that part is a real,
+verified finding about the vendor API and is safe to build from. What doesn't hold is
+the assumption that *this* client would ever see a `200`.
+
+Measured live against the real Recipe Keeper server: three changes were made in the
+Recipe Keeper phone app, confirmed present on the RK server (a subsequent `/api/sync`
+call returned them), and three consecutive 60-second doorbell polls in a row all
+returned `201` — "nothing changed" — while those changes were sitting there. The
+doorbell never fired. The strong suspicion is that it is scoped to devices registered
+through the vendor's own app (this project authenticates as a bare API client, never
+performs whatever device-registration handshake the app does) — nothing in the protocol
+confirms or rules this out, since there's no visibility into what makes a device
+eligible. Given that, sync in this project is entirely poll-driven (see "Staying
+current" below) rather than depending on a signal that, for this client, never arrives.
+
+A future attempt at reviving this would need to:
+
+1. Park one long-poll on `/api/syncnotification` at all times (request body `""`,
+   `Content-Type: application/json; charset=utf-8`).
+2. On `200`, run a sync (the four `ShoppingList*` buckets), then immediately re-open
+   the poll.
+3. On `201`, immediately re-open the poll — this is the expected idle path, not an
+   error.
+4. Set the read timeout on that connection comfortably above the ~60s hold (this
+   project used ~100s) or the client aborts its own poll.
+5. Before relying on it, re-verify against a live account that `200` is actually
+   reachable — e.g. by making a change through some *other* channel and confirming it
+   arrives, or by digging into what device-registration step the vendor app performs
+   that a bare API client does not.
+
 ## Observed client sync behaviour
 
 Worth mirroring, since it reflects how the vendor expects the API to be driven.
@@ -620,8 +654,10 @@ not poll `/api/sync` on a timer at all — freshness comes from the
 than being batched. Pushes of 1–2 entities dominate; the 168-entity outlier was a
 list clear.
 
-For an importer, the equivalent recipe is: full sync once at startup, 4-bucket sync
-whenever the doorbell rings, and no timer in between.
+For an importer whose doorbell actually fires, the equivalent recipe is: full sync once
+at startup, 4-bucket sync whenever the doorbell rings, and no timer in between. See
+["Status in this project: implemented, then removed"](#status-in-this-project-implemented-then-removed)
+for why this project's importer cannot assume that and polls instead.
 
 ## Writing back to Recipe Keeper
 
@@ -717,11 +753,18 @@ Sketch:
 
 ### Staying current
 
-Park a [long-poll](#post-apisyncnotification--real-time-change-notification) on
-`/api/syncnotification`; on `200`, run step 3 and re-poll; on `201`, re-poll. That
-gives near-real-time freshness (~8s observed) with one idle connection and no timer —
-and it maps cleanly onto this project's existing SSE model: the doorbell becomes a
-`grocery.updated` broadcast once the delta is applied.
+The doorbell would have been the natural fit here — it maps cleanly onto this
+project's existing SSE model, since a `200` could become a `grocery.updated` broadcast
+once the delta is applied — but it was built and then removed: verified live, it never
+returns `200` for this client even when the server-side data genuinely changed (see
+["Status in this project: implemented, then removed"](#status-in-this-project-implemented-then-removed)).
+
+Sync is therefore entirely poll-driven, and adaptive rather than fixed-interval:
+`RECIPE_KEEPER_POLL_SECONDS` (default 60s, floor 30s) while at least one browser tab has
+an SSE connection open, `RECIPE_KEEPER_IDLE_POLL_SECONDS` (default 30 minutes) once the
+last one disconnects, and a tab connecting fires an immediate sync rather than waiting
+for the next tick (`internal/recipekeeper.Service.Run`). No parked connection, no
+timer-free freshness — just a cadence that backs off when nobody's watching.
 
 ### Mapping to local items
 

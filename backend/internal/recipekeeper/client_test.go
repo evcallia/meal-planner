@@ -196,35 +196,6 @@ func TestSyncReturnsAuthErrorWhenRetryAlsoRejected(t *testing.T) {
 	}
 }
 
-// Notify must get the same reactive re-auth treatment as Sync — both go
-// through the shared do() path.
-func TestNotifyRetriesOnce401ThenSucceeds(t *testing.T) {
-	notifyCalls := 0
-	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/token" {
-			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
-			return
-		}
-		notifyCalls++
-		if notifyCalls == 1 {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-	})
-
-	changed, err := c.Notify(context.Background())
-	if err != nil {
-		t.Fatalf("Notify: %v", err)
-	}
-	if changed {
-		t.Error("want changed = false (201 on the successful retry)")
-	}
-	if notifyCalls != 2 {
-		t.Errorf("notify calls = %d, want 2", notifyCalls)
-	}
-}
-
 // The live vendor API returns HTTP 500 "An unhandled exception occurred"
 // whenever a present bucket's SyncEntities or LocalChangesIds serializes as
 // JSON null instead of []. Go marshals a nil slice as null, so Sync must
@@ -272,33 +243,5 @@ func TestSyncNormalizesNilSliceFieldsToEmptyArrays(t *testing.T) {
 	// keeps the huge Recipe bucket off the wire when unused.
 	if !bytes.Contains(body, []byte(`"RecipeSyncEntityRequest":null`)) {
 		t.Errorf("nil bucket must still serialize as null; body=%s", body)
-	}
-}
-
-func TestNotifyMapsStatusToChanged(t *testing.T) {
-	for _, tc := range []struct {
-		status int
-		want   bool
-	}{
-		{http.StatusOK, true},       // 200: something changed, go sync
-		{http.StatusCreated, false}, // 201: poll expired, nothing happened
-	} {
-		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/token" {
-				w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
-				return
-			}
-			if r.URL.Path != "/api/syncnotification" {
-				t.Errorf("path = %s", r.URL.Path)
-			}
-			w.WriteHeader(tc.status)
-		})
-		changed, err := c.Notify(context.Background())
-		if err != nil {
-			t.Fatalf("Notify(%d): %v", tc.status, err)
-		}
-		if changed != tc.want {
-			t.Errorf("Notify(%d) changed = %v, want %v", tc.status, changed, tc.want)
-		}
 	}
 }

@@ -3,6 +3,7 @@ import { Settings } from '../hooks/useSettings';
 import { getCalendarCacheStatus, refreshCalendarCache, CalendarCacheStatus, getHiddenCalendarEvents, unhideCalendarEvent, HiddenCalendarEvent, sendTestPushNotification, getRecipeKeeperLists, selectRecipeKeeperList, syncRecipeKeeperNow, RecipeKeeperListOption, RecipeKeeperStatus } from '../api/client';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { isPushSupported, getPushSubscription, enablePush, disablePush } from '../utils/push';
+import { parseServerDate } from '../utils/recency';
 import { PasswordSetter } from './PasswordSetter';
 import {
   getLocalHiddenEvents,
@@ -348,6 +349,24 @@ function formatRelativeTime(dateString: string | null): string {
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 }
 
+// Recipe Keeper's own row wants finer precision than formatRelativeTime's
+// one-minute floor: sync is now poll-driven as often as every minute while
+// a client is connected (see docs/recipe-keeper-api.md), so "Last sync:
+// Just now" stops being useful — it's true for the entire connected
+// window. Seconds below a minute, then the same relative format everyone
+// else uses. Uses parseServerDate (not `new Date()`) since last_sync comes
+// straight from the API. formatRelativeTime's behavior is otherwise
+// unchanged for its other caller (the calendar cache row).
+function formatSyncAge(dateString: string | null): string {
+  if (!dateString) return 'Never';
+  const ms = Date.now() - parseServerDate(dateString);
+  if (ms < 60_000) {
+    const secs = Math.max(0, Math.floor(ms / 1000));
+    return `${secs}s ago`;
+  }
+  return formatRelativeTime(dateString);
+}
+
 // One read-only row plus a list picker and "Sync now" button — no
 // credential fields, since those are env vars and a password box that can't
 // write them would be a lie. Its own component so the list fetch only runs
@@ -468,7 +487,7 @@ function RecipeKeeperSettings({ status, onStatusChange, onRefresh }: {
               : 'Connected'}
         </p>
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          Last sync: {formatRelativeTime(status.last_sync)}
+          Last sync: {formatSyncAge(status.last_sync)}
         </p>
       </div>
 

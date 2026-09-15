@@ -12,24 +12,29 @@ import (
 // than sleeping 30s to exercise eviction.
 var idleConnTimeout = 30 * time.Second
 
+// responseHeaderTimeout bounds how long the client waits for response
+// headers on any request over this transport (/token, /api/sync). It used
+// to be pinned to a since-removed long-poll's own timeout budget plus a
+// margin (see docs/recipe-keeper-api.md for the removed doorbell's
+// protocol) — that requirement is gone, but the same headroom is still the
+// right call: this must stay comfortably above any single request this
+// transport is allowed to run long (a cold Recipe pull's individual pages
+// included), not just an arbitrary short value.
+const responseHeaderTimeout = 100 * time.Second
+
 // NewTransport builds a dedicated *http.Transport for the Recipe Keeper API.
 // It is cloned from http.DefaultTransport (keeping proxy support, HTTP/2,
 // and sensible dial/TLS handshake timeouts) rather than built from scratch.
 //
-// Dedicated transport: with a 60s poll interval, a pooled connection can be
-// closed by the server while idle. Go only retries idempotent/bodyless
-// requests on a stale connection, and POST /token has a body — so it hangs
-// "awaiting headers" until the client timeout. A short IdleConnTimeout
-// discards the connection before it can go stale. Verified live.
-//
-// ResponseHeaderTimeout is set above notifyTimeout (itself already required
-// to exceed the /api/syncnotification long-poll's ~60s hold) because this
-// same transport backs the Notify long-poll — a shorter value here would cut
-// the doorbell off mid-hold. It still guards /token and /api/sync against a
-// connection that dialed fine but then never answers.
+// Dedicated transport: with polling as frequent as every 30s-60s, a pooled
+// connection can be closed by the server while idle. Go only retries
+// idempotent/bodyless requests on a stale connection, and POST /token has a
+// body — so it hangs "awaiting headers" until the client timeout. A short
+// IdleConnTimeout discards the connection before it can go stale. Verified
+// live.
 func NewTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.IdleConnTimeout = idleConnTimeout
-	t.ResponseHeaderTimeout = notifyTimeout + 10*time.Second
+	t.ResponseHeaderTimeout = responseHeaderTimeout
 	return t
 }

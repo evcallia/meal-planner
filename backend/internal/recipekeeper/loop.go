@@ -16,22 +16,30 @@ import (
 
 const (
 	safetyInterval = 15 * time.Minute
-	backoffBase    = 30 * time.Second
-	backoffMax     = 30 * time.Minute
 
-	// defaultPollSeconds is RECIPE_KEEPER_POLL_SECONDS' default: the primary
-	// mechanism that pulls inbound changes now (see Service.PollInterval and
-	// Run) — the doorbell fires only for registered app devices and, against
-	// the real vendor API, has been observed to return 201 ("nothing
-	// changed") for this client even when the server-side data genuinely
-	// changed. A cheap delta once the watermark is warm was measured
-	// sub-second, so polling this often is reasonable.
+	// defaultPollSeconds is RECIPE_KEEPER_POLL_SECONDS' default: the cadence
+	// Run polls at while at least one client is connected (Service.PollInterval;
+	// see Run and Service.SubscriberCount). Sync is entirely poll-driven — the
+	// vendor's long-poll change notification never returns "something
+	// changed" for this client even when the server-side data genuinely did
+	// (see docs/recipe-keeper-api.md for the removed doorbell integration and
+	// why), so it was implemented and then removed. A cheap delta once the
+	// watermark is warm was measured sub-second, so polling this often while
+	// someone's actually watching is reasonable.
 	defaultPollSeconds = 60
 	// minPollSeconds floors RECIPE_KEEPER_POLL_SECONDS: polling faster than
 	// this is not "cheap delta" territory any more, it's hammering a third
 	// party's live API. ResolvePollInterval clamps to this and logs when it
 	// does.
 	minPollSeconds = 30
+
+	// idlePollSeconds is RECIPE_KEEPER_IDLE_POLL_SECONDS' default and the
+	// cadence Run falls back to once the last SSE client disconnects (or
+	// while none has ever connected): a household with the app closed on
+	// every device doesn't need minute-level freshness, and polling a third
+	// party's live API every 30 minutes instead of every minute is a real
+	// reduction in unnecessary traffic.
+	idlePollSeconds = 30 * 60
 
 	// grocerySyncTimeout bounds TriggerGrocerySync's SyncOnce call. Must
 	// comfortably exceed a real full drain — measured live at 14s for the
@@ -56,12 +64,6 @@ const (
 	// account lockout. A successful manual sync or a process restart clears
 	// the latch.
 	authDisableAt = 3
-
-	// minPollInterval floors the time between Notify iterations. Client.Notify
-	// normally blocks for up to ~90s (the long-poll hold), but if the server
-	// (or a misconfigured proxy in front of it) ever answers instantly, this
-	// stops Run from spinning in a hot loop.
-	minPollInterval = 1 * time.Second
 
 	// maxRecipeSyncPages bounds SyncRecipes: a server that keeps claiming
 	// HasMoreUpdatedServerItems without the watermark ever advancing must not
@@ -91,6 +93,19 @@ func ResolvePollInterval(seconds int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+// ResolveIdlePollInterval converts RECIPE_KEEPER_IDLE_POLL_SECONDS into the
+// Duration Service.IdlePollInterval expects: zero/negative falls back to
+// idlePollSeconds. No floor beyond that — an operator deliberately setting
+// idle polling faster than the connected cadence is a narrower footgun than
+// the connected-cadence floor guards against (nobody's even watching), so
+// it isn't clamped.
+func ResolveIdlePollInterval(seconds int) time.Duration {
+	if seconds <= 0 {
+		seconds = idlePollSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 type Status struct {
 	Enabled    bool       `json:"enabled"`
 	LastSync   *time.Time `json:"last_sync"`
@@ -112,19 +127,42 @@ type Service struct {
 	DB       *gorm.DB
 	OnChange func(Changes)
 
-	// PollInterval is how often Run's periodic poll loop calls
-	// TriggerGrocerySync, independent of the doorbell. Zero means
-	// defaultPollSeconds; production wiring goes through
-	// ResolvePollInterval so this is always already clamped/defaulted by
-	// the time Run sees it. Tests set it directly to a short duration to
-	// exercise periodic polling without a real 60s wait.
+	// PollInterval is how often Run polls (calls TriggerGrocerySync) while at
+	// least one SSE client is connected — the fast, "someone's watching"
+	// cadence. Zero means defaultPollSeconds; production wiring goes through
+	// ResolvePollInterval so this is always already clamped/defaulted by the
+	// time Run sees it. Tests set it directly to a short duration to exercise
+	// periodic polling without a real 60s wait.
 	PollInterval time.Duration
+
+	// IdlePollInterval is how often Run polls while NO SSE client is
+	// connected (including before the first one ever connects). Zero means
+	// idlePollSeconds; production wiring goes through ResolveIdlePollInterval.
+	IdlePollInterval time.Duration
+
+	// SubscriberCount, if set, reports how many SSE clients are currently
+	// connected — Run uses zero vs. nonzero to choose between IdlePollInterval
+	// and PollInterval on each tick. nil (tests that don't care, or before
+	// main.go wires it) is treated as "always disconnected", i.e. the idle
+	// cadence. Production wiring is realtime.Broadcaster.Count — a plain func
+	// field rather than an import so this package doesn't need to know about
+	// realtime.Broadcaster's type, only that something can count subscribers.
+	SubscriberCount func() int
+
+	// Connected, if set, receives a value every time the SSE subscriber count
+	// transitions from 0 to 1 (see realtime.Broadcaster.Connected, which
+	// production wiring assigns here directly — the channel type alone is
+	// enough coupling, no import needed). Run selects on it to fire an
+	// immediate sync the moment a client connects, rather than waiting up to
+	// IdlePollInterval for the next tick. nil is fine: connects are then only
+	// noticed on the next tick, which still self-corrects to PollInterval.
+	Connected <-chan struct{}
 
 	// mu guards every field below. Task 9 adds POST /api/recipe-keeper/sync,
 	// which calls SyncOnce concurrently with the background Run loop, so
 	// these can no longer be plain unsynchronized ints/bools.
 	mu           sync.Mutex
-	failures     int  // consecutive failures of ANY kind; drives backoff
+	failures     int  // consecutive failures of ANY kind; drives the transientAlertAt threshold
 	authFailures int  // consecutive AUTH failures specifically; drives the latch
 	stopped      bool // true once the auth latch has tripped — Run must stop
 
@@ -637,12 +675,15 @@ func (s *Service) Status() Status {
 	return st
 }
 
-// Run drives the sync loop until ctx is cancelled. Periodic polling (see
-// PollInterval) is the PRIMARY mechanism: measured live, the doorbell never
-// returns 200 for this client (it appears scoped to registered app devices)
-// even when the server-side data genuinely changed, so it is kept only as an
-// opportunistic optimization — a 200 syncs immediately, a 201 just costs
-// nothing. A safety timer covers anything missed while the process was down.
+// Run drives the sync loop until ctx is cancelled. Sync is entirely
+// poll-driven — the long-poll doorbell never returns 200 for this client
+// (see docs/recipe-keeper-api.md), so it was implemented and then removed
+// rather than kept as dead weight. Polling is adaptive instead of
+// fixed-interval: while at least one SSE client is connected (see
+// SubscriberCount) Run polls every PollInterval; otherwise it polls every
+// IdlePollInterval. A client connecting fires an immediate sync (see
+// Connected) rather than waiting for the next tick. A safety timer covers
+// anything missed while the process was down.
 func (s *Service) Run(ctx context.Context) {
 	s.mu.Lock()
 	s.bgCtx = ctx
@@ -660,32 +701,30 @@ func (s *Service) Run(ctx context.Context) {
 		return
 	}
 
-	pollInterval := s.PollInterval
-	if pollInterval <= 0 {
-		pollInterval = defaultPollSeconds * time.Second
+	connectedInterval := s.PollInterval
+	if connectedInterval <= 0 {
+		connectedInterval = defaultPollSeconds * time.Second
 	}
-	poll := time.NewTicker(pollInterval)
-	defer poll.Stop()
-	// Runs on its own goroutine, decoupled from the doorbell long-poll below
-	// (which normally blocks for up to ~90s at a time) — a ticker checked
-	// only between Notify calls would effectively poll on the doorbell's
-	// cadence, not its own. TriggerGrocerySync is the coalescing,
-	// latch-respecting entry point, so this is safe to call on every tick
-	// even if a sync (from here, the doorbell, or a manual trigger) is
-	// already in flight.
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-poll.C:
-				if s.isStopped() {
-					return
-				}
-				s.TriggerGrocerySync()
-			}
-		}
-	}()
+	idleInterval := s.IdlePollInterval
+	if idleInterval <= 0 {
+		idleInterval = idlePollSeconds * time.Second
+	}
+	countFn := s.SubscriberCount
+	if countFn == nil {
+		countFn = func() int { return 0 }
+	}
+
+	// A nil Connected channel is fine: a nil channel's case in a select is
+	// never ready, so that branch simply never fires and connects are only
+	// noticed on the next tick.
+	connected := s.Connected
+
+	nextInterval := idleInterval
+	if countFn() > 0 {
+		nextInterval = connectedInterval
+	}
+	timer := time.NewTimer(nextInterval)
+	defer timer.Stop()
 
 	safety := time.NewTicker(safetyInterval)
 	defer safety.Stop()
@@ -694,60 +733,44 @@ func (s *Service) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+
 		case <-safety.C:
 			_ = s.SyncOnce(ctx)
 			if s.isStopped() {
 				log.Printf("recipekeeper: sync disabled after repeated auth failures; fix credentials and restart, or trigger a manual sync, to resume")
 				return
 			}
-		default:
-		}
 
-		pollStart := time.Now()
-		changed, err := s.Client.Notify(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			s.recordError(err)
+		case <-connected:
 			if s.isStopped() {
 				log.Printf("recipekeeper: sync disabled after repeated auth failures; fix credentials and restart, or trigger a manual sync, to resume")
 				return
 			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(s.backoff()):
+			// A client just connected: sync now rather than waiting up to
+			// IdlePollInterval for the next tick, and switch to the fast
+			// cadence from here. TriggerGrocerySync is the coalescing,
+			// latch-respecting entry point, so this is safe even if a sync
+			// (safety timer, a previous tick, or a manual trigger) is
+			// already in flight.
+			s.TriggerGrocerySync()
+			if !timer.Stop() {
+				<-timer.C
 			}
-			continue
-		}
-		if changed {
-			_ = s.SyncOnce(ctx)
+			timer.Reset(connectedInterval)
+
+		case <-timer.C:
 			if s.isStopped() {
-				log.Printf("recipekeeper: sync disabled after repeated auth failures; fix credentials and restart, or trigger a manual sync, to resume")
 				return
 			}
-		}
-
-		// Floor the loop period so a server (or proxy) that ever answers
-		// Notify instantly cannot spin this into a hot loop.
-		if elapsed := time.Since(pollStart); elapsed < minPollInterval {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(minPollInterval - elapsed):
+			s.TriggerGrocerySync()
+			// Re-evaluate presence for the NEXT tick's cadence: connected
+			// stays fast, idle (including the last subscriber having just
+			// disconnected) falls back to the slow cadence.
+			nextInterval = idleInterval
+			if countFn() > 0 {
+				nextInterval = connectedInterval
 			}
+			timer.Reset(nextInterval)
 		}
 	}
-}
-
-func (s *Service) backoff() time.Duration {
-	s.mu.Lock()
-	f := s.failures
-	s.mu.Unlock()
-	d := backoffBase << min(f, 6)
-	if d > backoffMax {
-		return backoffMax
-	}
-	return d
 }
