@@ -7,6 +7,7 @@ import { ItemAutocomplete } from './ItemAutocomplete';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
 import { getEditHighlight } from '../utils/editHighlightColors';
+import { parseQuantity } from '../utils/quantity';
 
 // Presentational building blocks shared by the Grocery tab and the Lists
 // (packing) tab. Both are "sectioned checklist with a chip per item", so the
@@ -139,8 +140,7 @@ export function MenuRadioOption({ label, active, onClick }: { label: string; act
 // Rendered as a final unlabelled "No recipe (N)" row in the popover so the
 // count still adds up to the item's full quantity.
 function mpOnlyUnits(quantity: string | null, recipeCount: number): number {
-  const total = quantity ? (parseInt(quantity, 10) || 1) : 1;
-  return Math.max(0, total - recipeCount);
+  return Math.max(0, parseQuantity(quantity) - recipeCount);
 }
 
 /**
@@ -270,6 +270,12 @@ export interface ChecklistItemRowProps {
   /** Grocery only: "Hide recipes" drops the per-item recipe line (and the
    *  filter chips) without touching what's filtered. */
   hideRecipes?: boolean;
+  /** Grocery's group-by-recipe view sets this false: a collapsed item can
+   *  render in several recipe groups at once, so two edit forms could mount
+   *  for the same item id and stomp the shared commitEditingRef. That view
+   *  is a shopping lens, not an editing one, so inline rename/quantity/
+   *  section editing is suppressed there — checkbox and delete still work. */
+  allowEdit?: boolean;
 }
 
 export function ChecklistItemRow({
@@ -277,11 +283,15 @@ export function ChecklistItemRow({
   chips, chipId, onCreateChip, chipPlaceholder,
   editingItemId, onEditingItemChange, commitEditingRef,
   sectionName, allSections, onChangeSection, editHighlightColor,
-  hideChips = false, allowEditWhenChecked = false, hideRecipes = false,
+  hideChips = false, allowEditWhenChecked = false, hideRecipes = false, allowEdit = true,
 }: ChecklistItemRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
-  const isEditing = editingItemId === item.id;
+  // Gated on allowEdit too (not just startEditing) — if editingItemId is
+  // already set to this item from a different view (e.g. the user began
+  // an edit in category view, then switched groupBy without committing),
+  // this still must not render an edit form here.
+  const isEditing = allowEdit && editingItemId === item.id;
   const [editName, setEditName] = useState(item.name);
   const [editQuantity, setEditQuantity] = useState(item.quantity ?? '');
   const [editChipId, setEditChipId] = useState<string | null>(chipId);
@@ -305,13 +315,14 @@ export function ChecklistItemRow({
   }, [onEditingItemChange]);
 
   const startEditing = useCallback(() => {
+    if (!allowEdit) return;
     if (item.checked && !allowEditWhenChecked) return;
     setEditName(item.name);
     setEditQuantity(item.quantity ?? '');
     setEditChipId(chipId);
     setEditSectionName(sectionName);
     onEditingItemChange(item.id);
-  }, [item.id, item.name, item.quantity, item.checked, chipId, sectionName, onEditingItemChange, allowEditWhenChecked]);
+  }, [item.id, item.name, item.quantity, item.checked, chipId, sectionName, onEditingItemChange, allowEditWhenChecked, allowEdit]);
 
   const commitEdit = useCallback(() => {
     const trimmedName = editName.trim();

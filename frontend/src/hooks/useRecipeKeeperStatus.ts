@@ -38,9 +38,20 @@ export function useRecipeKeeperStatus(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
     refresh();
+  }, [enabled, refresh]);
+
+  // Separate from the initial fetch above so the interval can stop once we
+  // learn the backend has no Recipe Keeper credentials configured
+  // (status.enabled === false) — that can only change via a server
+  // restart, which reloads the page anyway, so polling every 60s forever
+  // for a deployment that will never turn this on is wasted work. `status`
+  // starts null (not yet loaded), so the interval still runs until the
+  // initial fetch above resolves either way.
+  useEffect(() => {
+    if (!enabled || status?.enabled === false) return;
     const id = setInterval(refresh, POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [enabled, refresh]);
+  }, [enabled, status?.enabled, refresh]);
 
   // Also refresh promptly on reconnect (offline→online), same spirit as the
   // rest of the app's reconnect-triggered refreshes. Skips the initial

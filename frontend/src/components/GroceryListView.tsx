@@ -16,6 +16,7 @@ import {
 import { getEditHighlight } from '../utils/editHighlightColors';
 import { toTitleCase } from '../utils/titleCase';
 import { parseServerDate } from '../utils/serverDate';
+import { parseQuantity } from '../utils/quantity';
 
 // Re-exported for the store chips + existing importers; the constant itself
 // lives with the shared checklist parts.
@@ -62,8 +63,7 @@ function recipeExcluded(item: GrocerySection['items'][number], excluded: Set<str
   const recipes = item.recipes ?? [];
   if (recipes.length === 0) return false;
   if (!recipes.every(r => excluded.has(r.id))) return false;
-  const total = item.quantity ? (parseInt(item.quantity, 10) || 1) : 1;
-  const mpOnlyUnits = total - recipes.length;
+  const mpOnlyUnits = parseQuantity(item.quantity) - recipes.length;
   return mpOnlyUnits <= 0;
 }
 
@@ -236,6 +236,25 @@ export function GroceryListView({
     return counts;
   }, [sections]);
 
+  // Recipes have no backing entity table (unlike stores, fetched
+  // independently via useStores), so an excluded recipe whose last item
+  // leaves the list would otherwise vanish from recipeChips entirely —
+  // dropping the chip needed to un-exclude it, while the id stays in
+  // settings and keeps silently re-hiding items if that recipe's items ever
+  // come back. Stores dodge this because they persist as their own rows;
+  // this ref is the recipe equivalent: every title ever seen this session,
+  // used only as a fallback for ids no longer present in current data.
+  const recipeTitleCacheRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    for (const section of sections) {
+      for (const item of section.items) {
+        for (const r of item.recipes ?? []) {
+          recipeTitleCacheRef.current.set(r.id, r.title);
+        }
+      }
+    }
+  }, [sections]);
+
   const recipeChips = useMemo(() => {
     const titles = new Map<string, string>();
     for (const section of sections) {
@@ -245,10 +264,15 @@ export function GroceryListView({
         }
       }
     }
+    for (const id of excludedRecipeIds) {
+      if (titles.has(id)) continue;
+      const cached = recipeTitleCacheRef.current.get(id);
+      if (cached) titles.set(id, cached);
+    }
     return [...titles.entries()]
       .sort((a, b) => a[1].localeCompare(b[1]))
       .map(([id, name], position) => ({ id, name, position }));
-  }, [sections]);
+  }, [sections, excludedRecipeIds]);
 
   const visibleRecipeChips = useMemo(() => recipeChips.filter(c =>
     (recipeCounts.get(c.id) ?? 0) > 0 || excludedRecipeIds.has(c.id)
@@ -1292,6 +1316,7 @@ export function GroceryListView({
                       onChangeSection={handleChangeItemSection}
                       hideChips={hideStores}
                       hideRecipes={hideRecipes}
+                      allowEdit={false}
                     />
                   ))}
                 </div>

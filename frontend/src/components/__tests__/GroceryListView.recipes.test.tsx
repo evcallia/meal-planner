@@ -157,9 +157,11 @@ describe('GroceryListView - recipe filter chips', () => {
         items: [
           {
             id: 'i1', section_id: 's1', name: 'Lemon', quantity: '4', checked: false, position: 0, store_id: null, updated_at: '2026-01-01',
-            // Only 2 of the 4 units are linked (both to the excluded recipe)
-            // — 2 MP-only units remain, so the row must still show.
-            recipes: [{ id: 'r1', title: 'Fig Cocktail' }, { id: 'r1', title: 'Fig Cocktail' }],
+            // The backend dedupes `recipes` by recipe id (see recipeRefsByKey
+            // in serialize.go) and never sends duplicates — quantity is the
+            // real signal for "more units than links". 4 units, 1 linked
+            // recipe: 3 MP-only units remain, so the row must still show.
+            recipes: [{ id: 'r1', title: 'Fig Cocktail' }],
           },
         ],
       },
@@ -176,5 +178,68 @@ describe('GroceryListView - recipe filter chips', () => {
     rerender(<GroceryListView groupBy="category" excludedRecipes={['r1']} hideRecipes={true} />);
     expect(screen.queryByText('Fig Cocktail')).not.toBeInTheDocument(); // chip hidden
     expect(screen.queryByText('Sugar')).not.toBeInTheDocument(); // filter still applies
+  });
+
+  it('treats a non-integer quantity as 1 unit for exclusion, matching the backend', () => {
+    // "2 lbs" is unparseable server-side (strconv.Atoi rejects trailing
+    // text) and means 1 unit — 1 unit, 1 link to the excluded recipe, 0
+    // MP-only units left, so the row must be hidden. parseInt would read it
+    // as 2 units and wrongly keep the row visible.
+    mockSections = [
+      {
+        id: 's1', name: 'Produce', position: 0,
+        items: [
+          {
+            id: 'i1', section_id: 's1', name: 'Lemon', quantity: '2 lbs', checked: false, position: 0, store_id: null, updated_at: '2026-01-01',
+            recipes: [{ id: 'r1', title: 'Fig Cocktail' }],
+          },
+        ],
+      },
+    ];
+    render(<GroceryListView groupBy="category" excludedRecipes={['r1']} />);
+    expect(screen.queryByText('Lemon')).not.toBeInTheDocument();
+  });
+
+  it('keeps an excluded recipe chip visible (and un-un-excludable) after its last item leaves the list', () => {
+    // Stores stay visible when excluded because they're a persisted entity
+    // table; recipes have no such table — they're derived from current
+    // item data, so this needs its own fallback (a title cache) or the
+    // chip vanishes along with the id's only ability to be un-excluded.
+    const { rerender } = render(<GroceryListView groupBy="category" excludedRecipes={['r1']} />);
+    expect(screen.getByText('Fig Cocktail')).toBeInTheDocument();
+
+    // Every item referencing r1 (Fig Cocktail) is gone now.
+    mockSections = [
+      {
+        id: 's2', name: 'Baking', position: 1,
+        items: [
+          {
+            id: 'i3', section_id: 's2', name: 'Paper Towels', quantity: null, checked: false, position: 1, store_id: null, updated_at: '2026-01-01',
+            recipes: [],
+          },
+        ],
+      },
+    ];
+    rerender(<GroceryListView groupBy="category" excludedRecipes={['r1']} />);
+    expect(screen.getByText('Fig Cocktail')).toBeInTheDocument();
+  });
+});
+
+describe('GroceryListView - group by recipe editing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSections = recipeSections;
+    mockLoading = false;
+  });
+
+  it('does not open an inline edit form for a multi-recipe item shown in two groups', () => {
+    render(<GroceryListView groupBy="recipe" />);
+    // "Lemon" renders once per recipe group (Fig Cocktail AND Thai Curry).
+    const lemonRows = screen.getAllByText('Lemon');
+    expect(lemonRows.length).toBeGreaterThan(1);
+    fireEvent.click(lemonRows[0]);
+    // Suppressed in this view — no edit form (Save/Cancel) mounts anywhere,
+    // so there's nothing to fight over a shared commitEditingRef.
+    expect(screen.queryByText('Save')).not.toBeInTheDocument();
   });
 });

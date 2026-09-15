@@ -1212,6 +1212,7 @@ function AppContent() {
             await saveLocalGroceryItems(data.flatMap(s => s.items.map(i => ({
               id: i.id, section_id: i.section_id, name: i.name,
               quantity: i.quantity, checked: i.checked, position: i.position, global_position: i.global_position, store_id: i.store_id, updated_at: i.updated_at,
+              recipes: i.recipes ?? [],
             }))));
           } catch {}
         }
@@ -1687,6 +1688,7 @@ function AppContent() {
           onSkipPendingChange={skipPendingChange}
           recipeKeeperStatus={recipeKeeper.status}
           onRecipeKeeperStatusChange={recipeKeeper.applyStatus}
+          onRefreshRecipeKeeperStatus={recipeKeeper.refresh}
         />
       )}
 

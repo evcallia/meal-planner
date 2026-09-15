@@ -19,7 +19,7 @@ vi.mock('../../api/client', () => ({
     selected_list_id: listId, selected_list_name: listId === 'list-2' ? 'Party Supplies' : 'Groceries',
   })),
   syncRecipeKeeperNow: vi.fn(() => Promise.resolve({
-    enabled: true, last_sync: '2026-01-01T00:00:00', last_error: '', auth_failed: false,
+    enabled: true, last_sync: '2026-01-01T00:00:00Z', last_error: '', auth_failed: false,
     selected_list_id: 'list-1', selected_list_name: 'Groceries',
   })),
 }));
@@ -203,7 +203,37 @@ describe('SettingsModal - Recipe Keeper section', () => {
     });
 
     expect(mockSyncNow).toHaveBeenCalled();
-    await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith(expect.objectContaining({ last_sync: '2026-01-01T00:00:00' })));
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith(expect.objectContaining({ last_sync: '2026-01-01T00:00:00Z' })));
+  });
+
+  it('calls the refresh callback when "Sync now" fails, so the status does not sit stale', async () => {
+    mockSyncNow.mockRejectedValueOnce(new Error('API error: 502'));
+    const onStatusChange = vi.fn();
+    const onRefresh = vi.fn();
+    render(
+      <SettingsModal
+        settings={defaultSettings}
+        onUpdate={vi.fn()}
+        onClose={vi.fn()}
+        isDark={false}
+        onToggleDarkMode={vi.fn()}
+        recipeKeeperStatus={enabledStatus({ selected_list_id: 'list-1', selected_list_name: 'Groceries' })}
+        onRecipeKeeperStatusChange={onStatusChange}
+        onRefreshRecipeKeeperStatus={onRefresh}
+      />
+    );
+    await waitFor(() => expect(screen.getByText('Settings')).toBeInTheDocument());
+    expandSections();
+    await waitFor(() => expect(mockGetLists).toHaveBeenCalled());
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Sync now'));
+      await Promise.resolve();
+    });
+
+    expect(mockSyncNow).toHaveBeenCalled();
+    expect(onStatusChange).not.toHaveBeenCalled();
+    expect(onRefresh).toHaveBeenCalled();
   });
 
   it('shows the last error and auth-failed state', async () => {

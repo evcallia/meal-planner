@@ -53,6 +53,24 @@ describe('useRecipeKeeperStatus', () => {
     expect(mockGetStatus).toHaveBeenCalledTimes(2);
   });
 
+  it('stops polling once the backend reports the integration is not configured', async () => {
+    vi.useFakeTimers();
+    mockGetStatus.mockResolvedValue({
+      enabled: false, last_sync: null, last_error: '', auth_failed: false,
+      selected_list_id: '', selected_list_name: '',
+    });
+    renderHook(() => useRecipeKeeperStatus(true));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
+
+    // No credentials configured server-side — polling forever would be
+    // pointless (only a server restart, which reloads the page, changes it).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
+  });
+
   it('applyStatus lets a caller (e.g. a Settings mutation) push a fresh status immediately', async () => {
     mockGetStatus.mockResolvedValue({
       enabled: true, last_sync: null, last_error: '', auth_failed: false,
@@ -63,7 +81,7 @@ describe('useRecipeKeeperStatus', () => {
 
     act(() => {
       result.current.applyStatus({
-        enabled: true, last_sync: '2026-01-01T00:00:00', last_error: '', auth_failed: false,
+        enabled: true, last_sync: '2026-01-01T00:00:00Z', last_error: '', auth_failed: false,
         selected_list_id: 'l2', selected_list_name: 'Party Supplies',
       });
     });

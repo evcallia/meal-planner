@@ -154,7 +154,7 @@ import { getCurrentUser, logout, refreshCalendarCache } from '../api/client';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { getDays, updateNotes, getGroceryList } from '../api/client';
 import { __resetCalendarFeedRefreshForTests } from '../App';
-import { queueChange, getLocalNote, saveLocalNote } from '../db';
+import { queueChange, getLocalNote, saveLocalNote, saveLocalGroceryItems } from '../db';
 import { __setMockRegistration, __resetMockRegistration } from '../test/pwa-register-react';
 import { claimStaleUpdate, __resetStaleUpdateForTests } from '../utils/appUpdate';
 import { scrollToElementWithOffset } from '../utils/scroll';
@@ -663,5 +663,63 @@ describe('leftover service-worker update', () => {
     expect(screen.queryByText('A new version is available')).not.toBeInTheDocument();
     // Latch untouched — a real update later in the session can still claim it.
     expect(claimStaleUpdate()).toBe(true);
+  });
+});
+
+describe('grocery off-tab cache warmer', () => {
+  // The global test setup (src/test/setup.ts) replaces localStorage with a
+  // bare vi.fn() mock that stores nothing — the warmer path reads/writes
+  // 'meal-planner-grocery' through real getItem/setItem semantics, so this
+  // test needs a working one installed (same pattern as push.test.ts).
+  function installWorkingLocalStorage() {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+      setItem: (k: string, v: string) => { store.set(k, String(v)); },
+      removeItem: (k: string) => { store.delete(k); },
+      clear: () => store.clear(),
+    });
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('carries recipes through when applying a grocery.updated delta to IndexedDB', async () => {
+    installWorkingLocalStorage();
+    const mockUser = { sub: 'u1', name: 'Test User', email: 'test@example.com' };
+    vi.mocked(getCurrentUser).mockResolvedValue(mockUser);
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('calendar-view')).toBeInTheDocument());
+    // Let the initial fetchAllData() cache-warm pass finish (it overwrites
+    // the 'meal-planner-grocery' localStorage snapshot with the fetched —
+    // here empty — list) before seeding the section the SSE delta expects
+    // to find, so the seed doesn't get clobbered by the mount-time write.
+    await waitFor(() => expect(vi.mocked(saveLocalGroceryItems)).toHaveBeenCalled());
+    localStorage.setItem('meal-planner-grocery', JSON.stringify([
+      { id: 's1', name: 'Produce', position: 0, items: [] },
+    ]));
+    vi.mocked(saveLocalGroceryItems).mockClear();
+
+    const itemWithRecipes = {
+      id: 'i1', section_id: 's1', name: 'Lemon', quantity: '4', checked: false, position: 0,
+      global_position: 0, store_id: null, updated_at: '2026-01-01T00:00:00',
+      recipes: [{ id: 'r1', title: 'Fig Cocktail' }],
+    };
+
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('meal-planner-realtime', {
+        detail: { type: 'grocery.updated', payload: { action: 'item-added', sectionId: 's1', item: itemWithRecipes } },
+      }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const calls = vi.mocked(saveLocalGroceryItems).mock.calls;
+      const lastCall = calls[calls.length - 1]?.[0] as { id: string; recipes?: unknown }[] | undefined;
+      const saved = lastCall?.find(i => i.id === 'i1');
+      expect(saved?.recipes).toEqual([{ id: 'r1', title: 'Fig Cocktail' }]);
+    });
   });
 });

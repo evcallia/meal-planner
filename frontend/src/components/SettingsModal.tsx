@@ -46,6 +46,7 @@ interface SettingsModalProps {
   // there's nothing a household without the integration needs to see here.
   recipeKeeperStatus?: RecipeKeeperStatus | null;
   onRecipeKeeperStatusChange?: (status: RecipeKeeperStatus) => void;
+  onRefreshRecipeKeeperStatus?: () => void;
 }
 
 interface EnrichedPendingChange extends PendingChange {
@@ -352,9 +353,14 @@ function formatRelativeTime(dateString: string | null): string {
 // write them would be a lie. Its own component so the list fetch only runs
 // once the "Recipe Keeper" section is actually expanded (SettingsSection
 // doesn't mount `children` until `open`).
-function RecipeKeeperSettings({ status, onStatusChange }: {
+function RecipeKeeperSettings({ status, onStatusChange, onRefresh }: {
   status: RecipeKeeperStatus;
   onStatusChange: (status: RecipeKeeperStatus) => void;
+  // Called on a failed Sync now (e.g. a transient 502) so the displayed
+  // status doesn't sit stale until the next 60s poll — the request itself
+  // failed, but the backend's last_error/last_sync may have changed from a
+  // concurrent background sync, and the user just asked to see current state.
+  onRefresh?: () => void;
 }) {
   const [lists, setLists] = useState<RecipeKeeperListOption[]>([]);
   const [listsLoading, setListsLoading] = useState(true);
@@ -407,10 +413,11 @@ function RecipeKeeperSettings({ status, onStatusChange }: {
       onStatusChange(await syncRecipeKeeperNow());
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Sync failed');
+      onRefresh?.();
     } finally {
       setSyncing(false);
     }
-  }, [onStatusChange]);
+  }, [onStatusChange, onRefresh]);
 
   return (
     <>
@@ -478,7 +485,7 @@ function RecipeKeeperSettings({ status, onStatusChange }: {
   );
 }
 
-export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode, accountName, onLogout, pendingCount, onClearPendingChanges, onFetchPendingChanges, onGetSyncErrors, onSkipPendingChange, recipeKeeperStatus, onRecipeKeeperStatusChange }: SettingsModalProps) {
+export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDarkMode, accountName, onLogout, pendingCount, onClearPendingChanges, onFetchPendingChanges, onGetSyncErrors, onSkipPendingChange, recipeKeeperStatus, onRecipeKeeperStatusChange, onRefreshRecipeKeeperStatus }: SettingsModalProps) {
   const [cacheStatus, setCacheStatus] = useState<CalendarCacheStatus | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
@@ -1295,7 +1302,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
     here); recipeKeeperStatus is null until the first poll lands too. */}
           {recipeKeeperStatus?.enabled && onRecipeKeeperStatusChange && (
             <SettingsSection title="Recipe Keeper">
-              <RecipeKeeperSettings status={recipeKeeperStatus} onStatusChange={onRecipeKeeperStatusChange} />
+              <RecipeKeeperSettings status={recipeKeeperStatus} onStatusChange={onRecipeKeeperStatusChange} onRefresh={onRefreshRecipeKeeperStatus} />
             </SettingsSection>
           )}
 {/* Pending Changes */}
