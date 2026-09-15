@@ -840,3 +840,45 @@ export async function getActivity(): Promise<{ entries: ActivityEntry[]; last_se
 export async function markActivitySeen(): Promise<{ status: string; seen_at: string }> {
   return fetchAPI<{ status: string; seen_at: string }>('/activity/seen', { method: 'POST' });
 }
+
+// Recipe Keeper sync API. The household connection (server config, not
+// per-user) mirrors one Recipe Keeper shopping list into the grocery list —
+// see CLAUDE.md "Recipe Keeper Sync". `enabled: false` means the backend has
+// no credentials configured; every endpoint still responds (status 200 /
+// errors), so the UI can render a clean "not configured" state.
+
+export interface RecipeKeeperListOption {
+  id: string;
+  name: string;
+}
+
+export interface RecipeKeeperStatus {
+  enabled: boolean;
+  last_sync: string | null;
+  last_error: string;
+  auth_failed: boolean;
+  selected_list_id: string;
+  selected_list_name: string;
+}
+
+export async function getRecipeKeeperStatus(): Promise<RecipeKeeperStatus> {
+  return fetchAPI<RecipeKeeperStatus>('/recipe-keeper/status');
+}
+
+export async function getRecipeKeeperLists(): Promise<RecipeKeeperListOption[]> {
+  return fetchAPI<RecipeKeeperListOption[]>('/recipe-keeper/lists');
+}
+
+// Selecting an already-selected-before list resets its links/tombstones/
+// watermark server-side for a clean re-import — the caller should warn
+// before switching away from a list that's already set.
+export async function selectRecipeKeeperList(listId: string): Promise<RecipeKeeperStatus> {
+  return fetchAPI<RecipeKeeperStatus>('/recipe-keeper/list', {
+    method: 'PUT',
+    body: JSON.stringify({ list_id: listId }),
+  });
+}
+
+export async function syncRecipeKeeperNow(): Promise<RecipeKeeperStatus> {
+  return fetchAPI<RecipeKeeperStatus>('/recipe-keeper/sync', { method: 'POST' });
+}

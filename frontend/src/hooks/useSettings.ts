@@ -51,12 +51,22 @@ export interface Settings {
   grocerySelectedStoreIds: string[];
   groceryExcludedStoreIds: string[];
   // Grocery display preferences (synced per-user). Group by category (the
-  // section headers) or 'none' (one flat list). Hide stores removes chips +
+  // section headers), 'none' (one flat list), or 'recipe' (Recipe Keeper
+  // attribution — an item appears under every recipe it belongs to; items
+  // with no recipe group under "No recipe"). Hide stores removes chips +
   // per-item store labels without touching data. Sort items manually
   // (drag order) or alphabetically.
-  groceryGroupBy: 'category' | 'none';
+  groceryGroupBy: 'category' | 'none' | 'recipe';
   groceryHideStores: boolean;
   grocerySortBy: 'manual' | 'alphabetical';
+  // Recipe filter chips (mirrors the store filter above, see
+  // GroceryListView). An item has one store but many recipes, so the
+  // exclusion rule is deliberately conservative — see recipeExcluded() in
+  // GroceryListView. "Hide recipes" drops the chips AND the per-item recipe
+  // line but, unlike hideStores, does NOT null the active filter.
+  grocerySelectedRecipeIds: string[];
+  groceryExcludedRecipeIds: string[];
+  groceryHideRecipes: boolean;
   // Lists tab display preferences (synced per-user). `packingShowChecked` keeps
   // completed items visible at the bottom of their section; turning it off
   // hides them without touching their stored position. It is the DEFAULT —
@@ -105,6 +115,9 @@ export const DEFAULT_SETTINGS: Settings = {
   groceryGroupBy: 'category',
   groceryHideStores: false,
   grocerySortBy: 'manual',
+  grocerySelectedRecipeIds: [],
+  groceryExcludedRecipeIds: [],
+  groceryHideRecipes: false,
   packingShowChecked: true,
   packingShowCheckedOverrides: {},
   packingHideBags: false,

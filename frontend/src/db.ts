@@ -136,6 +136,10 @@ export interface LocalGroceryItem {
   global_position?: number;
   store_id: string | null;
   updated_at: string;
+  // Recipe Keeper attribution, carried straight through from the server.
+  // Optional for the same reason as global_position: older cached rows and
+  // locally-created items omit it. Not indexed — no schema bump needed.
+  recipes?: { id: string; title: string }[];
 }
 
 export interface LocalCalendarEvent {

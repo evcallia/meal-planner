@@ -467,12 +467,20 @@ function GroceryPage({
             ...(updates.selected !== undefined ? { grocerySelectedStoreIds: updates.selected } : {}),
             ...(updates.excluded !== undefined ? { groceryExcludedStoreIds: updates.excluded } : {}),
           })}
+          selectedRecipes={settings.grocerySelectedRecipeIds}
+          excludedRecipes={settings.groceryExcludedRecipeIds}
+          onRecipeFilterChange={(updates) => onUpdateSettings({
+            ...(updates.selected !== undefined ? { grocerySelectedRecipeIds: updates.selected } : {}),
+            ...(updates.excluded !== undefined ? { groceryExcludedRecipeIds: updates.excluded } : {}),
+          })}
           groupBy={settings.groceryGroupBy}
           hideStores={settings.groceryHideStores}
+          hideRecipes={settings.groceryHideRecipes}
           sortBy={settings.grocerySortBy}
           onUpdateDisplayPrefs={(updates) => onUpdateSettings({
             ...(updates.groupBy !== undefined ? { groceryGroupBy: updates.groupBy } : {}),
             ...(updates.hideStores !== undefined ? { groceryHideStores: updates.hideStores } : {}),
+            ...(updates.hideRecipes !== undefined ? { groceryHideRecipes: updates.hideRecipes } : {}),
             ...(updates.sortBy !== undefined ? { grocerySortBy: updates.sortBy } : {}),
           })}
         />

@@ -150,6 +150,7 @@ export function useGroceryList() {
       void Promise.resolve(saveLocalGroceryItems(sections.flatMap(s => s.items.map(i => ({
         id: i.id, section_id: i.section_id, name: i.name,
         quantity: i.quantity, checked: i.checked, position: i.position, global_position: i.global_position, store_id: i.store_id, updated_at: i.updated_at,
+        recipes: i.recipes ?? [],
       }))))).catch(() => {});
     }
   }, [sections]);
@@ -239,6 +240,7 @@ export function useGroceryList() {
           global_position: i.global_position,
           store_id: i.store_id,
           updated_at: i.updated_at,
+          recipes: i.recipes ?? [],
         })));
         grocerySessionLoaded = true;
       } catch { /* API failed — keep cached data */ }

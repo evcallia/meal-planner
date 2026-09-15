@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import { Store, ItemDefaultEntry } from '../types';
+import { createPortal } from 'react-dom';
+import { Store, ItemDefaultEntry, RecipeRef } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { StoreAutocomplete } from './StoreAutocomplete';
 import { ItemAutocomplete } from './ItemAutocomplete';
@@ -26,6 +27,9 @@ export interface ChecklistItem {
   quantity: string | null;
   checked: boolean;
   position: number;
+  // Grocery-only (Recipe Keeper attribution); Lists/Travel items never set
+  // this, so it's always absent there and the recipe line never renders.
+  recipes?: RecipeRef[];
 }
 
 export interface ChecklistSectionLike {
@@ -128,6 +132,115 @@ export function MenuRadioOption({ label, active, onClick }: { label: string; act
   );
 }
 
+// ----- recipe attribution line + all-recipes popover -----
+
+// Units on the item that aren't linked to any recipe (see CLAUDE.md "Recipe
+// Keeper Sync" — quantity is authoritative, links are a subset of it).
+// Rendered as a final unlabelled "No recipe (N)" row in the popover so the
+// count still adds up to the item's full quantity.
+function mpOnlyUnits(quantity: string | null, recipeCount: number): number {
+  const total = quantity ? (parseInt(quantity, 10) || 1) : 1;
+  return Math.max(0, total - recipeCount);
+}
+
+/**
+ * Secondary text under an item's name naming which recipe(s) it came from,
+ * truncated to two names plus "+N". Tapping opens a popover listing every
+ * recipe — required, not decorative, since truncation with no way to see the
+ * rest defeats the point of attribution.
+ *
+ * Portals to <body> with fixed coordinates rather than rendering inline:
+ * `.glass` gives every card its own stacking context (backdrop-filter does
+ * that), so a nested popover would paint under later sibling cards and the
+ * fixed bottom nav where it can't be tapped. Same pattern as the Lists-tab
+ * per-section menu (PackingListsView's SectionMenu).
+ */
+function RecipeLine({ recipes, quantity, hidden }: { recipes: RecipeRef[]; quantity: string | null; hidden?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+
+  const place = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const POPOVER_WIDTH = 240;
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - POPOVER_WIDTH - 8));
+    const POPOVER_MAX = 280;
+    if (window.innerHeight - rect.bottom < POPOVER_MAX) {
+      setPos({ bottom: window.innerHeight - rect.top + 6, left });
+    } else {
+      setPos({ top: rect.bottom + 6, left });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    place();
+    const onPointerDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (popRef.current?.contains(t) || buttonRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const reposition = () => place();
+    document.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [open, place]);
+
+  if (hidden || recipes.length === 0) return null;
+
+  const shown = recipes.slice(0, 2).map(r => r.title);
+  const extra = recipes.length - shown.length;
+  const label = shown.join(', ') + (extra > 0 ? ` +${extra}` : '');
+  const noRecipeCount = mpOnlyUnits(quantity, recipes.length);
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        data-testid="recipe-chip"
+        // The row's onClick starts rename editing — this must not bubble.
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        className="block max-w-full truncate text-left text-xs text-gray-400 dark:text-gray-500 leading-tight hover:text-gray-600 dark:hover:text-gray-300"
+      >
+        {label}
+      </button>
+      {open && pos && createPortal(
+        <div
+          ref={popRef}
+          data-testid="recipe-popover"
+          role="dialog"
+          style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left }}
+          className="z-[60] glass-menu rounded-lg py-1 min-w-[180px] max-w-[240px] max-h-[60vh] overflow-y-auto shadow-lg"
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+            Recipes
+          </div>
+          {recipes.map(r => (
+            <div key={r.id} className="px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 truncate">
+              {r.title}
+            </div>
+          ))}
+          {noRecipeCount > 0 && (
+            <div className="px-3 py-1.5 text-sm text-gray-400 dark:text-gray-500 border-t border-gray-200 dark:border-gray-700 mt-1 pt-1.5">
+              No recipe ({noRecipeCount})
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 // ----- item row -----
 
 export interface ChecklistItemRowProps {
@@ -154,6 +267,9 @@ export interface ChecklistItemRowProps {
   hideChips?: boolean;
   /** Lists let you fix a typo on an already-completed item; grocery doesn't. */
   allowEditWhenChecked?: boolean;
+  /** Grocery only: "Hide recipes" drops the per-item recipe line (and the
+   *  filter chips) without touching what's filtered. */
+  hideRecipes?: boolean;
 }
 
 export function ChecklistItemRow({
@@ -161,7 +277,7 @@ export function ChecklistItemRow({
   chips, chipId, onCreateChip, chipPlaceholder,
   editingItemId, onEditingItemChange, commitEditingRef,
   sectionName, allSections, onChangeSection, editHighlightColor,
-  hideChips = false, allowEditWhenChecked = false,
+  hideChips = false, allowEditWhenChecked = false, hideRecipes = false,
 }: ChecklistItemRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
@@ -439,6 +555,7 @@ export function ChecklistItemRow({
               {chipName}
             </div>
           )}
+          <RecipeLine recipes={item.recipes ?? []} quantity={item.quantity} hidden={hideRecipes} />
         </div>
 
         {/* Desktop delete button */}
@@ -499,6 +616,7 @@ export interface ChecklistSectionCardProps {
   hideChips?: boolean;
   itemDragEnabled?: boolean;
   allowEditWhenChecked?: boolean;
+  hideRecipes?: boolean;
   /** Replaces the default "N items" header label (Lists shows "3/7 completed"). */
   headerMeta?: React.ReactNode;
   /** Optional controls in the header, left of the count (Lists puts its
@@ -544,6 +662,7 @@ export function ChecklistSectionCard({
   hideChips = false,
   itemDragEnabled = true,
   allowEditWhenChecked = false,
+  hideRecipes = false,
   headerMeta,
   headerActions,
 }: ChecklistSectionCardProps) {
@@ -676,6 +795,7 @@ export function ChecklistSectionCard({
                   onChangeSection={onChangeSection}
                   hideChips={hideChips}
                   allowEditWhenChecked={allowEditWhenChecked}
+                  hideRecipes={hideRecipes}
                 />
               </div>
             );

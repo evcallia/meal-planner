@@ -63,6 +63,14 @@ export interface MealIdea {
   updated_at: string;
 }
 
+// Which recipe a Recipe Keeper-linked item came from. A collapsed grocery
+// row can carry several — Recipe Keeper stores one row per
+// recipe-ingredient occurrence, so e.g. "Lemon" may list six recipes.
+export interface RecipeRef {
+  id: string;
+  title: string;
+}
+
 export interface GroceryItem {
   id: string;
   section_id: string;
@@ -74,6 +82,10 @@ export interface GroceryItem {
   global_position: number;
   store_id: string | null;
   updated_at: string;
+  // Optional because it's absent on locally-created (not-yet-synced) items;
+  // the server always sends an array, never omits it or sends null. Treat
+  // undefined as [] everywhere.
+  recipes?: RecipeRef[];
 }
 
 export interface GrocerySection {

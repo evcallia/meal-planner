@@ -29,14 +29,43 @@ interface GroceryListViewProps {
   selectedStores?: string[];
   excludedStores?: string[];
   onStoreFilterChange?: (updates: { selected?: string[]; excluded?: string[] }) => void;
+  // Recipe filter chips (Recipe Keeper attribution) — same shape/home as the
+  // store filter above, kept as a separate pair of arrays since an item can
+  // carry several recipes at once (see recipeExcluded()/recipeSelected()).
+  selectedRecipes?: string[];
+  excludedRecipes?: string[];
+  onRecipeFilterChange?: (updates: { selected?: string[]; excluded?: string[] }) => void;
   // Display preferences (synced user settings). See useSettings.
-  groupBy?: 'category' | 'none';
+  groupBy?: 'category' | 'none' | 'recipe';
   hideStores?: boolean;
+  hideRecipes?: boolean;
   sortBy?: 'manual' | 'alphabetical';
-  onUpdateDisplayPrefs?: (updates: { groupBy?: 'category' | 'none'; hideStores?: boolean; sortBy?: 'manual' | 'alphabetical' }) => void;
+  onUpdateDisplayPrefs?: (updates: { groupBy?: 'category' | 'none' | 'recipe'; hideStores?: boolean; hideRecipes?: boolean; sortBy?: 'manual' | 'alphabetical' }) => void;
 }
 
 const EMPTY_FILTER: string[] = [];
+
+// Recipe filter semantics (see CLAUDE.md "Recipe Keeper Sync" / the design
+// doc's "Recipe filter chips" section). An item has one store but many
+// recipes, so the two directions are asymmetric:
+//   - selected: show the item if ANY of its recipes is selected
+//   - excluded: hide it only if EVERY recipe is excluded AND it has no
+//     non-recipe (MP-only) units — getting this backwards would silently
+//     hide items the user still has to buy, the one failure a shopping list
+//     must not have. Items with no recipe attribution are never affected by
+//     either rule; they always show.
+function recipeSelectedMatch(item: GrocerySection['items'][number], selected: Set<string>): boolean {
+  return (item.recipes ?? []).some(r => selected.has(r.id));
+}
+
+function recipeExcluded(item: GrocerySection['items'][number], excluded: Set<string>): boolean {
+  const recipes = item.recipes ?? [];
+  if (recipes.length === 0) return false;
+  if (!recipes.every(r => excluded.has(r.id))) return false;
+  const total = item.quantity ? (parseInt(item.quantity, 10) || 1) : 1;
+  const mpOnlyUnits = total - recipes.length;
+  return mpOnlyUnits <= 0;
+}
 
 export function GroceryListView({
   compactView: _compactView,
@@ -44,8 +73,12 @@ export function GroceryListView({
   selectedStores = EMPTY_FILTER,
   excludedStores = EMPTY_FILTER,
   onStoreFilterChange,
+  selectedRecipes = EMPTY_FILTER,
+  excludedRecipes = EMPTY_FILTER,
+  onRecipeFilterChange,
   groupBy = 'category',
   hideStores = false,
+  hideRecipes = false,
   sortBy = 'manual',
   onUpdateDisplayPrefs,
 }: GroceryListViewProps) {
@@ -137,6 +170,41 @@ export function GroceryListView({
   const sectionDropdownRef = useRef<HTMLDivElement>(null);
   const quickAddItemRef = useRef<HTMLInputElement>(null);
 
+  // Recipe filter chips (Recipe Keeper attribution). Unlike the store
+  // filter, "hide recipes" does NOT null these out — see groceryHideRecipes
+  // in useSettings.ts — so no `activeSelected/ExcludedRecipeIds` indirection
+  // is needed here; the raw sets are always the active ones.
+  const selectedRecipeIds = useMemo(() => new Set(selectedRecipes), [selectedRecipes]);
+  const excludedRecipeIds = useMemo(() => new Set(excludedRecipes), [excludedRecipes]);
+  const onRecipeFilterChangeRef = useRef(onRecipeFilterChange);
+  onRecipeFilterChangeRef.current = onRecipeFilterChange;
+
+  const handleToggleSelectRecipe = useCallback((recipeId: string) => {
+    const next = new Set(selectedRecipeIds);
+    if (next.has(recipeId)) {
+      next.delete(recipeId);
+    } else {
+      next.add(recipeId);
+    }
+    onRecipeFilterChangeRef.current?.({ selected: [...next] });
+  }, [selectedRecipeIds]);
+
+  const handleExcludeRecipe = useCallback((recipeId: string) => {
+    const updates: { selected?: string[]; excluded?: string[] } = {
+      excluded: [...new Set(excludedRecipeIds).add(recipeId)],
+    };
+    if (selectedRecipeIds.has(recipeId)) {
+      updates.selected = [...selectedRecipeIds].filter(id => id !== recipeId);
+    }
+    onRecipeFilterChangeRef.current?.(updates);
+  }, [selectedRecipeIds, excludedRecipeIds]);
+
+  const handleRemoveRecipeExclusion = useCallback((recipeId: string) => {
+    onRecipeFilterChangeRef.current?.({
+      excluded: [...excludedRecipeIds].filter(id => id !== recipeId),
+    });
+  }, [excludedRecipeIds]);
+
   const storeCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const section of sections) {
@@ -150,6 +218,51 @@ export function GroceryListView({
     }
     return counts;
   }, [sections]);
+
+  // Recipe chips + counts — derived from item data rather than a fetched
+  // entity list (recipes aren't a first-class table, just attribution
+  // embedded on grocery items). An item can count toward several recipes at
+  // once, unlike stores.
+  const recipeCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const section of sections) {
+      for (const item of section.items) {
+        if (item.checked) continue;
+        for (const r of item.recipes ?? []) {
+          counts.set(r.id, (counts.get(r.id) ?? 0) + 1);
+        }
+      }
+    }
+    return counts;
+  }, [sections]);
+
+  const recipeChips = useMemo(() => {
+    const titles = new Map<string, string>();
+    for (const section of sections) {
+      for (const item of section.items) {
+        for (const r of item.recipes ?? []) {
+          if (!titles.has(r.id)) titles.set(r.id, r.title);
+        }
+      }
+    }
+    return [...titles.entries()]
+      .sort((a, b) => a[1].localeCompare(b[1]))
+      .map(([id, name], position) => ({ id, name, position }));
+  }, [sections]);
+
+  const visibleRecipeChips = useMemo(() => recipeChips.filter(c =>
+    (recipeCounts.get(c.id) ?? 0) > 0 || excludedRecipeIds.has(c.id)
+  ), [recipeChips, recipeCounts, excludedRecipeIds]);
+
+  // Auto-deselect recipes that no longer have unchecked items — mirrors the
+  // store auto-deselect above, same `loading` guard for the same reason.
+  useEffect(() => {
+    if (loading || selectedRecipeIds.size === 0) return;
+    const next = [...selectedRecipeIds].filter(id => (recipeCounts.get(id) ?? 0) > 0);
+    if (next.length !== selectedRecipeIds.size) {
+      onRecipeFilterChangeRef.current?.({ selected: next });
+    }
+  }, [loading, recipeCounts, selectedRecipeIds]);
 
   const filteredSections = useMemo(() => {
     const all = sections
@@ -240,6 +353,21 @@ export function GroceryListView({
         .filter(s => s.items.length > 0);
     }
 
+    // 3. Recipe filter — same two-phase exclude-then-select shape as the
+    // store filter above, but with the asymmetric semantics documented on
+    // recipeExcluded()/recipeSelectedMatch(). Deliberately NOT gated on
+    // hideRecipes: hiding the chips/label must not change what's filtered.
+    if (excludedRecipeIds.size > 0) {
+      filtered = filtered
+        .map(s => ({ ...s, items: s.items.filter(i => !recipeExcluded(i, excludedRecipeIds)) }))
+        .filter(s => s.items.some(i => !i.checked));
+    }
+    if (selectedRecipeIds.size > 0) {
+      filtered = filtered
+        .map(s => ({ ...s, items: s.items.filter(i => !i.checked && recipeSelectedMatch(i, selectedRecipeIds)) }))
+        .filter(s => s.items.length > 0);
+    }
+
     const effectiveSortByStore = sortByStore && !hideStores;
     if (sortBy === 'alphabetical' || effectiveSortByStore) {
       const storeOrder = new Map(stores.map(s => [s.id, s.position]));
@@ -255,7 +383,7 @@ export function GroceryListView({
       }));
     }
     return filtered;
-  }, [sections, activeSelectedStoreIds, activeExcludedStoreIds, sortByStore, stores, sortBy, hideStores]);
+  }, [sections, activeSelectedStoreIds, activeExcludedStoreIds, selectedRecipeIds, excludedRecipeIds, sortByStore, stores, sortBy, hideStores]);
 
   // "Group by: none" — one flat list of every unchecked item across the
   // (already filtered/sorted) visible sections. Items keep their section
@@ -277,6 +405,39 @@ export function GroceryListView({
     }
     return rows;
   }, [visibleSections, sortBy]);
+
+  // "Group by: recipe" — one card per recipe listing every unchecked item
+  // attributed to it. A collapsed item appears under EVERY recipe it belongs
+  // to (checking it anywhere checks it everywhere — it's one item), so this
+  // is read/check-focused rather than reorderable: the same item can appear
+  // more than once, which would make "position" ambiguous. Items with no
+  // recipe attribution group under "No recipe", sorted last.
+  const NO_RECIPE_GROUP_ID = '__no_recipe__';
+  const recipeGroups = useMemo(() => {
+    if (groupBy !== 'recipe') return [];
+    type Row = { item: GrocerySection['items'][number]; sectionName: string };
+    const byRecipe = new Map<string, { title: string; rows: Row[] }>();
+    const noRecipeRows: Row[] = [];
+    for (const s of visibleSections) {
+      for (const item of s.items) {
+        if (item.checked) continue;
+        const recipes = item.recipes ?? [];
+        if (recipes.length === 0) {
+          noRecipeRows.push({ item, sectionName: s.name });
+          continue;
+        }
+        for (const r of recipes) {
+          if (!byRecipe.has(r.id)) byRecipe.set(r.id, { title: r.title, rows: [] });
+          byRecipe.get(r.id)!.rows.push({ item, sectionName: s.name });
+        }
+      }
+    }
+    const groups = [...byRecipe.entries()]
+      .map(([id, { title, rows }]) => ({ id, title, rows }))
+      .sort((a, b) => a.title.localeCompare(b.title));
+    if (noRecipeRows.length > 0) groups.push({ id: NO_RECIPE_GROUP_ID, title: 'No recipe', rows: noRecipeRows });
+    return groups;
+  }, [visibleSections, groupBy]);
 
   // Manual drag reorder only makes sense with the natural (manual) item order.
   const itemDragEnabled = sortBy === 'manual';
@@ -955,6 +1116,13 @@ export function GroceryListView({
                       active={groupBy === 'none'}
                       onClick={() => onUpdateDisplayPrefs?.({ groupBy: 'none' })}
                     />
+                    {recipeChips.length > 0 && (
+                      <MenuRadioOption
+                        label="Recipe"
+                        active={groupBy === 'recipe'}
+                        onClick={() => onUpdateDisplayPrefs?.({ groupBy: 'recipe' })}
+                      />
+                    )}
                     <div className="px-4 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">Sort by</div>
                     <MenuRadioOption
                       label="Manually"
@@ -973,6 +1141,14 @@ export function GroceryListView({
                     >
                       {hideStores ? 'Show stores' : 'Hide stores'}
                     </button>
+                    {recipeChips.length > 0 && (
+                      <button
+                        onClick={() => { onUpdateDisplayPrefs?.({ hideRecipes: !hideRecipes }); setShowClearMenu(false); }}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        {hideRecipes ? 'Show recipes' : 'Hide recipes'}
+                      </button>
+                    )}
                     <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
                     <button
                       onClick={handleClearAll}
@@ -985,8 +1161,8 @@ export function GroceryListView({
               </div>
             )}
 
-            {/* Chevron toggle for store chips */}
-            {visibleStores.length > 0 && !hideStores && (
+            {/* Chevron toggle for store/recipe chips */}
+            {((visibleStores.length > 0 && !hideStores) || (visibleRecipeChips.length > 0 && !hideRecipes)) && (
               <button
                 onClick={() => { const next = !toolbarExpanded; setToolbarExpanded(next); try { localStorage.setItem('meal-planner-toolbar-expanded', String(next)); } catch {} }}
                 className="relative p-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
@@ -995,7 +1171,7 @@ export function GroceryListView({
                 <svg className={`w-4 h-4 transition-transform ${toolbarExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
-                {!toolbarExpanded && (selectedStoreIds.size > 0 || excludedStoreIds.size > 0) && (
+                {!toolbarExpanded && (selectedStoreIds.size > 0 || excludedStoreIds.size > 0 || selectedRecipeIds.size > 0 || excludedRecipeIds.size > 0) && (
                   <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500" />
                 )}
               </button>
@@ -1018,6 +1194,23 @@ export function GroceryListView({
           onExclude={handleExclude}
           storeCounts={storeCounts}
           noneCount={storeCounts.get(NONE_STORE_ID) ?? 0}
+        />
+      )}
+
+      {/* Recipe filter bar — collapsible, same toolbar toggle as stores */}
+      {toolbarExpanded && !hideRecipes && visibleRecipeChips.length > 0 && (
+        <StoreFilterBar
+          stores={visibleRecipeChips}
+          selectedStoreIds={selectedRecipeIds}
+          excludedStoreIds={excludedRecipeIds}
+          onToggleSelect={handleToggleSelectRecipe}
+          onRemoveExclusion={handleRemoveRecipeExclusion}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onReorder={() => {}}
+          onExclude={handleExcludeRecipe}
+          storeCounts={recipeCounts}
+          editable={false}
         />
       )}
       </div>
@@ -1058,10 +1251,52 @@ export function GroceryListView({
                     editHighlightColor={editHighlightColor}
                     onChangeSection={handleChangeItemSection}
                     hideChips={hideStores}
+                    hideRecipes={hideRecipes}
                   />
                 </div>
               );
             })}
+          </div>
+        )
+      ) : groupBy === 'recipe' ? (
+        /* Group by "recipe" — one card per recipe; a collapsed item appears
+           under every recipe it belongs to. Read/check-focused, not
+           reorderable (see recipeGroups above for why). */
+        recipeGroups.length > 0 && (
+          <div className="mt-4 space-y-4" data-testid="recipe-groups">
+            {recipeGroups.map(group => (
+              <div key={group.id} className="glass rounded-lg" data-testid="recipe-group">
+                <div className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 rounded-t-lg">
+                  <h3 className="font-semibold text-gray-900 dark:text-gray-100 text-sm">{group.title}</h3>
+                  <span className="text-gray-400 dark:text-gray-500 text-xs">
+                    {group.rows.length} item{group.rows.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+                <div className="py-1">
+                  {group.rows.map(({ item, sectionName }) => (
+                    <ChecklistItemRow
+                      key={`${group.id}-${item.id}`}
+                      item={item}
+                      onToggle={toggleItem}
+                      onDelete={deleteItem}
+                      onEdit={editItem}
+                      chips={stores}
+                      chipId={item.store_id}
+                      onCreateChip={createStore}
+                      editingItemId={editingItemId}
+                      onEditingItemChange={handleEditingItemChange}
+                      commitEditingRef={commitEditingRef}
+                      sectionName={sectionName}
+                      allSections={sections}
+                      editHighlightColor={editHighlightColor}
+                      onChangeSection={handleChangeItemSection}
+                      hideChips={hideStores}
+                      hideRecipes={hideRecipes}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         )
       ) : (
@@ -1117,6 +1352,7 @@ export function GroceryListView({
                 editHighlightColor={editHighlightColor}
                 onChangeSection={handleChangeItemSection}
                 hideChips={hideStores}
+                hideRecipes={hideRecipes}
                 itemDragEnabled={itemDragEnabled}
               />
             </div>
@@ -1150,6 +1386,7 @@ export function GroceryListView({
                 editHighlightColor={editHighlightColor}
                 onChangeSection={handleChangeItemSection}
                 hideChips={hideStores}
+                hideRecipes={hideRecipes}
               />
             ))}
           </div>

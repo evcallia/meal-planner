@@ -14,9 +14,14 @@ interface StoreFilterBarProps {
   onExclude: (storeId: string) => void;
   storeCounts?: Map<string, number>;
   noneCount?: number;
+  /** False for chips that aren't user-managed entities (e.g. recipe filter
+   *  chips, derived from grocery items rather than a stores table): the
+   *  long-press popover then offers only exclude/include, no rename input or
+   *  Delete button. Defaults true (stores, packing bags). */
+  editable?: boolean;
 }
 
-export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onToggleSelect, onRemoveExclusion, onRename, onDelete, onReorder, onExclude, storeCounts, noneCount = 0 }: StoreFilterBarProps) {
+export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onToggleSelect, onRemoveExclusion, onRename, onDelete, onReorder, onExclude, storeCounts, noneCount = 0, editable = true }: StoreFilterBarProps) {
   const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -386,7 +391,7 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
       {editingStoreId && (
         <div className="absolute top-full left-0 right-0 mt-1 z-50">
           <div className="glass-menu rounded-lg p-3 mx-2">
-            {editingStoreId !== NONE_STORE_ID && (
+            {editable && editingStoreId !== NONE_STORE_ID && (
               <input
                 type="text"
                 value={editName}
@@ -411,7 +416,7 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
                 Exclude from list
               </button>
             )}
-            {editingStoreId === NONE_STORE_ID ? (
+            {editingStoreId === NONE_STORE_ID || !editable ? (
               <button onClick={() => setEditingStoreId(null)} className="w-full text-left text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
                 Cancel
               </button>
