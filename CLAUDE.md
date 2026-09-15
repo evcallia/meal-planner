@@ -79,7 +79,9 @@ docker compose down        # NEVER -v
 - `docker-compose-dev.override.yml` is **gitignored and deployment-specific** (matched by `docker-compose*.override.yml` in `.gitignore`). It puts the app on the external `proxy`/`external` networks and adds the Traefik labels routing `meal-planner-dev.evancallia.com` over `websecure` with the `le-dns` cert resolver. It lives in the main worktree; copy it into a new worktree to bring the dev stack up there (see "First run in a fresh worktree" above)
 - Because it's served over real TLS at that hostname, `SECURE_COOKIES=true` and the real Authelia OIDC both work unchanged — no tunnel or password-auth workarounds needed. `FRONTEND_URL` and `OIDC_REDIRECT_URI` in `.env` already point there
 - `/api/auth/dev-login` is registered ONLY when OIDC is unset AND `FRONTEND_URL` is localhost (see Preview / Local Dev Auth below), so it's unavailable on the dev stack — sign in through Authelia
-- Compose project name comes from the directory, so a worktree gets its own containers/volumes (`recipe-keeper-app-1`, `recipe-keeper-db-1`) — isolated from both prod and the main worktree's dev stack. Only one instance can hold the `meal-planner-dev` Traefik router or host port 5432 at a time
+- **`COMPOSE_PROJECT_NAME=meal-planner` must be set in `.env`** so every worktree attaches the SAME dev containers and volume (`meal-planner_postgres_data`) as the main checkout. Without it, compose derives the project name from the directory instead, and a worktree comes up **healthy against a brand-new empty database** — which reads as data loss and is easy to misdiagnose as a legitimate first-run import
+- Prod isolation is a separate, unaffected concern: prod is the `meal-planner` container behind `meal-planner.evancallia.com` plus `shared-postgres`, which the dev stack never touches regardless of compose project name
+- Only one dev stack can hold the `meal-planner-dev` Traefik router or host port 5432 at a time
 
 ## Go Backend (backend/)
 The backend is a Go rewrite of the original FastAPI app (same API contract). Layout:

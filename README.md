@@ -126,6 +126,21 @@ npm run dev
 
 The frontend will be available at http://localhost:5173 (proxies API requests to backend)
 
+### Dev Deployment (persistent stack over real TLS)
+
+For a longer-lived dev stack — including running from a git worktree — bring it up with:
+
+```bash
+docker compose up -d --build
+```
+
+`.env` sets `COMPOSE_FILE=docker-compose-dev.yml:docker-compose-dev.override.yml`, so plain `docker compose` chains both files automatically; no `-f` flags needed.
+
+- **Set `COMPOSE_PROJECT_NAME=meal-planner` in `.env`.** Docker Compose otherwise derives its project name from the current directory, and a git worktree has a different directory name than the main checkout — so without this it silently creates its own brand-new, empty database volume instead of attaching the existing one. Symptom if it's missing: the app comes up healthy, but all your data appears to be gone — an empty database is indistinguishable from a legitimate first-run import.
+- `docker-compose-dev.override.yml` is gitignored and deployment-specific (Traefik labels plus the external `proxy`/`external` networks). It must be copied into a new worktree for the dev stack to route there — it isn't checked into git by design.
+- This stack is served over real TLS at its own hostname (e.g. `meal-planner-dev.yourdomain.com`), so normal OIDC login works unchanged — it's how the app actually gets tested on mobile devices.
+- **Rebuild after any frontend change.** The Docker image bakes in the already-built frontend, so `docker compose up -d --build` is required to pick up UI changes — without `--build` you're testing whatever frontend was baked in last.
+
 ### Testing with ngrok/tunnels
 
 To test on mobile devices or share your local dev server via ngrok:
