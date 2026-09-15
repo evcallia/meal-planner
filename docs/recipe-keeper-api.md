@@ -303,6 +303,23 @@ This applies to every bucket independently — the category buckets ride along i
 the same request and are just as capable of paginating, even though they are
 normally small.
 
+**Corollary — `MaxLastModified` must never be used as the PAGE CURSOR either,
+only as the final persisted watermark.** Draining correctly means each request
+after the first must carry a watermark that actually advances past the page
+just received: the value to send is the **last entity's own `LastModified`
+field** (the last element of that page's `UpdatedServerItems`), never the
+response's `MaxLastModified`. Sending the global value as the next request's
+watermark reproduces the exact same bug the drain loop above exists to
+prevent, just one request later: since `MaxLastModified` is already "now", the
+very next request asks for changes after now, gets back an empty page with
+`HasMoreUpdatedServerItems: false`, and the loop concludes it has drained
+everything after only page 1. Verified against the live API on an account with
+22,800 pending entities: cursoring by the last entity's `LastModified` yields
+the correct 3 pages (10000 / 10000 / 2800); cursoring by `MaxLastModified`
+yields 1. Only once `HasMoreUpdatedServerItems` is `false` does
+`MaxLastModified` become safe to use — at that point it and the last entity's
+`LastModified` are (by construction) the same watermark going forward.
+
 ## Entity catalog
 
 Twelve buckets: `Recipe`, `ShoppingList`, `ShoppingListItem`, `ShoppingListCategory`,

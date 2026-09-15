@@ -110,6 +110,38 @@ type Service struct {
 	noListLogged bool
 }
 
+// lastItemLastModified returns the LastModified of the LAST entity in a page
+// of ShoppingListItem results, used to advance that bucket's page cursor.
+// Must never be confused with a response's MaxLastModified — see the comment
+// where this is called.
+func lastItemLastModified(items []ShoppingListItem) (string, bool) {
+	if len(items) == 0 {
+		return "", false
+	}
+	last := items[len(items)-1]
+	if last.LastModified == nil || *last.LastModified == "" {
+		return "", false
+	}
+	return *last.LastModified, true
+}
+
+// lastRawLastModified returns the LastModified of the LAST entity in a page
+// of raw (unmodeled) bucket results, used to advance that bucket's page
+// cursor. Must never be confused with a response's MaxLastModified — see the
+// comment where this is called.
+func lastRawLastModified(items []json.RawMessage) (string, bool) {
+	if len(items) == 0 {
+		return "", false
+	}
+	var entity struct {
+		LastModified string `json:"LastModified"`
+	}
+	if err := json.Unmarshal(items[len(items)-1], &entity); err != nil || entity.LastModified == "" {
+		return "", false
+	}
+	return entity.LastModified, true
+}
+
 // SyncOnce performs one pull/apply/push cycle: shopping-list items (the only
 // bucket this integration ever pushes to) plus the two category buckets that
 // feed initial section placement for newly-imported items. The Recipe bucket
@@ -228,12 +260,19 @@ func (s *Service) SyncOnce(ctx context.Context) error {
 					setState(s.DB, stateWatermarkCategory, catsResp.MaxLastModified)
 				}
 				catDone = true
-			case catsResp.MaxLastModified == "" || catsResp.MaxLastModified == wmCat:
-				err := fmt.Errorf("recipekeeper: category sync stalled at watermark %q (HasMoreUpdatedServerItems but MaxLastModified did not advance)", wmCat)
-				s.recordError(err)
-				return err
 			default:
-				wmCat = catsResp.MaxLastModified
+				// Advance by the LAST ENTITY's LastModified, never by MaxLastModified:
+				// the server returns MaxLastModified as its GLOBAL newest change ("now"),
+				// so using it as a cursor asks for changes after now, gets an empty page,
+				// and silently ends the drain after page 1. Verified live: correct
+				// cursoring yields 3 pages / 22.8k entities where this yielded 1.
+				next, ok := lastRawLastModified(catsResp.UpdatedServerItems)
+				if !ok || next == wmCat {
+					err := fmt.Errorf("recipekeeper: category sync stalled at watermark %q (HasMoreUpdatedServerItems but next cursor did not advance)", wmCat)
+					s.recordError(err)
+					return err
+				}
+				wmCat = next
 			}
 		}
 
@@ -247,12 +286,19 @@ func (s *Service) SyncOnce(ctx context.Context) error {
 					setState(s.DB, stateWatermarkCatItem, catItemsResp.MaxLastModified)
 				}
 				catItemDone = true
-			case catItemsResp.MaxLastModified == "" || catItemsResp.MaxLastModified == wmCatItem:
-				err := fmt.Errorf("recipekeeper: category-item sync stalled at watermark %q (HasMoreUpdatedServerItems but MaxLastModified did not advance)", wmCatItem)
-				s.recordError(err)
-				return err
 			default:
-				wmCatItem = catItemsResp.MaxLastModified
+				// Advance by the LAST ENTITY's LastModified, never by MaxLastModified:
+				// the server returns MaxLastModified as its GLOBAL newest change ("now"),
+				// so using it as a cursor asks for changes after now, gets an empty page,
+				// and silently ends the drain after page 1. Verified live: correct
+				// cursoring yields 3 pages / 22.8k entities where this yielded 1.
+				next, ok := lastRawLastModified(catItemsResp.UpdatedServerItems)
+				if !ok || next == wmCatItem {
+					err := fmt.Errorf("recipekeeper: category-item sync stalled at watermark %q (HasMoreUpdatedServerItems but next cursor did not advance)", wmCatItem)
+					s.recordError(err)
+					return err
+				}
+				wmCatItem = next
 			}
 		}
 
@@ -284,12 +330,19 @@ func (s *Service) SyncOnce(ctx context.Context) error {
 						setState(s.DB, stateWatermarkItem, bucket.MaxLastModified)
 					}
 					itemDone = true
-				} else if bucket.MaxLastModified == "" || bucket.MaxLastModified == wm {
-					err := fmt.Errorf("recipekeeper: item sync stalled at watermark %q (HasMoreUpdatedServerItems but MaxLastModified did not advance)", wm)
-					s.recordError(err)
-					return err
 				} else {
-					wm = bucket.MaxLastModified
+					// Advance by the LAST ENTITY's LastModified, never by MaxLastModified:
+					// the server returns MaxLastModified as its GLOBAL newest change ("now"),
+					// so using it as a cursor asks for changes after now, gets an empty page,
+					// and silently ends the drain after page 1. Verified live: correct
+					// cursoring yields 3 pages / 22.8k entities where this yielded 1.
+					next, ok := lastItemLastModified(bucket.UpdatedServerItems)
+					if !ok || next == wm {
+						err := fmt.Errorf("recipekeeper: item sync stalled at watermark %q (HasMoreUpdatedServerItems but next cursor did not advance)", wm)
+						s.recordError(err)
+						return err
+					}
+					wm = next
 				}
 			}
 		}
@@ -341,13 +394,16 @@ func (s *Service) SyncRecipes(ctx context.Context) error {
 			}
 			return nil
 		}
-		// The server claims more pages exist; the watermark must actually
-		// advance, or the next iteration would just re-request this same
-		// page forever.
-		if bucket.MaxLastModified == "" || bucket.MaxLastModified == wm {
-			return fmt.Errorf("recipekeeper: recipe sync stalled at watermark %q (HasMoreUpdatedServerItems but MaxLastModified did not advance)", wm)
+		// Advance by the LAST ENTITY's LastModified, never by MaxLastModified:
+		// the server returns MaxLastModified as its GLOBAL newest change ("now"),
+		// so using it as a cursor asks for changes after now, gets an empty page,
+		// and silently ends the drain after page 1. Verified live: correct
+		// cursoring yields 3 pages / 22.8k entities where this yielded 1.
+		next, ok := lastRawLastModified(bucket.UpdatedServerItems)
+		if !ok || next == wm {
+			return fmt.Errorf("recipekeeper: recipe sync stalled at watermark %q (HasMoreUpdatedServerItems but next cursor did not advance)", wm)
 		}
-		wm = bucket.MaxLastModified
+		wm = next
 		setState(s.DB, stateWatermarkRecipe, wm)
 	}
 	return fmt.Errorf("recipekeeper: recipe sync aborted after %d pages without finishing", maxRecipeSyncPages)

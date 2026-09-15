@@ -836,6 +836,11 @@ func TestSyncOncePushesLocalChangesOnFirstPageOnly(t *testing.T) {
 			page1IDs = len(req.ShoppingListItem.LocalChangesIds)
 			_ = json.NewEncoder(w).Encode(SyncResponse{
 				ShoppingListItem: &ItemBucketResponse{
+					// A page's cursor now advances by its LAST ENTITY's
+					// LastModified, so a page claiming more must carry at
+					// least one entity or the drain has nothing to advance
+					// by.
+					UpdatedServerItems:        []ShoppingListItem{rkItem("srv-x", "Ginger")},
 					HasMoreUpdatedServerItems: true,
 					MaxLastModified:           "2026-09-14T00:00:00.0000001Z",
 				},
@@ -922,3 +927,297 @@ func TestSyncOnceStallGuardTripsWhenWatermarkNeverAdvances(t *testing.T) {
 		t.Errorf("err = %v, want a stall-guard error", err)
 	}
 }
+
+// farFutureMaxLastModified mimics the real server's response shape: every
+// page of a drain reports the SAME global "now" value, no matter which page
+// of entities it is actually returning. A cursor that (wrongly) advances by
+// this value would ask for changes after "now" on the very next request and
+// get back an empty page — which is exactly the bug this fix corrects.
+const farFutureMaxLastModified = "2099-01-01T00:00:00.0000000Z"
+
+// TestSyncOnceItemBucketAdvancesCursorByLastEntityNotGlobalMax proves the item
+// bucket's page cursor is the LAST ENTITY's LastModified, not the response's
+// MaxLastModified. The fake server below is keyed on the incoming cursor: it
+// only reveals page 2/3 when asked with the correct per-entity cursor, and
+// falls back to an (empty, done) page for any other request — exactly what
+// the live API does when asked for changes after "now". Against the unfixed
+// code (which advances by the constant MaxLastModified), this must fail: it
+// would send that same far-future value on request 2, match the fallback
+// branch, and stop having applied only page 1.
+func TestSyncOnceItemBucketAdvancesCursorByLastEntityNotGlobalMax(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	const t1 = "2026-09-14T00:00:00.0000001Z"
+	const t2 = "2026-09-14T00:00:01.0000001Z"
+	const t3 = "2026-09-14T00:00:02.0000001Z"
+
+	var itemCalls int32
+	var requestedWMs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		var req SyncRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Recipe != nil {
+			// Background recipe-title cache warm-up, unrelated to this test.
+			_ = json.NewEncoder(w).Encode(SyncResponse{})
+			return
+		}
+		atomic.AddInt32(&itemCalls, 1)
+		got := req.ShoppingListItem.MaxLastModified
+		requestedWMs = append(requestedWMs, got)
+
+		var page []ShoppingListItem
+		hasMore := true
+		switch got {
+		case epochWatermark:
+			page = []ShoppingListItem{rkItem("srv-1", "Cilantro", func(i *ShoppingListItem) { i.LastModified = ptr(t1) })}
+		case t1:
+			page = []ShoppingListItem{rkItem("srv-2", "Basil", func(i *ShoppingListItem) { i.LastModified = ptr(t2) })}
+		case t2:
+			page = []ShoppingListItem{rkItem("srv-3", "Ginger", func(i *ShoppingListItem) { i.LastModified = ptr(t3) })}
+			hasMore = false
+		default:
+			// Any other cursor (in particular, the buggy code's far-future
+			// global value) gets treated the way the live API treats a
+			// request for changes after "now": nothing more to give.
+			hasMore = false
+		}
+		_ = json.NewEncoder(w).Encode(SyncResponse{
+			ShoppingListItem: &ItemBucketResponse{
+				UpdatedServerItems:        page,
+				HasMoreUpdatedServerItems: hasMore,
+				MaxLastModified:           farFutureMaxLastModified,
+			},
+		})
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	if err := svc.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce: %v", err)
+	}
+
+	if got := atomic.LoadInt32(&itemCalls); got != 3 {
+		t.Fatalf("item sync calls = %d, want 3 (drain must follow the real per-page cursor, not the global MaxLastModified)", got)
+	}
+	for _, name := range []string{"Cilantro", "Basil", "Ginger"} {
+		if itemByName(t, db, name, false) == nil {
+			t.Errorf("%s was not applied — its page was never reached", name)
+		}
+	}
+
+	// Request 2 must carry page 1's LAST ENTITY's LastModified (t1), never
+	// the global MaxLastModified the server reported alongside it.
+	if len(requestedWMs) < 3 {
+		t.Fatalf("requestedWMs = %v, want at least 3 entries", requestedWMs)
+	}
+	if requestedWMs[1] != t1 {
+		t.Errorf("request 2 watermark = %q, want %q (page 1's last entity), not the global MaxLastModified %q", requestedWMs[1], t1, farFutureMaxLastModified)
+	}
+	if requestedWMs[2] != t2 {
+		t.Errorf("request 3 watermark = %q, want %q (page 2's last entity)", requestedWMs[2], t2)
+	}
+
+	// The watermark persists only once the drain finishes, and then it is the
+	// FINAL response's MaxLastModified (the completed-drain persist path is
+	// unchanged by this fix).
+	if got := getState(db, stateWatermarkItem, ""); got != farFutureMaxLastModified {
+		t.Errorf("persisted watermark = %q, want the final response's MaxLastModified %q", got, farFutureMaxLastModified)
+	}
+}
+
+// TestSyncOnceItemStallGuardTripsOnLastEntityMatchingCursor proves the stall
+// guard compares the newly computed cursor (the page's last entity) against
+// the CURRENT cursor, not the global MaxLastModified. A server that reports a
+// constantly-advancing global MaxLastModified while its last entity never
+// moves past the current cursor is still a stall — and must be caught on the
+// very first offending page, not several rounds later (or never, if the
+// global value keeps moving).
+func TestSyncOnceItemStallGuardTripsOnLastEntityMatchingCursor(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var itemCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		var req SyncRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Recipe != nil {
+			_ = json.NewEncoder(w).Encode(SyncResponse{})
+			return
+		}
+		atomic.AddInt32(&itemCalls, 1)
+		// The last (only) entity's LastModified equals the epoch watermark
+		// this request was sent with — no real progress — while the global
+		// MaxLastModified keeps claiming a far-future "now".
+		lm := epochWatermark
+		_ = json.NewEncoder(w).Encode(SyncResponse{
+			ShoppingListItem: &ItemBucketResponse{
+				UpdatedServerItems:        []ShoppingListItem{rkItem("srv-1", "Cilantro", func(i *ShoppingListItem) { i.LastModified = ptr(lm) })},
+				HasMoreUpdatedServerItems: true,
+				MaxLastModified:           farFutureMaxLastModified,
+			},
+		})
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	err := svc.SyncOnce(context.Background())
+	if err == nil {
+		t.Fatal("want a stall error")
+	}
+	if !strings.Contains(err.Error(), "stalled") {
+		t.Errorf("err = %v, want a stall-guard error", err)
+	}
+	if got := atomic.LoadInt32(&itemCalls); got != 1 {
+		t.Errorf("item sync calls = %d, want 1 — the stall must be caught on the first offending page by comparing against the real cursor, not several rounds later against the ever-advancing global MaxLastModified", got)
+	}
+}
+
+// TestSyncOnceCategoryBucketAdvancesCursorByLastEntityNotGlobalMax is the
+// RawBucket equivalent of the item-bucket test above: category entities
+// arrive as json.RawMessage, so the cursor must be read out of the last raw
+// entity's own LastModified field rather than the bucket response's global
+// MaxLastModified.
+func TestSyncOnceCategoryBucketAdvancesCursorByLastEntityNotGlobalMax(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	const t1 = "2026-09-14T00:00:00.0000001Z"
+	const t2 = "2026-09-14T00:00:01.0000001Z"
+
+	var catCalls int32
+	var requestedWMs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		var req SyncRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Recipe != nil {
+			_ = json.NewEncoder(w).Encode(SyncResponse{})
+			return
+		}
+		atomic.AddInt32(&catCalls, 1)
+		got := req.ShoppingListCategory.MaxLastModified
+		requestedWMs = append(requestedWMs, got)
+
+		var page []json.RawMessage
+		hasMore := true
+		switch got {
+		case epochWatermark:
+			page = []json.RawMessage{json.RawMessage(`{"Id":"cat-1","Name":"Produce","IsDeleted":false,"LastModified":"` + t1 + `"}`)}
+		case t1:
+			page = []json.RawMessage{json.RawMessage(`{"Id":"cat-2","Name":"Dairy","IsDeleted":false,"LastModified":"` + t2 + `"}`)}
+			hasMore = false
+		default:
+			hasMore = false
+		}
+		_ = json.NewEncoder(w).Encode(SyncResponse{
+			ShoppingListCategory: &RawBucketResponse{
+				UpdatedServerItems:        page,
+				HasMoreUpdatedServerItems: hasMore,
+				MaxLastModified:           farFutureMaxLastModified,
+			},
+		})
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	if err := svc.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce: %v", err)
+	}
+	if got := atomic.LoadInt32(&catCalls); got != 2 {
+		t.Fatalf("category sync calls = %d, want 2 (drain must follow the real per-page cursor, not the global MaxLastModified)", got)
+	}
+	if len(requestedWMs) < 2 || requestedWMs[1] != t1 {
+		t.Errorf("request 2 watermark = %v, want %q (page 1's last raw entity), not the global MaxLastModified %q", requestedWMs, t1, farFutureMaxLastModified)
+	}
+	if got := getState(db, stateWatermarkCategory, ""); got != farFutureMaxLastModified {
+		t.Errorf("persisted category watermark = %q, want the final response's MaxLastModified %q", got, farFutureMaxLastModified)
+	}
+}
+
+// TestSyncOnceCategoryStallGuardTripsOnLastEntityMatchingCursor mirrors
+// TestSyncOnceItemStallGuardTripsOnLastEntityMatchingCursor for the RawBucket
+// (category) case: the last raw entity's own LastModified equals the current
+// cursor while the global MaxLastModified keeps claiming a far-future "now".
+func TestSyncOnceCategoryStallGuardTripsOnLastEntityMatchingCursor(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var catCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		var req SyncRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Recipe != nil {
+			_ = json.NewEncoder(w).Encode(SyncResponse{})
+			return
+		}
+		atomic.AddInt32(&catCalls, 1)
+		_ = json.NewEncoder(w).Encode(SyncResponse{
+			ShoppingListCategory: &RawBucketResponse{
+				UpdatedServerItems: []json.RawMessage{
+					json.RawMessage(`{"Id":"cat-1","Name":"Produce","IsDeleted":false,"LastModified":"` + epochWatermark + `"}`),
+				},
+				HasMoreUpdatedServerItems: true,
+				MaxLastModified:           farFutureMaxLastModified,
+			},
+		})
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	err := svc.SyncOnce(context.Background())
+	if err == nil {
+		t.Fatal("want a stall error")
+	}
+	if !strings.Contains(err.Error(), "stalled") {
+		t.Errorf("err = %v, want a stall-guard error", err)
+	}
+	if got := atomic.LoadInt32(&catCalls); got != 1 {
+		t.Errorf("category sync calls = %d, want 1 — the stall must be caught on the first offending page", got)
+	}
+}
+
+func ptr(s string) *string { return &s }
