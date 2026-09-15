@@ -96,6 +96,18 @@ export interface GroceryItem {
   recipes?: RecipeRef[];
 }
 
+// The PATCH /grocery/items/{id} response is a GroceryItem plus one
+// transient, response-only flag: `second_row_changed` is set when Recipe
+// Keeper's ConsumeUnits (server-side, on a quantity decrease) moved links
+// onto a checked sibling row this response says nothing about — that row
+// exists in the database now but no client has been told about it. It is
+// never part of persisted item state (not stored in IndexedDB, not spread
+// into GrocerySection items) — callers read it once, off the raw response,
+// to decide whether to refetch.
+export interface GroceryItemUpdateResult extends GroceryItem {
+  second_row_changed?: boolean;
+}
+
 export interface GrocerySection {
   id: string;
   name: string;

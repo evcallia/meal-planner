@@ -726,7 +726,16 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 	}
 	a.broadcast("grocery.updated", updatePayload, r)
 	a.recipeKeeperKick()
-	httpx.WriteJSON(w, 200, a.groceryItemJSON(&item))
+	response := a.groceryItemJSON(&item)
+	if consumeTouchedSecondRow {
+		// The acting client's own SSE event is self-filtered by source_id
+		// (see useRealtime.ts), so it never receives the actionless-event
+		// "something beyond this row changed, refetch" signal every OTHER
+		// client gets from the broadcast above. Surface the same fact
+		// directly on the response so the acting client can refetch itself.
+		response["second_row_changed"] = true
+	}
+	httpx.WriteJSON(w, 200, response)
 }
 
 func (a *App) handleAddGroceryItem(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {

@@ -1205,20 +1205,44 @@ export function useGroceryList() {
         // Recipe Keeper) — nothing to reconcile against, and our optimistic
         // local state already reflects the edit.
         if (serverItem) {
-          // If server returned a different store_id (e.g. from item_defaults), apply it
+          // The server response is authoritative for more than store_id: a
+          // quantity decrease with Recipe Keeper enabled routes through
+          // ConsumeUnits, which can rewrite the row's own quantity AND its
+          // linked recipes (fewer units left means fewer/lighter links) —
+          // apply whatever it returns rather than trusting our optimistic
+          // guess, which only reflects the plain PATCH we sent.
           const optimisticStoreId = updates.store_id !== undefined ? updates.store_id : item.store_id;
-          if (serverItem.store_id !== optimisticStoreId) {
+          const optimisticQuantity = updates.quantity !== undefined ? updates.quantity : item.quantity;
+          const recipesChanged = JSON.stringify(serverItem.recipes ?? []) !== JSON.stringify(item.recipes ?? []);
+          if (serverItem.store_id !== optimisticStoreId || serverItem.quantity !== optimisticQuantity || recipesChanged) {
             optimisticVersionRef.current++;
             setSections(prev => prev.map(s => ({
               ...s,
-              items: s.items.map(i => i.id === itemId ? { ...i, store_id: serverItem.store_id } : i),
+              items: s.items.map(i => i.id === itemId ? {
+                ...i,
+                store_id: serverItem.store_id,
+                quantity: serverItem.quantity,
+                recipes: serverItem.recipes,
+              } : i),
             })));
             await saveLocalGroceryItem({
               id: item.id, section_id: item.section_id,
               name: serverItem.name, quantity: serverItem.quantity,
               checked: serverItem.checked, position: item.position,
               store_id: serverItem.store_id, updated_at: serverItem.updated_at,
+              recipes: serverItem.recipes ?? [],
             });
+          }
+          // ConsumeUnits may have moved links onto a checked sibling row
+          // this response says nothing about (creating it, even) — that
+          // row now exists server-side but no client has been told about
+          // it. Every OTHER client learns this from the actionless
+          // grocery.updated broadcast's documented full-refetch fallback,
+          // but the acting client's own SSE event is self-filtered by
+          // source_id (see useRealtime.ts) and never reaches that handler.
+          // Refetch directly instead of waiting for a manual refresh.
+          if (serverItem.second_row_changed) {
+            loadGroceryListRef.current();
           }
         }
         // Update local item default when store changes

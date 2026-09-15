@@ -260,6 +260,14 @@ func TestUpdateGroceryItemConsumeCreatingCheckedRowOmitsActionForFullRefetch(t *
 	if !sawFallback {
 		t.Fatalf("want a grocery.updated event with no \"action\" key (triggers the full-refetch fallback) when ConsumeUnits touches a second row, got events = %+v", events)
 	}
+
+	// The acting client filters out its own SSE event by source_id, so it
+	// never sees the fallback above — the response to ITS OWN request must
+	// carry the same "something else changed" signal so it can refetch
+	// itself instead of showing a stale recipe list until a manual refresh.
+	if changed, _ := resp.Obj()["second_row_changed"].(bool); !changed {
+		t.Errorf("response second_row_changed = %v, want true", resp.Obj()["second_row_changed"])
+	}
 }
 
 // A decrease that does NOT create/touch a second row (the item was already
@@ -287,6 +295,9 @@ func TestUpdateGroceryItemConsumeOnAlreadyCheckedItemKeepsItemUpdatedAction(t *t
 	}
 	if payload["action"] != "item-updated" {
 		t.Errorf("action = %v, want item-updated (no second row was touched)", payload["action"])
+	}
+	if _, present := resp.Obj()["second_row_changed"]; present {
+		t.Errorf("second_row_changed = %v, want absent — no second row was touched, so the acting client must not refetch needlessly", resp.Obj()["second_row_changed"])
 	}
 }
 

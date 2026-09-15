@@ -334,7 +334,7 @@ export async function unhideCalendarEvent(hiddenId: string): Promise<{ status: s
 }
 
 // Grocery API
-import type { GrocerySection, GroceryItem } from '../types';
+import type { GrocerySection, GroceryItem, GroceryItemUpdateResult } from '../types';
 
 export async function getGroceryList(): Promise<GrocerySection[]> {
   return fetchAPI<GrocerySection[]>('/grocery');
@@ -445,8 +445,8 @@ export async function deleteGrocerySection(sectionId: string): Promise<void> {
 // deleted the row behind Meal Planner's back before a queued offline change
 // landed) — see handleUpdateGroceryItem. Callers must check before reading
 // any property.
-export async function editGroceryItem(itemId: string, updates: { name?: string; quantity?: string | null; store_id?: string | null }): Promise<GroceryItem | undefined> {
-  return fetchAPI<GroceryItem | undefined>(`/grocery/items/${itemId}`, {
+export async function editGroceryItem(itemId: string, updates: { name?: string; quantity?: string | null; store_id?: string | null }): Promise<GroceryItemUpdateResult | undefined> {
+  return fetchAPI<GroceryItemUpdateResult | undefined>(`/grocery/items/${itemId}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
   });
