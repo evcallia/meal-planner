@@ -61,6 +61,11 @@ services:
       DEBUG_TIMING: ${DEBUG_TIMING:-false}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:email@domain.com}
       PUSH_EDIT_WINDOW_MINUTES: ${PUSH_EDIT_WINDOW_MINUTES:-30}
+      # Recipe Keeper sync (docs/recipe-keeper-api.md). Inert unless enabled.
+      RECIPE_KEEPER_ENABLED: ${RECIPE_KEEPER_ENABLED:-false}
+      RECIPE_KEEPER_USERNAME: ${RECIPE_KEEPER_USERNAME:-}
+      RECIPE_KEEPER_PASSWORD: ${RECIPE_KEEPER_PASSWORD:-}
+      RECIPE_KEEPER_RECEIPT_ID: ${RECIPE_KEEPER_RECEIPT_ID:-}
     depends_on:
       db:
         condition: service_healthy
