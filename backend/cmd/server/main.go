@@ -102,6 +102,13 @@ func main() {
 		if settings.RecipeKeeperListID == "" {
 			log.Printf("recipe keeper: RECIPE_KEEPER_LIST_ID is not set — sync will import nothing until it is")
 		}
+		var missingCreds []string
+		if settings.RecipeKeeperUsername == "" {
+			missingCreds = append(missingCreds, "RECIPE_KEEPER_USERNAME")
+		}
+		if settings.RecipeKeeperPassword == "" {
+			missingCreds = append(missingCreds, "RECIPE_KEEPER_PASSWORD")
+		}
 		rkHeaders := recipekeeper.DefaultHeaders(recipekeeper.DeviceID(gormDB), settings.RecipeKeeperReceiptID)
 		rkAuth := &recipekeeper.Authenticator{
 			BaseURL:  recipeKeeperBaseURL,
@@ -135,9 +142,13 @@ func main() {
 		// Exposed on App so /api/recipe-keeper/status and /sync can reach it;
 		// nil (the zero value) on App when the integration isn't configured.
 		application.RecipeKeeper = rkService
-		var rkCtx context.Context
-		rkCtx, cancelRecipeKeeper = context.WithCancel(context.Background())
-		go rkService.Run(rkCtx)
+		if len(missingCreds) > 0 {
+			log.Printf("recipe keeper: %s not set — sync loop not started", strings.Join(missingCreds, " and "))
+		} else {
+			var rkCtx context.Context
+			rkCtx, cancelRecipeKeeper = context.WithCancel(context.Background())
+			go rkService.Run(rkCtx)
+		}
 	}
 
 	addr := ":8000"

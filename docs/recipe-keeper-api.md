@@ -32,6 +32,11 @@ recipe, edit a recipe, add and remove a meal-planner entry, and a full logout / 
 | Encoding | JSON request/response; `Accept-Encoding: gzip, deflate, br` (responses come back gzipped) |
 | Endpoints | `POST /token`, `POST /api/sync`, `POST /api/syncnotification` |
 
+> **Warning:** do not set the `Accept-Encoding` header explicitly in Go client code. Go's
+> `http.Transport` only decompresses gzip automatically when it sets that header itself —
+> setting it yourself hands back the raw gzipped body, which fails JSON parsing. `httptest`
+> doesn't compress, so this passes every test and only breaks against the real service.
+
 Only these three endpoints were ever observed. In particular **no REST-style resource
 routes exist** — there is no `GET /api/recipes/{id}`. Everything flows through one
 batched sync endpoint.

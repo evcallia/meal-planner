@@ -378,8 +378,8 @@ export async function replaceGroceryList(sections: { name: string; items: { name
   });
 }
 
-export async function toggleGroceryItem(itemId: string, checked: boolean): Promise<GroceryItem> {
-  return fetchAPI<GroceryItem>(`/grocery/items/${itemId}`, {
+export async function toggleGroceryItem(itemId: string, checked: boolean): Promise<GroceryItem | undefined> {
+  return fetchAPI<GroceryItem | undefined>(`/grocery/items/${itemId}`, {
     method: 'PATCH',
     body: JSON.stringify({ checked }),
   });

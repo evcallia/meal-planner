@@ -1,7 +1,9 @@
 # Recipe Keeper ↔ Meal Planner grocery sync — design
 
 **Date:** 2026-09-13
-**Status:** design approved, not yet implemented
+**Status:** backend implemented (on the `evcallia/recipe-keeper` branch). The UI section
+below (recipe popover, group-by-recipe, filter chips, pinned bell error row, Settings
+section) is not yet built.
 **Protocol reference:** [`docs/recipe-keeper-api.md`](../../recipe-keeper-api.md)
 
 ## Goal
@@ -411,7 +413,7 @@ or RK is down.
 | `RECIPE_KEEPER_ENABLED` | no | Default `false`. The whole subsystem is off unless set. |
 | `RECIPE_KEEPER_USERNAME` | yes, if enabled | RK account email |
 | `RECIPE_KEEPER_PASSWORD` | yes, if enabled | Stored like other backend secrets |
-| `RECIPE_KEEPER_LIST_ID` | no | Defaults to the list with the most live items at first sync, logged on selection |
+| `RECIPE_KEEPER_LIST_ID` | yes, if enabled | No default and no auto-discovery — heuristically guessing which of a user's real RK shopping lists to sync is the wrong place to guess, since being wrong writes to the wrong live list in a third party's account. Leaving it unset imports nothing, by design. |
 | `RECIPE_KEEPER_RECEIPT_ID` | no | `X-RK-ReceiptId`. Enforcement unknown; see [Risks](#risks) |
 
 The device id is generated once and persisted in `recipe_keeper_state`. It must stay

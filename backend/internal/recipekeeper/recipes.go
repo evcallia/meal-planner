@@ -3,6 +3,7 @@ package recipekeeper
 
 import (
 	"encoding/json"
+	"log"
 
 	"github.com/google/uuid"
 
@@ -18,6 +19,7 @@ type RecipeRef struct {
 // else. Recipe payloads embed base64 photos (~100-300 KB each), so nothing but
 // the title is retained.
 func (r *Reconciler) StoreRecipes(raw []json.RawMessage) error {
+	skipped := 0
 	for _, blob := range raw {
 		var rec struct {
 			ID           string `json:"Id"`
@@ -26,10 +28,15 @@ func (r *Reconciler) StoreRecipes(raw []json.RawMessage) error {
 			LastModified string `json:"LastModified"`
 		}
 		if err := json.Unmarshal(blob, &rec); err != nil || rec.ID == "" {
+			skipped++
 			continue
 		}
 		if rec.IsDeleted {
 			r.DB.Delete(&models.RecipeKeeperRecipe{}, "rk_recipe_id = ?", rec.ID)
+			continue
+		}
+		if rec.Title == "" {
+			skipped++
 			continue
 		}
 		row := models.RecipeKeeperRecipe{
@@ -38,6 +45,9 @@ func (r *Reconciler) StoreRecipes(raw []json.RawMessage) error {
 		if err := r.DB.Save(&row).Error; err != nil {
 			return err
 		}
+	}
+	if skipped > 0 {
+		log.Printf("recipekeeper: StoreRecipes skipped %d/%d entities (unparseable or missing id/title)", skipped, len(raw))
 	}
 	return nil
 }
