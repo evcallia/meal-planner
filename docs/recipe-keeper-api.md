@@ -273,6 +273,36 @@ in any reimplementation.
 > bodies in the same shape as `SyncEntities`. Confirm this against a real pull before
 > relying on it.
 
+### Pages cap at ~10k, and `MaxLastModified` is a GLOBAL watermark, not a page one
+
+Verified against the live API: pulling `ShoppingListItem` from the 1970 epoch
+watermark on an account with more changes than that returned:
+
+```
+HasMoreUpdatedServerItems: true
+entities in page:          10000          <- the server-side page cap
+MaxLastModified returned:  2026-09-15T03:14:21.04Z
+```
+
+**That returned timestamp is "now" — the instant of the newest change anywhere in
+the account — not the last entity actually included in the page.** A client that
+persists `MaxLastModified` after processing page 1, rather than following
+`HasMoreUpdatedServerItems` to the end, advances its watermark past every entity
+sitting in pages 2..N. The next sync asks for changes after "now" and those
+entities are **never fetched again** — silent, permanent data loss, not a delay.
+
+**The fix is drain-before-persist:** loop, applying each page's
+`UpdatedServerItems` as it arrives, and only write the bucket's watermark to
+durable storage once `HasMoreUpdatedServerItems` comes back `false`. If the
+process dies mid-drain, the persisted watermark is untouched, so the next run
+re-reads the same pages — harmless, since inbound apply is idempotent on an
+unchanged `LastModified`. Losing pages by persisting early is not recoverable
+the same way. Send `SyncEntities`/`LocalChangesIds` only on the drain's first
+request; a bucket's own local-changes push must not be repeated on later pages.
+This applies to every bucket independently — the category buckets ride along in
+the same request and are just as capable of paginating, even though they are
+normally small.
+
 ## Entity catalog
 
 Twelve buckets: `Recipe`, `ShoppingList`, `ShoppingListItem`, `ShoppingListCategory`,

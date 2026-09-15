@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -659,5 +660,265 @@ func TestTriggerGrocerySyncSkipsWhenAuthLatchTripped(t *testing.T) {
 
 	if after := atomic.LoadInt32(&tokenRequests); after != before {
 		t.Errorf("token requests = %d -> %d, want no new request — the latch should have stopped TriggerGrocerySync before it started", before, after)
+	}
+}
+
+// TestSyncOnceDrainsAllPagesBeforePersistingWatermark proves SyncOnce follows
+// HasMoreUpdatedServerItems on the item bucket instead of stopping after one
+// page. Against the live API, MaxLastModified is a GLOBAL "now", not the
+// page's last entity — persisting it after page 1 would advance the
+// watermark past every unread page and silently skip them forever. This
+// test must fail against the unfixed SyncOnce, which never even looks at
+// HasMoreUpdatedServerItems.
+func TestSyncOnceDrainsAllPagesBeforePersistingWatermark(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var itemCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		var req SyncRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Recipe != nil {
+			// The background recipe-title cache warm-up kicked off by
+			// recordSuccess — unrelated to this test.
+			_ = json.NewEncoder(w).Encode(SyncResponse{})
+			return
+		}
+		n := atomic.AddInt32(&itemCalls, 1)
+		switch n {
+		case 1:
+			if req.ShoppingListItem.MaxLastModified != epochWatermark {
+				t.Errorf("first page watermark = %q, want epoch", req.ShoppingListItem.MaxLastModified)
+			}
+			_ = json.NewEncoder(w).Encode(SyncResponse{
+				ShoppingListItem: &ItemBucketResponse{
+					UpdatedServerItems:        []ShoppingListItem{rkItem("srv-1", "Cilantro")},
+					HasMoreUpdatedServerItems: true,
+					MaxLastModified:           "2026-09-14T00:00:00.0000001Z",
+				},
+			})
+		case 2:
+			if req.ShoppingListItem.MaxLastModified != "2026-09-14T00:00:00.0000001Z" {
+				t.Errorf("second page did not carry the first page's watermark: got %q", req.ShoppingListItem.MaxLastModified)
+			}
+			_ = json.NewEncoder(w).Encode(SyncResponse{
+				ShoppingListItem: &ItemBucketResponse{
+					UpdatedServerItems:        []ShoppingListItem{rkItem("srv-2", "Basil")},
+					HasMoreUpdatedServerItems: false,
+					MaxLastModified:           "2026-09-14T00:00:01.0000001Z",
+				},
+			})
+		default:
+			t.Errorf("unexpected call %d — pagination should have stopped", n)
+		}
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	if err := svc.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce: %v", err)
+	}
+	if got := atomic.LoadInt32(&itemCalls); got != 2 {
+		t.Fatalf("item sync calls = %d, want 2 (pagination not followed)", got)
+	}
+	if itemByName(t, db, "Cilantro", false) == nil {
+		t.Error("page 1's item was not applied")
+	}
+	if itemByName(t, db, "Basil", false) == nil {
+		t.Error("page 2's item was not applied — it would be permanently skipped by the bug this fixes")
+	}
+	if got := getState(db, stateWatermarkItem, ""); got != "2026-09-14T00:00:01.0000001Z" {
+		t.Errorf("watermark = %q, want the FINAL page's MaxLastModified", got)
+	}
+}
+
+// TestSyncOnceKeepsWatermarkWhenDrainInterrupted proves an error mid-drain
+// leaves the persisted watermark exactly where it was, so the next run
+// re-reads the pages it never got to. Re-reading is harmless (inbound apply
+// is idempotent on unchanged LastModified); advancing the watermark to a
+// page it never applied is the data-loss bug.
+func TestSyncOnceKeepsWatermarkWhenDrainInterrupted(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var itemCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		var req SyncRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Recipe != nil {
+			_ = json.NewEncoder(w).Encode(SyncResponse{})
+			return
+		}
+		n := atomic.AddInt32(&itemCalls, 1)
+		if n == 1 {
+			_ = json.NewEncoder(w).Encode(SyncResponse{
+				ShoppingListItem: &ItemBucketResponse{
+					UpdatedServerItems:        []ShoppingListItem{rkItem("srv-1", "Cilantro")},
+					HasMoreUpdatedServerItems: true,
+					MaxLastModified:           "2026-09-14T00:00:00.0000001Z",
+				},
+			})
+			return
+		}
+		// Page 2: the upstream falls over mid-drain.
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	before := getState(db, stateWatermarkItem, epochWatermark)
+	if err := svc.SyncOnce(context.Background()); err == nil {
+		t.Fatal("want an error from the interrupted drain")
+	}
+	if got := getState(db, stateWatermarkItem, epochWatermark); got != before {
+		t.Errorf("watermark = %q, want unchanged at %q (drain was interrupted before finishing)", got, before)
+	}
+	// Page 1's item was still applied — re-reading it on the next run is a
+	// harmless no-op, unlike losing it would be.
+	if itemByName(t, db, "Cilantro", false) == nil {
+		t.Error("page 1's item should have been applied even though the drain later failed")
+	}
+}
+
+// TestSyncOncePushesLocalChangesOnFirstPageOnly proves local changes are
+// only sent on the drain's first request. Resending them on later pages
+// would have the server re-apply (echo) the same pushed entities.
+func TestSyncOncePushesLocalChangesOnFirstPageOnly(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+	_, _ = rec.ApplyInbound([]ShoppingListItem{rkItem("a-id", "Cilantro")})
+	item := itemByName(t, db, "Cilantro", false)
+	item.Checked = true
+	db.Save(item)
+	if err := rec.RetargetLinks("Cilantro", false, "Cilantro", true); err != nil {
+		t.Fatalf("RetargetLinks: %v", err)
+	}
+
+	var itemCalls int32
+	var page1Entities, page2Entities, page1IDs, page2IDs int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		var req SyncRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Recipe != nil {
+			_ = json.NewEncoder(w).Encode(SyncResponse{})
+			return
+		}
+		n := atomic.AddInt32(&itemCalls, 1)
+		switch n {
+		case 1:
+			page1Entities = len(req.ShoppingListItem.SyncEntities)
+			page1IDs = len(req.ShoppingListItem.LocalChangesIds)
+			_ = json.NewEncoder(w).Encode(SyncResponse{
+				ShoppingListItem: &ItemBucketResponse{
+					HasMoreUpdatedServerItems: true,
+					MaxLastModified:           "2026-09-14T00:00:00.0000001Z",
+				},
+			})
+		case 2:
+			page2Entities = len(req.ShoppingListItem.SyncEntities)
+			page2IDs = len(req.ShoppingListItem.LocalChangesIds)
+			_ = json.NewEncoder(w).Encode(SyncResponse{
+				ShoppingListItem: &ItemBucketResponse{
+					HasMoreUpdatedServerItems: false,
+					MaxLastModified:           "2026-09-14T00:00:01.0000001Z",
+				},
+			})
+		default:
+			t.Errorf("unexpected call %d", n)
+		}
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	if err := svc.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce: %v", err)
+	}
+	if got := atomic.LoadInt32(&itemCalls); got != 2 {
+		t.Fatalf("item sync calls = %d, want 2 (drain did not happen)", got)
+	}
+	if page1Entities != 1 || page1IDs != 1 {
+		t.Errorf("page 1 SyncEntities=%d LocalChangesIds=%d, want 1 each", page1Entities, page1IDs)
+	}
+	if page2Entities != 0 || page2IDs != 0 {
+		t.Errorf("page 2 SyncEntities=%d LocalChangesIds=%d, want 0 each — must not re-push", page2Entities, page2IDs)
+	}
+}
+
+// TestSyncOnceStallGuardTripsWhenWatermarkNeverAdvances mirrors
+// SyncRecipes' stall guard: a server that keeps claiming
+// HasMoreUpdatedServerItems without the watermark ever advancing must error
+// out rather than spin the drain loop forever.
+func TestSyncOnceStallGuardTripsWhenWatermarkNeverAdvances(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		var req SyncRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Recipe != nil {
+			_ = json.NewEncoder(w).Encode(SyncResponse{})
+			return
+		}
+		// Always claims more pages but never advances the watermark.
+		_ = json.NewEncoder(w).Encode(SyncResponse{
+			ShoppingListItem: &ItemBucketResponse{
+				HasMoreUpdatedServerItems: true,
+				MaxLastModified:           epochWatermark,
+			},
+		})
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	auth := &Authenticator{BaseURL: srv.URL, Username: "u", Password: "p",
+		HTTP: srv.Client(), Now: func() time.Time { return now }}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: auth},
+		Rec:    rec, DB: db,
+	}
+
+	err := svc.SyncOnce(context.Background())
+	if err == nil {
+		t.Fatal("want a stall error")
+	}
+	if !strings.Contains(err.Error(), "stalled") {
+		t.Errorf("err = %v, want a stall-guard error", err)
 	}
 }

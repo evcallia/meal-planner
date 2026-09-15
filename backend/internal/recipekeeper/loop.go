@@ -42,6 +42,13 @@ const (
 	// HasMoreUpdatedServerItems without the watermark ever advancing must not
 	// be allowed to spin this loop forever.
 	maxRecipeSyncPages = 1000
+
+	// maxItemSyncPages bounds SyncOnce's drain loop over the item and
+	// category buckets, mirroring maxRecipeSyncPages: a server that keeps
+	// claiming HasMoreUpdatedServerItems for any of them without that
+	// bucket's watermark ever advancing must not be allowed to spin this
+	// loop forever.
+	maxItemSyncPages = 1000
 )
 
 type Status struct {
@@ -118,6 +125,16 @@ type Service struct {
 // it is sending a malformed entity to a third party's live API. Skipping is
 // silent after the first transition (noListLogged) rather than repeating a
 // log line on every safety-timer tick.
+//
+// Each of the three buckets in play (item, category, category-item) is
+// drained independently: the loop keeps requesting further pages for any
+// bucket still reporting HasMoreUpdatedServerItems, applying each page as it
+// arrives, until all three are done or maxItemSyncPages is hit. Local
+// changes (SyncEntities/LocalChangesIds) are only sent on the first request
+// of the drain — resending them on later pages would re-push the same
+// entities. See the comment above the item-bucket persist below for why a
+// bucket's watermark is only written to the DB once THAT bucket has
+// finished draining.
 func (s *Service) SyncOnce(ctx context.Context) error {
 	listID := SelectedListID(s.DB)
 	s.Rec.SetListID(listID)
@@ -148,71 +165,147 @@ func (s *Service) SyncOnce(ctx context.Context) error {
 		ids = append(ids, p.ID)
 	}
 
-	resp, err := s.Client.Sync(ctx, SyncRequest{
-		ShoppingListItem: &ItemBucket{
-			MaxLastModified: wm,
-			SyncEntities:    pushes,
-			LocalChangesIds: ids,
-		},
-		ShoppingListCategory: &RawBucket{
-			MaxLastModified: wmCat,
-			SyncEntities:    []json.RawMessage{},
-			LocalChangesIds: []string{},
-		},
-		ShoppingListCategoryItem: &RawBucket{
-			MaxLastModified: wmCatItem,
-			SyncEntities:    []json.RawMessage{},
-			LocalChangesIds: []string{},
-		},
-	})
-	if err != nil {
-		s.recordError(err)
-		return err
+	var changes Changes
+	itemDone, catDone, catItemDone := false, false, false
+
+	for page := 0; page < maxItemSyncPages; page++ {
+		// Local changes are only meaningful on the first request of the
+		// drain — every later page is a pure pull, or the server would see
+		// the same pushed entities resubmitted on every page.
+		itemEntities := []ShoppingListItem{}
+		itemIDs := []string{}
+		if page == 0 {
+			itemEntities = pushes
+			itemIDs = ids
+		}
+
+		resp, err := s.Client.Sync(ctx, SyncRequest{
+			ShoppingListItem: &ItemBucket{
+				MaxLastModified: wm,
+				SyncEntities:    itemEntities,
+				LocalChangesIds: itemIDs,
+			},
+			ShoppingListCategory: &RawBucket{
+				MaxLastModified: wmCat,
+				SyncEntities:    []json.RawMessage{},
+				LocalChangesIds: []string{},
+			},
+			ShoppingListCategoryItem: &RawBucket{
+				MaxLastModified: wmCatItem,
+				SyncEntities:    []json.RawMessage{},
+				LocalChangesIds: []string{},
+			},
+		})
+		if err != nil {
+			s.recordError(err)
+			return err
+		}
+
+		// Categories are small (unlike Recipe) so they ride along on every
+		// pass. Feed both bucket responses to StoreCategories together — it
+		// joins them by id — then persist each bucket's own watermark
+		// independently, once THAT bucket has finished draining (see the
+		// item-bucket comment below for why persisting early is unsafe).
+		var cats, catItems []json.RawMessage
+		if catsResp := resp.ShoppingListCategory; catsResp != nil {
+			cats = catsResp.UpdatedServerItems
+		}
+		if catItemsResp := resp.ShoppingListCategoryItem; catItemsResp != nil {
+			catItems = catItemsResp.UpdatedServerItems
+		}
+		if err := s.Rec.StoreCategories(cats, catItems); err != nil {
+			s.recordError(err)
+			return err
+		}
+
+		if !catDone {
+			catsResp := resp.ShoppingListCategory
+			switch {
+			case catsResp == nil:
+				catDone = true
+			case !catsResp.HasMoreUpdatedServerItems:
+				if catsResp.MaxLastModified != "" {
+					setState(s.DB, stateWatermarkCategory, catsResp.MaxLastModified)
+				}
+				catDone = true
+			case catsResp.MaxLastModified == "" || catsResp.MaxLastModified == wmCat:
+				err := fmt.Errorf("recipekeeper: category sync stalled at watermark %q (HasMoreUpdatedServerItems but MaxLastModified did not advance)", wmCat)
+				s.recordError(err)
+				return err
+			default:
+				wmCat = catsResp.MaxLastModified
+			}
+		}
+
+		if !catItemDone {
+			catItemsResp := resp.ShoppingListCategoryItem
+			switch {
+			case catItemsResp == nil:
+				catItemDone = true
+			case !catItemsResp.HasMoreUpdatedServerItems:
+				if catItemsResp.MaxLastModified != "" {
+					setState(s.DB, stateWatermarkCatItem, catItemsResp.MaxLastModified)
+				}
+				catItemDone = true
+			case catItemsResp.MaxLastModified == "" || catItemsResp.MaxLastModified == wmCatItem:
+				err := fmt.Errorf("recipekeeper: category-item sync stalled at watermark %q (HasMoreUpdatedServerItems but MaxLastModified did not advance)", wmCatItem)
+				s.recordError(err)
+				return err
+			default:
+				wmCatItem = catItemsResp.MaxLastModified
+			}
+		}
+
+		if !itemDone {
+			bucket := resp.ShoppingListItem
+			if bucket == nil {
+				itemDone = true
+			} else {
+				if err := s.Rec.ApplyAcks(bucket.UpdatedLocalItems); err != nil {
+					s.recordError(err)
+					return err
+				}
+				ch, err := s.Rec.ApplyInbound(bucket.UpdatedServerItems)
+				if err != nil {
+					s.recordError(err)
+					return err
+				}
+				changes.Added = append(changes.Added, ch.Added...)
+				changes.Updated = append(changes.Updated, ch.Updated...)
+				changes.Deleted = append(changes.Deleted, ch.Deleted...)
+
+				if !bucket.HasMoreUpdatedServerItems {
+					// The server caps a page at ~10k entities and returns a GLOBAL
+					// MaxLastModified ("now"), not the page's last entity. Persisting it
+					// before draining HasMoreUpdatedServerItems would advance the watermark
+					// past every unread page and skip those entities permanently. Verified
+					// against the live API.
+					if bucket.MaxLastModified != "" {
+						setState(s.DB, stateWatermarkItem, bucket.MaxLastModified)
+					}
+					itemDone = true
+				} else if bucket.MaxLastModified == "" || bucket.MaxLastModified == wm {
+					err := fmt.Errorf("recipekeeper: item sync stalled at watermark %q (HasMoreUpdatedServerItems but MaxLastModified did not advance)", wm)
+					s.recordError(err)
+					return err
+				} else {
+					wm = bucket.MaxLastModified
+				}
+			}
+		}
+
+		if itemDone && catDone && catItemDone {
+			s.recordSuccess()
+			if changes.Any() && s.OnChange != nil {
+				s.OnChange(changes)
+			}
+			return nil
+		}
 	}
 
-	// Categories are small (unlike Recipe) so they ride along on every pass.
-	// Feed both bucket responses to StoreCategories together — it joins them
-	// by id — then persist each bucket's own watermark independently.
-	var cats, catItems []json.RawMessage
-	if catsResp := resp.ShoppingListCategory; catsResp != nil {
-		cats = catsResp.UpdatedServerItems
-	}
-	if catItemsResp := resp.ShoppingListCategoryItem; catItemsResp != nil {
-		catItems = catItemsResp.UpdatedServerItems
-	}
-	if err := s.Rec.StoreCategories(cats, catItems); err != nil {
-		s.recordError(err)
-		return err
-	}
-	if catsResp := resp.ShoppingListCategory; catsResp != nil && catsResp.MaxLastModified != "" {
-		setState(s.DB, stateWatermarkCategory, catsResp.MaxLastModified)
-	}
-	if catItemsResp := resp.ShoppingListCategoryItem; catItemsResp != nil && catItemsResp.MaxLastModified != "" {
-		setState(s.DB, stateWatermarkCatItem, catItemsResp.MaxLastModified)
-	}
-
-	bucket := resp.ShoppingListItem
-	if bucket == nil {
-		s.recordSuccess()
-		return nil
-	}
-	if err := s.Rec.ApplyAcks(bucket.UpdatedLocalItems); err != nil {
-		s.recordError(err)
-		return err
-	}
-	ch, err := s.Rec.ApplyInbound(bucket.UpdatedServerItems)
-	if err != nil {
-		s.recordError(err)
-		return err
-	}
-	if bucket.MaxLastModified != "" {
-		setState(s.DB, stateWatermarkItem, bucket.MaxLastModified)
-	}
-	s.recordSuccess()
-	if ch.Any() && s.OnChange != nil {
-		s.OnChange(ch)
-	}
-	return nil
+	err = fmt.Errorf("recipekeeper: sync aborted after %d pages without finishing", maxItemSyncPages)
+	s.recordError(err)
+	return err
 }
 
 // SyncRecipes pulls the Recipe bucket and feeds it to the title cache,
