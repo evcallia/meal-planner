@@ -98,5 +98,16 @@ func (a *App) handleRecipeKeeperSelectList(w http.ResponseWriter, r *http.Reques
 		httpx.Detail(w, http.StatusBadGateway, err.Error())
 		return
 	}
+
+	// A newly-selected (or changed) list otherwise sits idle until the next
+	// long-poll doorbell or the ~15-minute safety timer — a user who just
+	// picked a list in Settings would see nothing happen for up to 15
+	// minutes. Both triggers are non-blocking, single-flight, and already
+	// latch-aware, so it's safe to fire them here without waiting on either.
+	// TriggerGrocerySync pulls the list itself; TriggerRecipeSync warms the
+	// recipe-title cache a freshly-imported list needs for attribution.
+	a.RecipeKeeper.TriggerGrocerySync()
+	a.RecipeKeeper.TriggerRecipeSync()
+
 	httpx.WriteJSON(w, http.StatusOK, a.RecipeKeeper.Status())
 }
