@@ -73,6 +73,14 @@ docker compose down        # NEVER -v
 ```
 `down` removes the containers and network but keeps every volume. **`-v` would delete the dev database** — and with the external-volume block above, that's the shared `meal-planner_postgres_data` every worktree uses, not a throwaway. If the worktree also minted its own empty `<dir>_postgres_data` before you fixed the mapping, remove just that one (`docker volume rm <dir>_postgres_data`) after confirming it's the empty one — `docker ps -a --filter volume=<name>` should list no containers. Then optionally `git worktree remove <path>`, which also deletes the `.env` and override copied above.
 
+## Dev Deployment
+- **NEVER run against prod.** The `meal-planner` container (Traefik host `meal-planner.evancallia.com`) and `shared-postgres` are production; the dev stack above is entirely separate and brings up its own database
+- Bring it up with `docker compose up -d --build` — `.env` sets `COMPOSE_FILE=docker-compose-dev.yml:docker-compose-dev.override.yml`, so plain `docker compose` chains both files automatically; no `-f` flags needed
+- `docker-compose-dev.override.yml` is **gitignored and deployment-specific** (matched by `docker-compose*.override.yml` in `.gitignore`). It puts the app on the external `proxy`/`external` networks and adds the Traefik labels routing `meal-planner-dev.evancallia.com` over `websecure` with the `le-dns` cert resolver. It lives in the main worktree; copy it into a new worktree to bring the dev stack up there (see "First run in a fresh worktree" above)
+- Because it's served over real TLS at that hostname, `SECURE_COOKIES=true` and the real Authelia OIDC both work unchanged — no tunnel or password-auth workarounds needed. `FRONTEND_URL` and `OIDC_REDIRECT_URI` in `.env` already point there
+- `/api/auth/dev-login` is registered ONLY when OIDC is unset AND `FRONTEND_URL` is localhost (see Preview / Local Dev Auth below), so it's unavailable on the dev stack — sign in through Authelia
+- Compose project name comes from the directory, so a worktree gets its own containers/volumes (`recipe-keeper-app-1`, `recipe-keeper-db-1`) — isolated from both prod and the main worktree's dev stack. Only one instance can hold the `meal-planner-dev` Traefik router or host port 5432 at a time
+
 ## Go Backend (backend/)
 The backend is a Go rewrite of the original FastAPI app (same API contract). Layout:
 - `cmd/server/` — entrypoint (startup mirrors the FastAPI lifespan: AutoMigrate → migrations → cleanup → calendar cache init)
@@ -306,6 +314,17 @@ The backend is a Go rewrite of the original FastAPI app (same API contract). Lay
 - `DELETE /api/grocery/sections/{id}` — idempotent delete (204 even if already gone), rejects 400 if section has items
 - `PATCH /api/grocery/sections/{id}` — rename section (existing)
 
+## Recipe Keeper Sync (`internal/recipekeeper/`, docs/recipe-keeper-api.md)
+- Mirrors a Recipe Keeper shopping list into the grocery list both ways and surfaces which recipe each item came from. Protocol reference: `docs/recipe-keeper-api.md`; design: `docs/superpowers/specs/2026-09-13-recipe-keeper-sync-design.md`
+- Config: `RECIPE_KEEPER_ENABLED` (default false — subsystem inert unless true), `RECIPE_KEEPER_USERNAME`, `RECIPE_KEEPER_PASSWORD`, optional `RECIPE_KEEPER_RECEIPT_ID`. **Deliberately no list-id env var**: the list id is a GUID that only exists inside the vendor API, so it's chosen at runtime (`GET /api/recipe-keeper/lists` → `PUT /api/recipe-keeper/list`), persisted household-wide in `recipe_keeper_state`. Selecting a list kicks a sync immediately; changing an already-set list resets links/tombstones/watermark for a clean re-import
+- **Link model**: `recipe_keeper_links` is keyed by `(mp_name, mp_checked)` — the collapse key — **never** by `grocery_items.id`. `PUT /api/grocery` recreates every row with fresh ids and is what undo-of-delete replays, so an id FK would be wiped by the first undo
+- Recipe Keeper stores ONE ROW PER RECIPE-INGREDIENT OCCURRENCE, so one grocery row collapses many links; quantity is total units and `quantity − COUNT(links)` are MP-only units
+- **Live-API gotchas — these only fail against the real server, every test double accepts them:**
+  - `Accept-Encoding` must not be set: Go's `http.Transport` only decompresses transparently when it sets that header itself, and the server gzips
+  - Watermark must not be `0001-01-01T00:00:00Z` (.NET `DateTime.MinValue`) — the server 500s ("An unhandled exception occurred"). Use a 1970 epoch instead
+  - `SyncEntities` and `LocalChangesIds` must serialize as `[]`, never `null` — a nil Go slice marshals to `null` and the server 500s
+  - **Pagination**: a page caps at ~10k entities, and `MaxLastModified` in the response is the server's GLOBAL newest change ("now"), NOT the page's last entity. Advance the cursor by the **last entity's `LastModified`** — using `MaxLastModified` as the cursor silently ends the drain after one page and skips the rest. Only persist the watermark once a drain completes
+
 ## Liquid Glass Styling
 - **CSS utility classes** in `index.css`: `.glass` (cards/panels), `.glass-nav` (nav bar + bottom nav + FABs), `.glass-menu` (dropdowns/popovers — near-opaque to avoid nested backdrop-filter issues), `.glass-subtle` (section headers), `.glass-sticky` (unused after toolbar refactor)
 - **Dark mode gradient**: on `<html>` element with `background-attachment: fixed`; iOS fallback uses `position: fixed` pseudo-element via `@supports (-webkit-touch-callout: none)`. Body is transparent in dark mode
@@ -356,7 +375,7 @@ The backend is a Go rewrite of the original FastAPI app (same API contract). Lay
 - Backend has a `/api/auth/dev-login` endpoint that's only available when `OIDC_ISSUER` env var is empty. It sets a fake session (`dev-user` / `dev@localhost`) and redirects to `/`
 - **Docker in dev-login mode**: `.env` has real OIDC + `SECURE_COOKIES=true`, so dev-login is disabled by default. Shell env overrides `.env` in docker-compose: `OIDC_ISSUER= OIDC_CLIENT_ID= OIDC_CLIENT_SECRET= SECURE_COOKIES=false FRONTEND_URL=http://localhost:8000 docker-compose up -d`. All five are required — `ValidateSecurity()` in `internal/config/config.go` rejects `SECURE_COOKIES=false` unless `FRONTEND_URL` is localhost and OIDC is unset. Restore by re-running `docker-compose up -d` with a clean shell env
 - In dev mode `/api/auth/login` returns 500 ("OIDC not configured") — sign in via `/api/auth/dev-login` directly
-- The `.env` file is in the project root — run the server from the project root (`go run ./backend/cmd/server`) so `config.Load(".env")` finds it; running from inside `backend/` misses the root `.env`. `backend/cmd/devpg` runs a throwaway embedded Postgres for machines without Docker (`cd backend && go run ./cmd/devpg -port 5433`)
+- **Running from the project root doesn't work**: `go.mod` lives in `backend/`, so `go run ./backend/cmd/server` from the root fails with "go.mod file not found". Run from `backend/` instead — but `config.Load(".env")` resolves relative to the working directory and **silently returns an empty config when the file is missing**, so running from `backend/` misses the root `.env` with no error, just a server with no configuration and no clue why. Fix: symlink it in (`ln -s ../.env backend/.env` — gitignored) or pass the vars directly in the environment. `backend/cmd/devpg` runs a throwaway embedded Postgres for machines without Docker (`cd backend && go run ./cmd/devpg -port 5433`)
 - Launch config overrides for local dev: `OIDC_ISSUER=` (empty), `SECURE_COOKIES=false`, `FRONTEND_URL=http://localhost:5173`, `POSTGRES_HOST=localhost`
 - To authenticate in preview: navigate to `/api/auth/dev-login` (e.g. `window.location.href = '/api/auth/dev-login'`)
 - Docker postgres (`meal-planner-db-1` from docker-compose) uses password from `.env`. The standalone `mealplanner-pg` container uses `changeme`. They use different volumes
