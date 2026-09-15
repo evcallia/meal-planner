@@ -133,6 +133,28 @@ export function MenuRadioOption({ label, active, onClick }: { label: string; act
   );
 }
 
+// ----- recipe vs. store visual language -----
+//
+// Stores/bags are solid-filled chips (StoreFilterBar's default styling);
+// recipes are outlined chips led by this icon, both in the filter bar and on
+// the item row's recipe line. The pairing (icon + outline vs. solid fill) is
+// the whole point — it must not depend on color alone, so it survives
+// greyscale and colorblind viewing. Purely decorative (aria-hidden): the
+// surrounding button/label already carries the accessible name.
+export function RecipeIcon({ className = 'w-3 h-3' }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      data-testid="recipe-icon"
+      className={`${className} shrink-0 pointer-events-none`}
+      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M8 3v6M12 3v6M16 3v6M8 9h8M12 9v12" />
+    </svg>
+  );
+}
+
 // ----- recipe attribution line + all-recipes popover -----
 
 // Units on the item that aren't linked to any recipe (see CLAUDE.md "Recipe
@@ -206,11 +228,13 @@ function RecipeLine({ recipes, quantity, hidden }: { recipes: RecipeRef[]; quant
         ref={buttonRef}
         type="button"
         data-testid="recipe-chip"
+        aria-label={`Recipe: ${label}`}
         // The row's onClick starts rename editing — this must not bubble.
         onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
-        className="block max-w-full truncate text-left text-xs text-gray-400 dark:text-gray-500 leading-tight hover:text-gray-600 dark:hover:text-gray-300"
+        className="flex items-center gap-1 max-w-full text-left text-xs text-gray-400 dark:text-gray-500 leading-tight hover:text-gray-600 dark:hover:text-gray-300"
       >
-        {label}
+        <RecipeIcon className="w-2.5 h-2.5" />
+        <span className="truncate min-w-0">{label}</span>
       </button>
       {open && pos && createPortal(
         <div

@@ -41,9 +41,11 @@ vi.mock('../../hooks/useGroceryList', () => ({
   }),
 }));
 
+let mockStores: any[] = [];
+
 vi.mock('../../hooks/useStores', () => ({
   useStores: () => ({
-    stores: [],
+    stores: mockStores,
     loading: false,
     createStore: vi.fn(),
     renameStore: vi.fn(),
@@ -97,6 +99,7 @@ describe('GroceryListView - group by recipe', () => {
     vi.clearAllMocks();
     mockSections = recipeSections;
     mockLoading = false;
+    mockStores = [];
   });
 
   it('places a multi-recipe item under every recipe it belongs to', () => {
@@ -127,6 +130,7 @@ describe('GroceryListView - recipe filter chips', () => {
     vi.clearAllMocks();
     mockSections = recipeSections;
     mockLoading = false;
+    mockStores = [];
   });
 
   it('selecting a recipe shows items matching ANY of their recipes', () => {
@@ -230,6 +234,7 @@ describe('GroceryListView - group by recipe editing', () => {
     vi.clearAllMocks();
     mockSections = recipeSections;
     mockLoading = false;
+    mockStores = [];
   });
 
   it('does not open an inline edit form for a multi-recipe item shown in two groups', () => {
@@ -241,5 +246,75 @@ describe('GroceryListView - group by recipe editing', () => {
     // Suppressed in this view — no edit form (Save/Cancel) mounts anywhere,
     // so there's nothing to fight over a shared commitEditingRef.
     expect(screen.queryByText('Save')).not.toBeInTheDocument();
+  });
+});
+
+describe('GroceryListView - store vs. recipe chip bars', () => {
+  const storeAndRecipeSections = [
+    {
+      id: 's1', name: 'Produce', position: 0,
+      items: [
+        {
+          id: 'i1', section_id: 's1', name: 'Lemon', quantity: '4', checked: false, position: 0, store_id: 'st1', updated_at: '2026-01-01',
+          recipes: [{ id: 'r1', title: 'Fig Cocktail' }],
+        },
+      ],
+    },
+  ];
+  const storeOnlySections = [
+    {
+      id: 's1', name: 'Produce', position: 0,
+      items: [
+        {
+          id: 'i1', section_id: 's1', name: 'Lemon', quantity: '4', checked: false, position: 0, store_id: 'st1', updated_at: '2026-01-01',
+          recipes: [],
+        },
+      ],
+    },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLoading = false;
+    mockStores = [{ id: 'st1', name: 'Costco', position: 0 }];
+  });
+
+  it('does not render the recipe bar when there are no recipe chips (store bar still renders)', () => {
+    mockSections = storeOnlySections;
+    render(<GroceryListView groupBy="category" />);
+    expect(screen.getByRole('group', { name: 'Store filters' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Recipe filters' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('recipe-icon')).not.toBeInTheDocument();
+  });
+
+  it('renders both bars, distinguishable by data-chip-kind, when both stores and recipes are present', () => {
+    mockSections = storeAndRecipeSections;
+    render(<GroceryListView groupBy="category" />);
+    const storeGroup = screen.getByRole('group', { name: 'Store filters' });
+    const recipeGroup = screen.getByRole('group', { name: 'Recipe filters' });
+    expect(within(storeGroup).getByText('Costco')).toHaveAttribute('data-chip-kind', 'store');
+    expect(within(recipeGroup).getByText('Fig Cocktail')).toHaveAttribute('data-chip-kind', 'recipe');
+  });
+
+  it('hiding recipes collapses only the recipe bar — store filtering is untouched', () => {
+    mockSections = storeAndRecipeSections;
+    const { rerender } = render(<GroceryListView groupBy="category" hideStores={false} hideRecipes={false} />);
+    expect(screen.getByRole('group', { name: 'Store filters' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Recipe filters' })).toBeInTheDocument();
+
+    rerender(<GroceryListView groupBy="category" hideStores={false} hideRecipes={true} />);
+    expect(screen.getByRole('group', { name: 'Store filters' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Recipe filters' })).not.toBeInTheDocument();
+  });
+
+  it('hiding stores collapses only the store bar — the recipe bar is untouched', () => {
+    mockSections = storeAndRecipeSections;
+    const { rerender } = render(<GroceryListView groupBy="category" hideStores={false} hideRecipes={false} />);
+    expect(screen.getByRole('group', { name: 'Store filters' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Recipe filters' })).toBeInTheDocument();
+
+    rerender(<GroceryListView groupBy="category" hideStores={true} hideRecipes={false} />);
+    expect(screen.queryByRole('group', { name: 'Store filters' })).not.toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Recipe filters' })).toBeInTheDocument();
   });
 });

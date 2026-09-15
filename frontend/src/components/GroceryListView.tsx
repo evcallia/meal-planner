@@ -1218,10 +1218,14 @@ export function GroceryListView({
           onExclude={handleExclude}
           storeCounts={storeCounts}
           noneCount={storeCounts.get(NONE_STORE_ID) ?? 0}
+          groupLabel="Store filters"
         />
       )}
 
-      {/* Recipe filter bar — collapsible, same toolbar toggle as stores */}
+      {/* Recipe filter bar — collapsible, same toolbar toggle as stores.
+          Only rendered when there's at least one recipe chip: on a phone,
+          two chip rows already cost scarce space above the list, so an
+          empty recipe row never reserves that space for nothing. */}
       {toolbarExpanded && !hideRecipes && visibleRecipeChips.length > 0 && (
         <StoreFilterBar
           stores={visibleRecipeChips}
@@ -1235,6 +1239,8 @@ export function GroceryListView({
           onExclude={handleExcludeRecipe}
           storeCounts={recipeCounts}
           editable={false}
+          kind="recipe"
+          groupLabel="Recipe filters"
         />
       )}
       </div>

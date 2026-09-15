@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { ChecklistItemRow, ChecklistItem } from '../ChecklistParts';
 
 function Harness({ item, hideRecipes }: { item: ChecklistItem; hideRecipes?: boolean }) {
@@ -126,6 +126,37 @@ describe('ChecklistItemRow - recipe attribution', () => {
     render(<Harness item={item} />);
     fireEvent.click(screen.getByTestId('recipe-chip'));
     expect(screen.queryByText(/No recipe/)).not.toBeInTheDocument();
+  });
+
+  it('leads the recipe line with the shared outline icon; the store label carries no icon of its own', () => {
+    // Stores keep their existing solid/plain-text marker; only the recipe
+    // line gets the icon — same store-vs-recipe visual language as the
+    // chip bars (StoreFilterBar's kind="recipe").
+    const item: ChecklistItem = { ...baseItem, recipes: [{ id: 'r1', title: 'Fig Cocktail' }] };
+    const commitEditingRef = { current: null } as React.MutableRefObject<(() => void) | null>;
+    render(
+      <ChecklistItemRow
+        item={item}
+        onToggle={vi.fn()}
+        onDelete={vi.fn()}
+        onEdit={vi.fn()}
+        chips={[{ id: 'st1', name: 'Costco', position: 0 }]}
+        chipId="st1"
+        onCreateChip={vi.fn()}
+        editingItemId={null}
+        onEditingItemChange={vi.fn()}
+        commitEditingRef={commitEditingRef}
+        sectionName="Produce"
+        allSections={[{ id: 's1', name: 'Produce' }]}
+        editHighlightColor="emerald"
+        onChangeSection={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('Costco')).toBeInTheDocument();
+    // Exactly one icon on the row, and it lives inside the recipe line.
+    expect(screen.getAllByTestId('recipe-icon')).toHaveLength(1);
+    expect(within(screen.getByTestId('recipe-chip')).getByTestId('recipe-icon')).toBeInTheDocument();
   });
 
   it('hides the recipe line entirely when hideRecipes is set', () => {
