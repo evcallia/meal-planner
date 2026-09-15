@@ -161,7 +161,50 @@ func (c *Client) doAttempt(ctx context.Context, path string, body []byte, allowR
 	return c.doAttempt(ctx, path, body, false)
 }
 
+// normalizeSyncRequest fills in nil SyncEntities/LocalChangesIds slices on
+// every present bucket.
+//
+// The server rejects a bucket whose SyncEntities or LocalChangesIds is
+// JSON null with 500 "An unhandled exception occurred" — verified against
+// the live API. Go marshals a nil slice as null, so normalize both to []
+// here rather than trusting every caller to remember. Nil BUCKETS stay
+// null: that is how a bucket is skipped.
+func normalizeSyncRequest(sreq *SyncRequest) {
+	normalizeRaw := func(b *RawBucket) {
+		if b == nil {
+			return
+		}
+		if b.SyncEntities == nil {
+			b.SyncEntities = []json.RawMessage{}
+		}
+		if b.LocalChangesIds == nil {
+			b.LocalChangesIds = []string{}
+		}
+	}
+	normalizeRaw(sreq.Recipe)
+	normalizeRaw(sreq.ShoppingListCategory)
+	normalizeRaw(sreq.ShoppingListCategoryItem)
+	normalizeRaw(sreq.ShoppingList)
+	normalizeRaw(sreq.Meal)
+	normalizeRaw(sreq.Course)
+	normalizeRaw(sreq.Category)
+	normalizeRaw(sreq.Collection)
+	normalizeRaw(sreq.MealType)
+	normalizeRaw(sreq.MealPlanner)
+	normalizeRaw(sreq.Cookbook)
+
+	if b := sreq.ShoppingListItem; b != nil {
+		if b.SyncEntities == nil {
+			b.SyncEntities = []ShoppingListItem{}
+		}
+		if b.LocalChangesIds == nil {
+			b.LocalChangesIds = []string{}
+		}
+	}
+}
+
 func (c *Client) Sync(ctx context.Context, sreq SyncRequest) (*SyncResponse, error) {
+	normalizeSyncRequest(&sreq)
 	body, err := json.Marshal(sreq)
 	if err != nil {
 		return nil, err

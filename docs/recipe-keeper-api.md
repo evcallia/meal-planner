@@ -246,6 +246,28 @@ Verified against the live API: it 500s, with an error body that is literally
 certainly a timezone-conversion underflow on their side. A 1970 epoch works —
 we send `"1970-01-01T00:00:00.0000000Z"`.
 
+### `SyncEntities` / `LocalChangesIds` must be `[]`, never `null`
+
+**Every present bucket's `SyncEntities` and `LocalChangesIds` must serialize as JSON
+`[]`, even when there is nothing to push.** A `null` in either field 500s with the
+same generic `An unhandled exception occurred` body as the watermark bug above.
+Measured against the live API, holding everything else constant:
+
+| `SyncEntities` | `LocalChangesIds` | Result |
+|---|---|---|
+| `[]` | `[]` | 200 (4142 bytes of data) |
+| `null` | `null` | 500 |
+| `null` | `[]` | 500 |
+| `[]` | `null` | 500 |
+
+This is an easy mistake in Go specifically: `json.Marshal` renders a nil slice as
+`null`, not `[]`, so any bucket built by appending to a slice that's never had
+anything appended to it (the overwhelmingly common "nothing to push this cycle"
+case) silently sends `null` and 500s. This client normalizes both fields on every
+present bucket centrally, inside `Client.Sync` (`backend/internal/recipekeeper/client.go`),
+rather than relying on every call site to remember to initialize them — do the same
+in any reimplementation.
+
 > **Unverified:** `UpdatedServerItems` was empty in every captured exchange — the
 > device was always the sole writer. Its contents are *inferred* to be full entity
 > bodies in the same shape as `SyncEntities`. Confirm this against a real pull before

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -221,6 +222,56 @@ func TestNotifyRetriesOnce401ThenSucceeds(t *testing.T) {
 	}
 	if notifyCalls != 2 {
 		t.Errorf("notify calls = %d, want 2", notifyCalls)
+	}
+}
+
+// The live vendor API returns HTTP 500 "An unhandled exception occurred"
+// whenever a present bucket's SyncEntities or LocalChangesIds serializes as
+// JSON null instead of []. Go marshals a nil slice as null, so Sync must
+// normalize both fields on every present bucket before marshaling — this
+// locks that in by inspecting the actual bytes sent over the wire.
+func TestSyncNormalizesNilSliceFieldsToEmptyArrays(t *testing.T) {
+	var body []byte
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Write([]byte(`{"access_token":"` + makeJWT(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) + `"}`))
+			return
+		}
+		var err error
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		w.Write([]byte(`{}`))
+	})
+
+	_, err := c.Sync(context.Background(), SyncRequest{
+		// Deliberately nil SyncEntities/LocalChangesIds on both bucket
+		// types — exactly what SyncOnce sends when there is nothing to push.
+		ShoppingListItem: &ItemBucket{MaxLastModified: "0001-01-01T00:00:00Z"},
+		ShoppingList:     &RawBucket{MaxLastModified: "0001-01-01T00:00:00Z"},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	for _, field := range []string{"SyncEntities", "LocalChangesIds"} {
+		if bytes.Contains(body, []byte(`"`+field+`":null`)) {
+			t.Errorf("body contains %q:null, want []; body=%s", field, body)
+		}
+	}
+	// ItemBucket
+	if !bytes.Contains(body, []byte(`"ShoppingListItemSyncEntityRequest":{"MaxLastModified":"0001-01-01T00:00:00Z","SyncEntities":[],"LocalChangesIds":[]}`)) {
+		t.Errorf("ItemBucket did not normalize to empty arrays; body=%s", body)
+	}
+	// RawBucket
+	if !bytes.Contains(body, []byte(`"ShoppingListSyncEntityRequest":{"MaxLastModified":"0001-01-01T00:00:00Z","SyncEntities":[],"LocalChangesIds":[]}`)) {
+		t.Errorf("RawBucket did not normalize to empty arrays; body=%s", body)
+	}
+	// A nil bucket must still be skipped via JSON null — the mechanism that
+	// keeps the huge Recipe bucket off the wire when unused.
+	if !bytes.Contains(body, []byte(`"RecipeSyncEntityRequest":null`)) {
+		t.Errorf("nil bucket must still serialize as null; body=%s", body)
 	}
 }
 
