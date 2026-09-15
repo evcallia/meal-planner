@@ -16,6 +16,15 @@ const (
 	stateLastSync          = "last_sync"
 	stateLastError         = "last_error"
 	stateAuthFailed        = "auth_failed"
+
+	// stateSelectedList/stateSelectedListName hold the household's chosen
+	// Recipe Keeper shopping list — the household-global answer to "which
+	// list do we mirror", set via PUT /api/recipe-keeper/list. The name is
+	// cached alongside the id (captured from the live list at selection
+	// time) purely so Status can display "Groceries" instead of a GUID
+	// without an extra network round trip.
+	stateSelectedList     = "selected_list_id"
+	stateSelectedListName = "selected_list_name"
 )
 
 // epochWatermark pulls everything: the .NET zero date.
@@ -31,6 +40,19 @@ func getState(db *gorm.DB, key, fallback string) string {
 
 func setState(db *gorm.DB, key, value string) {
 	db.Save(&models.RecipeKeeperState{Key: key, Value: value})
+}
+
+// SelectedListID returns the persisted Recipe Keeper shopping-list selection,
+// or "" if none has been made yet (the state a fresh install, or one whose
+// credentials were just configured, is in).
+func SelectedListID(db *gorm.DB) string {
+	return getState(db, stateSelectedList, "")
+}
+
+// SelectedListName returns the cached display name for the selected list
+// (see stateSelectedListName), or "" if none is selected.
+func SelectedListName(db *gorm.DB) string {
+	return getState(db, stateSelectedListName, "")
 }
 
 // DeviceID returns a stable per-install identifier, generating one on first use.

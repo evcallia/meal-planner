@@ -99,9 +99,6 @@ func main() {
 	// never anything that could break the rest of Meal Planner.
 	var cancelRecipeKeeper context.CancelFunc
 	if settings.RecipeKeeperEnabled {
-		if settings.RecipeKeeperListID == "" {
-			log.Printf("recipe keeper: RECIPE_KEEPER_LIST_ID is not set — sync will import nothing until it is")
-		}
 		var missingCreds []string
 		if settings.RecipeKeeperUsername == "" {
 			missingCreds = append(missingCreds, "RECIPE_KEEPER_USERNAME")
@@ -119,8 +116,13 @@ func main() {
 		}
 		rkService := &recipekeeper.Service{
 			Client: recipekeeper.NewClient(recipeKeeperBaseURL, rkAuth, rkHeaders),
-			Rec:    &recipekeeper.Reconciler{DB: gormDB, ListID: settings.RecipeKeeperListID},
-			DB:     gormDB,
+			// No list id here: it's a GUID that lives only inside Recipe
+			// Keeper's own API, so nobody can supply it ahead of time. The
+			// Reconciler starts unselected; SyncOnce refreshes it from
+			// recipe_keeper_state (see state.go) on every cycle, and skips
+			// the cycle entirely until PUT /api/recipe-keeper/list sets one.
+			Rec: &recipekeeper.Reconciler{DB: gormDB},
+			DB:  gormDB,
 			OnChange: func(recipekeeper.Changes) {
 				// The sync loop has no *http.Request to hang a broadcast off
 				// of (unlike application.broadcast), so it publishes directly
@@ -145,6 +147,9 @@ func main() {
 		if len(missingCreds) > 0 {
 			log.Printf("recipe keeper: %s not set — sync loop not started", strings.Join(missingCreds, " and "))
 		} else {
+			if recipekeeper.SelectedListID(gormDB) == "" {
+				log.Printf("recipe keeper: no shopping list selected yet — call GET /api/recipe-keeper/lists to see available lists, then PUT /api/recipe-keeper/list to choose one; the sync loop is starting now and will pick it up automatically once you do, no restart needed")
+			}
 			var rkCtx context.Context
 			rkCtx, cancelRecipeKeeper = context.WithCancel(context.Background())
 			go rkService.Run(rkCtx)

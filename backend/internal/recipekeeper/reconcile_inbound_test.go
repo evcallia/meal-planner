@@ -37,7 +37,14 @@ func testDB(t *testing.T) *gorm.DB {
 func testReconciler(t *testing.T, db *gorm.DB) *Reconciler {
 	t.Helper()
 	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
-	return &Reconciler{DB: db, ListID: "list-1", Now: func() time.Time { return now }}
+	rec := &Reconciler{DB: db, Now: func() time.Time { return now }}
+	rec.SetListID("list-1")
+	// loop_test.go's Service.SyncOnce tests refresh the Reconciler's list id
+	// from recipe_keeper_state at the start of every cycle (see loop.go) —
+	// persist the matching selection here so that refresh doesn't wipe out
+	// the "list-1" this helper just set in memory.
+	setState(db, stateSelectedList, "list-1")
+	return rec
 }
 
 func rkItem(id, name string, opts ...func(*ShoppingListItem)) ShoppingListItem {

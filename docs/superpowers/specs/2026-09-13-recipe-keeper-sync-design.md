@@ -65,7 +65,7 @@ Recipe Keeper API                Backend                          Frontend
 | `auth.go` | Token cache, `exp` decoding, proactive renewal, backoff. |
 | `reconcile.go` | All sync logic. Pure functions over DB state — **no HTTP**. |
 | `loop.go` | Long-poll driver, scheduling, error containment. |
-| `app/recipekeeper.go` | `GET /api/recipe-keeper/status`, `POST /api/recipe-keeper/sync`. |
+| `app/recipekeeper.go` | `GET /api/recipe-keeper/status`, `POST /api/recipe-keeper/sync`, `GET /api/recipe-keeper/lists`, `PUT /api/recipe-keeper/list`. |
 
 Splitting HTTP from reconciliation is what lets the reconciler be tested exhaustively
 against captured payloads without a network.
@@ -413,11 +413,45 @@ or RK is down.
 | `RECIPE_KEEPER_ENABLED` | no | Default `false`. The whole subsystem is off unless set. |
 | `RECIPE_KEEPER_USERNAME` | yes, if enabled | RK account email |
 | `RECIPE_KEEPER_PASSWORD` | yes, if enabled | Stored like other backend secrets |
-| `RECIPE_KEEPER_LIST_ID` | yes, if enabled | No default and no auto-discovery — heuristically guessing which of a user's real RK shopping lists to sync is the wrong place to guess, since being wrong writes to the wrong live list in a third party's account. Leaving it unset imports nothing, by design. |
 | `RECIPE_KEEPER_RECEIPT_ID` | no | `X-RK-ReceiptId`. Enforcement unknown; see [Risks](#risks) |
 
 The device id is generated once and persisted in `recipe_keeper_state`. It must stay
 stable — regenerating per request would present as an unbounded fleet of new devices.
+
+### Choosing which shopping list to mirror
+
+There is deliberately no `RECIPE_KEEPER_LIST_ID` env var. A list's id is a GUID that
+exists only inside Recipe Keeper's own API — nobody can know it ahead of time, and
+guessing (e.g. "the first list returned") is the wrong place to guess, since being
+wrong writes to the wrong live list in a third party's account. Instead the selection
+is a runtime, discoverable choice, persisted in `recipe_keeper_state` (household-global,
+same as everything else this integration touches):
+
+1. **`GET /api/recipe-keeper/lists`** pulls the `ShoppingList` bucket via `Client.Sync`
+   with an epoch watermark and empty pushes (every other bucket left `nil`), returning
+   `[{id, name}]` sorted by name, deleted lists excluded. This needs credentials only —
+   no list selected — which is exactly the state a user discovering their lists is in.
+2. **`PUT /api/recipe-keeper/list`** (body `{"list_id": ...}`) validates the id against
+   that same live list — an unknown id (almost always a typo) is rejected with a 4xx
+   naming the valid options, rather than silently persisting a selection that will never
+   match anything the vendor sends — then persists it.
+3. On a genuine **change** from a previously-selected id (never on the first-ever
+   selection), every existing `RecipeKeeperLink`/`RecipeKeeperTombstone` addresses a row
+   in the OLD list and the item watermark reflects the OLD list's sync history, so all
+   three are reset (loudly, via `log.Printf`) so the new list imports cleanly. Grocery
+   rows themselves are **never** deleted — they simply go unlinked until the new list's
+   items collapse back onto them by name.
+4. The `Reconciler`'s list id is refreshed from `recipe_keeper_state` at the start of
+   every sync cycle (behind a mutex-guarded accessor — `SyncOnce` and the manual
+   `POST /api/recipe-keeper/sync` can run concurrently), so a selection made through the
+   UI takes effect on the next cycle with no restart. **With no list selected, a sync
+   cycle is skipped entirely, in both directions** — pushing would otherwise build
+   entities carrying an empty `ShoppingListId`, sending a malformed entity to a third
+   party's live API, not "syncing nothing." The skip logs once per transition into that
+   state, not every cycle.
+5. `Status` (`GET /api/recipe-keeper/status`) reports `selected_list_id` and
+   `selected_list_name` (the name is cached at selection time) so the UI can show
+   "Groceries" instead of a GUID.
 
 ## UI
 

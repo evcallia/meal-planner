@@ -250,10 +250,21 @@ func enableRecipeKeeper(t *testing.T, ta *testApp) {
 	authr := &recipekeeper.Authenticator{
 		BaseURL: srv.URL, Username: "test", Password: "test", HTTP: &http.Client{},
 	}
+	rec := &recipekeeper.Reconciler{DB: ta.App.DB}
+	rec.SetListID("test-list")
 	ta.App.RecipeKeeper = &recipekeeper.Service{
 		DB:     ta.App.DB,
-		Rec:    &recipekeeper.Reconciler{DB: ta.App.DB, ListID: "test-list"},
+		Rec:    rec,
 		Client: recipekeeper.NewClient(srv.URL, authr, recipekeeper.Headers{}),
+	}
+	// Service.SyncOnce refreshes Rec's list id from recipe_keeper_state at the
+	// start of every cycle and skips the whole cycle when none is selected
+	// (see loop.go) — persist the same "test-list" selection so the
+	// background recipeKeeperKick() goroutines these handler tests trigger
+	// still reach the fake server above, exactly as before this state lived
+	// only on the Reconciler struct.
+	if err := ta.App.DB.Save(&models.RecipeKeeperState{Key: "selected_list_id", Value: "test-list"}).Error; err != nil {
+		t.Fatalf("seed recipe keeper selected list state: %v", err)
 	}
 }
 

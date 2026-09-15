@@ -49,6 +49,12 @@ type Status struct {
 	LastSync   *time.Time `json:"last_sync"`
 	LastError  string     `json:"last_error"`
 	AuthFailed bool       `json:"auth_failed"`
+	// SelectedListID/SelectedListName describe the household's chosen Recipe
+	// Keeper shopping list (see state.go); both are "" until one is chosen
+	// via PUT /api/recipe-keeper/list. The name is cached at selection time
+	// so the UI can show "Groceries" rather than a GUID.
+	SelectedListID   string `json:"selected_list_id"`
+	SelectedListName string `json:"selected_list_name"`
 }
 
 // Service drives the sync. OnChange is called after any inbound change so the
@@ -89,6 +95,12 @@ type Service struct {
 	// canceled the instant the handler returns, which would kill an
 	// in-progress hundred-MB pull started from inside it.
 	bgCtx context.Context
+
+	// noListLogged guards the "no shopping list selected" log line to once
+	// per transition into that state, rather than once per sync cycle (the
+	// safety ticker alone would otherwise repeat it every 15 minutes
+	// forever).
+	noListLogged bool
 }
 
 // SyncOnce performs one pull/apply/push cycle: shopping-list items (the only
@@ -96,7 +108,32 @@ type Service struct {
 // feed initial section placement for newly-imported items. The Recipe bucket
 // is NOT pulled here — see SyncRecipes — because it can run to hundreds of
 // megabytes and must never sit on the critical path of a grocery sync.
+//
+// It refreshes the Reconciler's list id from recipe_keeper_state (the
+// persisted, authoritative selection — see state.go) at the start of every
+// cycle, so a selection made via PUT /api/recipe-keeper/list takes effect on
+// the next cycle without a restart. If no list is selected yet, the ENTIRE
+// cycle is skipped, both directions: entityFor would otherwise build push
+// entities carrying an empty ShoppingListId, which is not "sync nothing" —
+// it is sending a malformed entity to a third party's live API. Skipping is
+// silent after the first transition (noListLogged) rather than repeating a
+// log line on every safety-timer tick.
 func (s *Service) SyncOnce(ctx context.Context) error {
+	listID := SelectedListID(s.DB)
+	s.Rec.SetListID(listID)
+	if listID == "" {
+		s.mu.Lock()
+		if !s.noListLogged {
+			s.noListLogged = true
+			log.Printf("recipekeeper: no shopping list selected yet — skipping sync until one is chosen (GET /api/recipe-keeper/lists, then PUT /api/recipe-keeper/list)")
+		}
+		s.mu.Unlock()
+		return nil
+	}
+	s.mu.Lock()
+	s.noListLogged = false
+	s.mu.Unlock()
+
 	wm := getState(s.DB, stateWatermarkItem, epochWatermark)
 	wmCat := getState(s.DB, stateWatermarkCategory, epochWatermark)
 	wmCatItem := getState(s.DB, stateWatermarkCatItem, epochWatermark)
@@ -339,9 +376,11 @@ func (s *Service) isStopped() bool {
 
 func (s *Service) Status() Status {
 	st := Status{
-		Enabled:    true,
-		LastError:  getState(s.DB, stateLastError, ""),
-		AuthFailed: getState(s.DB, stateAuthFailed, "false") == "true",
+		Enabled:          true,
+		LastError:        getState(s.DB, stateLastError, ""),
+		AuthFailed:       getState(s.DB, stateAuthFailed, "false") == "true",
+		SelectedListID:   SelectedListID(s.DB),
+		SelectedListName: SelectedListName(s.DB),
 	}
 	if v := getState(s.DB, stateLastSync, ""); v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {

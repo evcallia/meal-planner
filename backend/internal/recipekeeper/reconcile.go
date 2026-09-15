@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,9 +27,16 @@ func (c *Changes) Any() bool {
 // Reconciler owns all sync logic. It never performs HTTP: callers hand it
 // entities and take away the entities to push.
 type Reconciler struct {
-	DB     *gorm.DB
-	ListID string
-	Now    func() time.Time
+	DB  *gorm.DB
+	Now func() time.Time
+
+	// listIDMu guards listID: SyncOnce (the poll loop) and the manual
+	// POST /api/recipe-keeper/sync path can run concurrently, and the list
+	// selection endpoint updates it from yet another goroutine — a plain
+	// field here would be a data race. Use ListID()/SetListID(), never the
+	// field directly.
+	listIDMu sync.RWMutex
+	listID   string
 }
 
 func (r *Reconciler) now() time.Time {
@@ -38,16 +46,36 @@ func (r *Reconciler) now() time.Time {
 	return models.NowUTC()
 }
 
+// ListID returns the currently selected Recipe Keeper shopping list id, or ""
+// if none has been chosen yet.
+func (r *Reconciler) ListID() string {
+	r.listIDMu.RLock()
+	defer r.listIDMu.RUnlock()
+	return r.listID
+}
+
+// SetListID updates the selected list id. Service.SyncOnce calls this at the
+// start of every cycle, refreshing it from recipe_keeper_state — the
+// authoritative, persisted source of truth — so a selection made via
+// PUT /api/recipe-keeper/list takes effect on the next cycle without a
+// restart.
+func (r *Reconciler) SetListID(id string) {
+	r.listIDMu.Lock()
+	defer r.listIDMu.Unlock()
+	r.listID = id
+}
+
 // ApplyInbound folds server entities into the grocery list.
 func (r *Reconciler) ApplyInbound(items []ShoppingListItem) (Changes, error) {
 	var ch Changes
 	for _, in := range items {
 		// Strict comparison: importing a malformed or foreign-list item into
 		// the shared household grocery list is worse than importing nothing.
-		// An unset r.ListID therefore imports nothing — deliberate fail-safe
-		// behavior until a later task resolves the list id before the first
-		// sync.
-		if in.ShoppingListID != r.ListID {
+		// An unset ListID therefore imports nothing — Service.SyncOnce
+		// already skips the whole cycle when no list is selected (see its
+		// doc comment), so this is a defense-in-depth fail-safe, not the
+		// primary guard.
+		if in.ShoppingListID != r.ListID() {
 			continue
 		}
 		if isTombstoned(r.DB, in.ID) {
@@ -374,7 +402,7 @@ func (r *Reconciler) entityFor(link models.RecipeKeeperLink, name string, checke
 	item := ShoppingListItem{
 		ID:                     link.RKItemID,
 		Name:                   name,
-		ShoppingListID:         r.ListID,
+		ShoppingListID:         r.ListID(),
 		IsChecked:              checkedNow,
 		Position:               link.RKPosition,
 		RecipeID:               link.RKRecipeID,

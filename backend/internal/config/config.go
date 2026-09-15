@@ -65,11 +65,13 @@ type Settings struct {
 	StaticDir string
 
 	// Recipe Keeper sync (see docs/recipe-keeper-api.md). Disabled unless
-	// RECIPE_KEEPER_ENABLED is true.
+	// RECIPE_KEEPER_ENABLED is true. Which shopping list to mirror is NOT
+	// configured here — that id is a GUID that exists only inside the
+	// vendor's API, so it is discovered and selected at runtime via
+	// GET/PUT /api/recipe-keeper/list(s) and persisted in recipe_keeper_state.
 	RecipeKeeperEnabled   bool
 	RecipeKeeperUsername  string
 	RecipeKeeperPassword  string
-	RecipeKeeperListID    string
 	RecipeKeeperReceiptID string
 }
 
@@ -190,7 +192,6 @@ func Load(envPath string) *Settings {
 		RecipeKeeperEnabled:   l.boolean("RECIPE_KEEPER_ENABLED", false),
 		RecipeKeeperUsername:  l.str("RECIPE_KEEPER_USERNAME", ""),
 		RecipeKeeperPassword:  l.str("RECIPE_KEEPER_PASSWORD", ""),
-		RecipeKeeperListID:    l.str("RECIPE_KEEPER_LIST_ID", ""),
 		RecipeKeeperReceiptID: l.str("RECIPE_KEEPER_RECEIPT_ID", ""),
 	}
 }
