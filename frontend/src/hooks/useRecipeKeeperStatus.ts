@@ -42,12 +42,15 @@ export function useRecipeKeeperStatus(enabled: boolean) {
     return () => clearInterval(id);
   }, [enabled, refresh]);
 
-  // Also refresh promptly when connectivity returns, same spirit as the
-  // rest of the app's reconnect-triggered refreshes.
+  // Also refresh promptly on reconnect (offline→online), same spirit as the
+  // rest of the app's reconnect-triggered refreshes. Skips the initial
+  // mount, which the effect above already covers — a `hadConnection` style
+  // guard so this doesn't double the mount fetch.
+  const hadConnectionRef = useRef(false);
   useEffect(() => {
-    if (enabled && isOnline) refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOnline]);
+    if (isOnline && hadConnectionRef.current) refresh();
+    if (isOnline) hadConnectionRef.current = true;
+  }, [isOnline, refresh]);
 
   return { status, refresh, applyStatus: setStatus };
 }
