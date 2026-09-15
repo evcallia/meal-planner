@@ -163,6 +163,14 @@ func main() {
 			if recipekeeper.SelectedListID(gormDB) == "" {
 				log.Printf("recipe keeper: no shopping list selected yet — call GET /api/recipe-keeper/lists to see available lists, then PUT /api/recipe-keeper/list to choose one; the sync loop is starting now and will pick it up automatically once you do, no restart needed")
 			}
+			if recipekeeper.IsPaused(gormDB) {
+				// Loud and explicit — a paused-but-running loop that never
+				// syncs must not read like a silent failure. Nothing else
+				// needs doing here: every sync entry point already checks
+				// IsPaused itself, and PUT /api/recipe-keeper/paused kicks an
+				// immediate sync the moment someone resumes.
+				log.Printf("recipe keeper: starting PAUSED — no syncing in either direction until resumed via PUT /api/recipe-keeper/paused or the Settings toggle")
+			}
 			log.Printf("recipe keeper: polling every %s while connected, every %s while idle",
 				rkService.PollInterval, rkService.IdlePollInterval)
 			var rkCtx context.Context

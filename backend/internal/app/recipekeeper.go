@@ -35,6 +35,15 @@ func (a *App) handleRecipeKeeperSync(w http.ResponseWriter, r *http.Request, _ *
 		httpx.Detail(w, http.StatusBadRequest, "Recipe Keeper sync is not configured")
 		return
 	}
+	// The manual button must refuse loudly while paused rather than silently
+	// no-op: SyncOnce itself already treats "paused" as a no-op success (so
+	// the background poll/safety-timer loops don't need special-casing), but
+	// a user who explicitly asked for a sync deserves to know why nothing
+	// happened rather than see a bare "synced" with no visible effect.
+	if recipekeeper.IsPaused(a.RecipeKeeper.DB) {
+		httpx.Detail(w, http.StatusConflict, "Recipe Keeper sync is paused — resume it in Settings before syncing")
+		return
+	}
 	if err := a.RecipeKeeper.SyncOnce(r.Context()); err != nil {
 		httpx.Detail(w, http.StatusBadGateway, err.Error())
 		return
@@ -108,6 +117,40 @@ func (a *App) handleRecipeKeeperSelectList(w http.ResponseWriter, r *http.Reques
 	// recipe-title cache a freshly-imported list needs for attribution.
 	a.RecipeKeeper.TriggerGrocerySync()
 	a.RecipeKeeper.TriggerRecipeSync()
+
+	httpx.WriteJSON(w, http.StatusOK, a.RecipeKeeper.Status())
+}
+
+// handleRecipeKeeperSetPaused flips the household-global pause switch (see
+// recipekeeper.IsPaused): a safety valve so a household can keep grocery
+// shopping through a misbehaving sync without it writing to (or reading
+// from) their real Recipe Keeper account. Pausing itself needs no extra
+// work — every sync entry point (SyncOnce, SyncRecipes, and both Trigger*
+// methods) already checks the flag directly. Resuming does need a nudge:
+// otherwise a household would sit idle until the next poll tick or the
+// 15-minute safety timer, exactly like a fresh list selection (see
+// handleRecipeKeeperSelectList) — so this fires the same two non-blocking,
+// latch-aware triggers on resume, and skips them on pause since there is
+// nothing to kick.
+func (a *App) handleRecipeKeeperSetPaused(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
+	if a.RecipeKeeper == nil {
+		httpx.Detail(w, http.StatusBadRequest, "Recipe Keeper sync is not configured")
+		return
+	}
+	var payload struct {
+		Paused bool `json:"paused"`
+	}
+	present, err := httpx.DecodeBody(r, &payload)
+	if err != nil || !present["paused"] {
+		httpx.ValidationError(w, "paused is required")
+		return
+	}
+
+	recipekeeper.SetPaused(a.RecipeKeeper.DB, payload.Paused)
+	if !payload.Paused {
+		a.RecipeKeeper.TriggerGrocerySync()
+		a.RecipeKeeper.TriggerRecipeSync()
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, a.RecipeKeeper.Status())
 }

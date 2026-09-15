@@ -219,6 +219,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/recipe-keeper/sync", auth(a.handleRecipeKeeperSync))
 	mux.HandleFunc("GET /api/recipe-keeper/lists", auth(a.handleRecipeKeeperLists))
 	mux.HandleFunc("PUT /api/recipe-keeper/list", auth(a.handleRecipeKeeperSelectList))
+	mux.HandleFunc("PUT /api/recipe-keeper/paused", auth(a.handleRecipeKeeperSetPaused))
 
 	// Unknown /api paths → 404 JSON (before the SPA catch-all).
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {

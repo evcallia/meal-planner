@@ -24,7 +24,7 @@ describe('useRecipeKeeperStatus', () => {
 
   it('fetches status on mount when enabled', async () => {
     mockGetStatus.mockResolvedValue({
-      enabled: true, last_sync: null, last_error: '', auth_failed: false,
+      enabled: true, last_sync: null, last_error: '', auth_failed: false, paused: false,
       selected_list_id: 'l1', selected_list_name: 'Groceries',
     });
     const { result } = renderHook(() => useRecipeKeeperStatus(true));
@@ -40,7 +40,7 @@ describe('useRecipeKeeperStatus', () => {
   it('polls on an interval', async () => {
     vi.useFakeTimers();
     mockGetStatus.mockResolvedValue({
-      enabled: true, last_sync: null, last_error: '', auth_failed: false,
+      enabled: true, last_sync: null, last_error: '', auth_failed: false, paused: false,
       selected_list_id: '', selected_list_name: '',
     });
     renderHook(() => useRecipeKeeperStatus(true));
@@ -56,7 +56,7 @@ describe('useRecipeKeeperStatus', () => {
   it('stops polling once the backend reports the integration is not configured', async () => {
     vi.useFakeTimers();
     mockGetStatus.mockResolvedValue({
-      enabled: false, last_sync: null, last_error: '', auth_failed: false,
+      enabled: false, last_sync: null, last_error: '', auth_failed: false, paused: false,
       selected_list_id: '', selected_list_name: '',
     });
     renderHook(() => useRecipeKeeperStatus(true));
@@ -73,7 +73,7 @@ describe('useRecipeKeeperStatus', () => {
 
   it('applyStatus lets a caller (e.g. a Settings mutation) push a fresh status immediately', async () => {
     mockGetStatus.mockResolvedValue({
-      enabled: true, last_sync: null, last_error: '', auth_failed: false,
+      enabled: true, last_sync: null, last_error: '', auth_failed: false, paused: false,
       selected_list_id: '', selected_list_name: '',
     });
     const { result } = renderHook(() => useRecipeKeeperStatus(true));
@@ -81,7 +81,7 @@ describe('useRecipeKeeperStatus', () => {
 
     act(() => {
       result.current.applyStatus({
-        enabled: true, last_sync: '2026-01-01T00:00:00Z', last_error: '', auth_failed: false,
+        enabled: true, last_sync: '2026-01-01T00:00:00Z', last_error: '', auth_failed: false, paused: false,
         selected_list_id: 'l2', selected_list_name: 'Party Supplies',
       });
     });

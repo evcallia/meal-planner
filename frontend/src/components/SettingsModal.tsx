@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, ReactNode } from 'react';
 import { Settings } from '../hooks/useSettings';
-import { getCalendarCacheStatus, refreshCalendarCache, CalendarCacheStatus, getHiddenCalendarEvents, unhideCalendarEvent, HiddenCalendarEvent, sendTestPushNotification, getRecipeKeeperLists, selectRecipeKeeperList, syncRecipeKeeperNow, RecipeKeeperListOption, RecipeKeeperStatus } from '../api/client';
+import { getCalendarCacheStatus, refreshCalendarCache, CalendarCacheStatus, getHiddenCalendarEvents, unhideCalendarEvent, HiddenCalendarEvent, sendTestPushNotification, getRecipeKeeperLists, selectRecipeKeeperList, syncRecipeKeeperNow, setRecipeKeeperPaused, RecipeKeeperListOption, RecipeKeeperStatus } from '../api/client';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { isPushSupported, getPushSubscription, enablePush, disablePush } from '../utils/push';
 import { parseServerDate } from '../utils/recency';
@@ -391,6 +391,7 @@ function RecipeKeeperSettings({ status, onStatusChange, onRefresh }: {
   // first-ever pick needs no warning (nothing to reset yet).
   const [pendingListId, setPendingListId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [pausing, setPausing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -425,6 +426,18 @@ function RecipeKeeperSettings({ status, onStatusChange, onRefresh }: {
     applySelection(listId);
   }, [status.selected_list_id, applySelection]);
 
+  const handleTogglePause = useCallback(async () => {
+    setPausing(true);
+    setActionError(null);
+    try {
+      onStatusChange(await setRecipeKeeperPaused(!status.paused));
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Failed to change pause state');
+    } finally {
+      setPausing(false);
+    }
+  }, [status.paused, onStatusChange]);
+
   const handleSyncNow = useCallback(async () => {
     setSyncing(true);
     setActionError(null);
@@ -440,6 +453,23 @@ function RecipeKeeperSettings({ status, onStatusChange, onRefresh }: {
 
   return (
     <>
+      <div>
+        <NotifyToggle
+          label="Pause sync"
+          description={status.paused
+            ? 'Sync is paused — nothing is being sent to or received from Recipe Keeper. Your grocery list still works normally.'
+            : 'Stop syncing with Recipe Keeper in both directions, e.g. while troubleshooting.'}
+          checked={status.paused}
+          disabled={pausing}
+          onChange={handleTogglePause}
+        />
+        {status.paused && (
+          <p className="mt-1.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+            Sync is paused. Resume above to push and pull Recipe Keeper changes again.
+          </p>
+        )}
+      </div>
+
       <div>
         <span className="text-gray-900 dark:text-gray-100 font-medium">Shopping list</span>
         <p className="text-sm text-gray-500 dark:text-gray-400 mb-1.5">
@@ -495,10 +525,11 @@ function RecipeKeeperSettings({ status, onStatusChange, onRefresh }: {
 
       <button
         onClick={handleSyncNow}
-        disabled={syncing}
+        disabled={syncing || status.paused}
+        title={status.paused ? 'Sync is paused' : undefined}
         className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
-        {syncing ? 'Syncing…' : 'Sync now'}
+        {status.paused ? 'Paused' : syncing ? 'Syncing…' : 'Sync now'}
       </button>
     </>
   );
@@ -1320,7 +1351,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
     configured (a household without the integration has nothing to see
     here); recipeKeeperStatus is null until the first poll lands too. */}
           {recipeKeeperStatus?.enabled && onRecipeKeeperStatusChange && (
-            <SettingsSection title="Recipe Keeper">
+            <SettingsSection title={recipeKeeperStatus.paused ? 'Recipe Keeper — Paused' : 'Recipe Keeper'}>
               <RecipeKeeperSettings status={recipeKeeperStatus} onStatusChange={onRecipeKeeperStatusChange} onRefresh={onRefreshRecipeKeeperStatus} />
             </SettingsSection>
           )}

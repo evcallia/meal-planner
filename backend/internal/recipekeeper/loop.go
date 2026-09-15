@@ -117,6 +117,10 @@ type Status struct {
 	// so the UI can show "Groceries" rather than a GUID.
 	SelectedListID   string `json:"selected_list_id"`
 	SelectedListName string `json:"selected_list_name"`
+	// Paused mirrors the household-global pause switch (see
+	// stateSyncPaused): while true, SyncOnce/SyncRecipes and the triggers
+	// that would call them are all no-ops, in both directions.
+	Paused bool `json:"paused"`
 }
 
 // Service drives the sync. OnChange is called after any inbound change so the
@@ -204,6 +208,10 @@ type Service struct {
 	// safety ticker alone would otherwise repeat it every 15 minutes
 	// forever).
 	noListLogged bool
+
+	// pauseLogged mirrors noListLogged for the pause switch: logged once per
+	// transition into the paused state, not once per skipped cycle.
+	pauseLogged bool
 }
 
 // lastItemLastModified returns the LastModified of the LAST entity in a page
@@ -264,6 +272,27 @@ func lastRawLastModified(items []json.RawMessage) (string, bool) {
 // bucket's watermark is only written to the DB once THAT bucket has
 // finished draining.
 func (s *Service) SyncOnce(ctx context.Context) error {
+	// The pause switch is checked FIRST, before any watermark or list-id
+	// read: pausing must never advance a watermark, even by a no-op read
+	// that happens to fall in the same code path. A resumed sync starts
+	// from exactly where it left off, and any local pushes/tombstones made
+	// while paused are picked up by the very next (post-resume) SyncOnce —
+	// see PendingPushes, which derives pending work from current DB state
+	// rather than a queue, so nothing here needs to remember what happened
+	// while paused.
+	if IsPaused(s.DB) {
+		s.mu.Lock()
+		if !s.pauseLogged {
+			s.pauseLogged = true
+			log.Printf("recipekeeper: sync is paused — skipping until resumed (PUT /api/recipe-keeper/paused or the Settings toggle)")
+		}
+		s.mu.Unlock()
+		return nil
+	}
+	s.mu.Lock()
+	s.pauseLogged = false
+	s.mu.Unlock()
+
 	listID := SelectedListID(s.DB)
 	s.Rec.SetListID(listID)
 	if listID == "" {
@@ -465,6 +494,11 @@ func (s *Service) SyncOnce(ctx context.Context) error {
 // go through TriggerRecipeSync rather than calling this directly, so only one
 // pull is ever in flight.
 func (s *Service) SyncRecipes(ctx context.Context) error {
+	// Mirrors SyncOnce's pause guard (see its comment) — checked before the
+	// watermark is even read, so pausing can never advance it.
+	if IsPaused(s.DB) {
+		return nil
+	}
 	wm := getState(s.DB, stateWatermarkRecipe, epochWatermark)
 	for page := 0; page < maxRecipeSyncPages; page++ {
 		resp, err := s.Client.Sync(ctx, SyncRequest{
@@ -513,6 +547,9 @@ func (s *Service) SyncRecipes(ctx context.Context) error {
 // then every subsequent SyncOnce) collapses to at most one extra run, never
 // zero and never one per trigger.
 func (s *Service) TriggerRecipeSync() {
+	if IsPaused(s.DB) {
+		return
+	}
 	if !s.recipeSyncMu.TryLock() {
 		s.mu.Lock()
 		s.recipeSyncPending = true
@@ -551,7 +588,10 @@ func (s *Service) TriggerRecipeSync() {
 // within seconds instead of waiting for the safety timer. It never even
 // starts once the auth-failure latch has tripped: retrying a rejected
 // password on every grocery edit is the exact account-lockout risk that
-// latch exists to prevent.
+// latch exists to prevent. Same for the pause switch (IsPaused): a paused
+// household must be able to add/check/delete grocery items freely without
+// any of it reaching Recipe Keeper — the local mutation still happens and
+// still tombstones/retargets links as usual, only this trigger is inert.
 //
 // When a sync is already in flight, it coalesces rather than dropping: it
 // sets grocerySyncPending and returns, and the in-flight goroutine notices
@@ -564,7 +604,7 @@ func (s *Service) TriggerRecipeSync() {
 // it is generously above a real full drain — a cancelled drain makes no
 // progress, because the watermark is only persisted once a drain completes.
 func (s *Service) TriggerGrocerySync() {
-	if s.isStopped() {
+	if s.isStopped() || IsPaused(s.DB) {
 		return
 	}
 	if !s.grocerySyncMu.TryLock() {
@@ -666,6 +706,7 @@ func (s *Service) Status() Status {
 		AuthFailed:       getState(s.DB, stateAuthFailed, "false") == "true",
 		SelectedListID:   SelectedListID(s.DB),
 		SelectedListName: SelectedListName(s.DB),
+		Paused:           IsPaused(s.DB),
 	}
 	if v := getState(s.DB, stateLastSync, ""); v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {

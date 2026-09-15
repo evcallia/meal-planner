@@ -15,11 +15,15 @@ vi.mock('../../api/client', () => ({
     { id: 'list-2', name: 'Party Supplies' },
   ])),
   selectRecipeKeeperList: vi.fn((listId: string) => Promise.resolve({
-    enabled: true, last_sync: null, last_error: '', auth_failed: false,
+    enabled: true, last_sync: null, last_error: '', auth_failed: false, paused: false,
     selected_list_id: listId, selected_list_name: listId === 'list-2' ? 'Party Supplies' : 'Groceries',
   })),
   syncRecipeKeeperNow: vi.fn(() => Promise.resolve({
-    enabled: true, last_sync: '2026-01-01T00:00:00Z', last_error: '', auth_failed: false,
+    enabled: true, last_sync: '2026-01-01T00:00:00Z', last_error: '', auth_failed: false, paused: false,
+    selected_list_id: 'list-1', selected_list_name: 'Groceries',
+  })),
+  setRecipeKeeperPaused: vi.fn((paused: boolean) => Promise.resolve({
+    enabled: true, last_sync: null, last_error: '', auth_failed: false, paused,
     selected_list_id: 'list-1', selected_list_name: 'Groceries',
   })),
 }));
@@ -40,11 +44,12 @@ vi.mock('../../db', () => ({
   getCalendarCacheTimestamp: vi.fn(() => Promise.resolve(null)),
 }));
 
-import { getRecipeKeeperLists, selectRecipeKeeperList, syncRecipeKeeperNow } from '../../api/client';
+import { getRecipeKeeperLists, selectRecipeKeeperList, syncRecipeKeeperNow, setRecipeKeeperPaused } from '../../api/client';
 
 const mockGetLists = vi.mocked(getRecipeKeeperLists);
 const mockSelectList = vi.mocked(selectRecipeKeeperList);
 const mockSyncNow = vi.mocked(syncRecipeKeeperNow);
+const mockSetPaused = vi.mocked(setRecipeKeeperPaused);
 
 const defaultSettings: Settings = {
   showItemizedColumn: true,
@@ -63,6 +68,7 @@ const enabledStatus = (overrides: Partial<RecipeKeeperStatus> = {}): RecipeKeepe
   last_sync: null,
   last_error: '',
   auth_failed: false,
+  paused: false,
   selected_list_id: '',
   selected_list_name: '',
   ...overrides,
@@ -81,7 +87,7 @@ describe('SettingsModal - Recipe Keeper section', () => {
         onClose={vi.fn()}
         isDark={false}
         onToggleDarkMode={vi.fn()}
-        recipeKeeperStatus={{ enabled: false, last_sync: null, last_error: '', auth_failed: false, selected_list_id: '', selected_list_name: '' }}
+        recipeKeeperStatus={{ enabled: false, last_sync: null, last_error: '', auth_failed: false, paused: false, selected_list_id: '', selected_list_name: '' }}
         onRecipeKeeperStatusChange={vi.fn()}
       />
     );
@@ -251,5 +257,104 @@ describe('SettingsModal - Recipe Keeper section', () => {
     await waitFor(() => expect(screen.getByText('Settings')).toBeInTheDocument());
     expandSections();
     expect(screen.getByText(/Sign-in failed/)).toBeInTheDocument();
+  });
+
+  it('the pause toggle reflects the current paused state', async () => {
+    render(
+      <SettingsModal
+        settings={defaultSettings}
+        onUpdate={vi.fn()}
+        onClose={vi.fn()}
+        isDark={false}
+        onToggleDarkMode={vi.fn()}
+        recipeKeeperStatus={enabledStatus({ paused: true, selected_list_id: 'list-1', selected_list_name: 'Groceries' })}
+        onRecipeKeeperStatusChange={vi.fn()}
+      />
+    );
+    await waitFor(() => expect(screen.getByText('Settings')).toBeInTheDocument());
+    expandSections();
+
+    const toggle = screen.getByRole('switch', { name: /pause sync/i });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    // The paused state must be visible even before reading the toggle
+    // itself — the section title and a dedicated status line both call it
+    // out, so someone glancing mid-shop can tell instantly.
+    expect(screen.getByText('Recipe Keeper — Paused')).toBeInTheDocument();
+    expect(screen.getByText(/Sync is paused\. Resume/)).toBeInTheDocument();
+  });
+
+  it('toggling pause on calls PUT /paused with true and applies the returned status', async () => {
+    const onStatusChange = vi.fn();
+    render(
+      <SettingsModal
+        settings={defaultSettings}
+        onUpdate={vi.fn()}
+        onClose={vi.fn()}
+        isDark={false}
+        onToggleDarkMode={vi.fn()}
+        recipeKeeperStatus={enabledStatus({ paused: false, selected_list_id: 'list-1', selected_list_name: 'Groceries' })}
+        onRecipeKeeperStatusChange={onStatusChange}
+      />
+    );
+    await waitFor(() => expect(screen.getByText('Settings')).toBeInTheDocument());
+    expandSections();
+
+    const toggle = screen.getByRole('switch', { name: /pause sync/i });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+    await act(async () => {
+      fireEvent.click(toggle);
+      await Promise.resolve();
+    });
+
+    expect(mockSetPaused).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith(expect.objectContaining({ paused: true })));
+  });
+
+  it('toggling pause off calls PUT /paused with false', async () => {
+    const onStatusChange = vi.fn();
+    render(
+      <SettingsModal
+        settings={defaultSettings}
+        onUpdate={vi.fn()}
+        onClose={vi.fn()}
+        isDark={false}
+        onToggleDarkMode={vi.fn()}
+        recipeKeeperStatus={enabledStatus({ paused: true, selected_list_id: 'list-1', selected_list_name: 'Groceries' })}
+        onRecipeKeeperStatusChange={onStatusChange}
+      />
+    );
+    await waitFor(() => expect(screen.getByText('Settings')).toBeInTheDocument());
+    expandSections();
+
+    const toggle = screen.getByRole('switch', { name: /pause sync/i });
+    await act(async () => {
+      fireEvent.click(toggle);
+      await Promise.resolve();
+    });
+
+    expect(mockSetPaused).toHaveBeenCalledWith(false);
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith(expect.objectContaining({ paused: false })));
+  });
+
+  it('"Sync now" is disabled while paused', async () => {
+    render(
+      <SettingsModal
+        settings={defaultSettings}
+        onUpdate={vi.fn()}
+        onClose={vi.fn()}
+        isDark={false}
+        onToggleDarkMode={vi.fn()}
+        recipeKeeperStatus={enabledStatus({ paused: true, selected_list_id: 'list-1', selected_list_name: 'Groceries' })}
+        onRecipeKeeperStatusChange={vi.fn()}
+      />
+    );
+    await waitFor(() => expect(screen.getByText('Settings')).toBeInTheDocument());
+    expandSections();
+
+    const button = screen.getByText('Paused').closest('button');
+    expect(button).toBeDisabled();
+    if (button) fireEvent.click(button);
+    expect(mockSyncNow).not.toHaveBeenCalled();
   });
 });

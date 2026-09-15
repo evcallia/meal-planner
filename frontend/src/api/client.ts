@@ -859,6 +859,11 @@ export interface RecipeKeeperStatus {
   auth_failed: boolean;
   selected_list_id: string;
   selected_list_name: string;
+  // Household-global pause switch: while true, nothing syncs in either
+  // direction (no polling, no reconcile kicks, no manual sync) — a safety
+  // valve so shopping can continue through a misbehaving sync. See
+  // CLAUDE.md "Recipe Keeper Sync".
+  paused: boolean;
 }
 
 export async function getRecipeKeeperStatus(): Promise<RecipeKeeperStatus> {
@@ -881,4 +886,13 @@ export async function selectRecipeKeeperList(listId: string): Promise<RecipeKeep
 
 export async function syncRecipeKeeperNow(): Promise<RecipeKeeperStatus> {
   return fetchAPI<RecipeKeeperStatus>('/recipe-keeper/sync', { method: 'POST' });
+}
+
+// Resuming (paused: false) kicks an immediate sync server-side — nothing
+// further to do here once the promise resolves.
+export async function setRecipeKeeperPaused(paused: boolean): Promise<RecipeKeeperStatus> {
+  return fetchAPI<RecipeKeeperStatus>('/recipe-keeper/paused', {
+    method: 'PUT',
+    body: JSON.stringify({ paused }),
+  });
 }
