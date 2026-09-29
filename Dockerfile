@@ -14,7 +14,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Build Go backend (cross-compiled natively — pure Go, CGO off)
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS backend-builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS backend-builder
 
 WORKDIR /src
 
@@ -27,7 +27,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
 # Stage 3: Minimal runtime
-FROM alpine:3.20
+FROM alpine:3.24
 
 WORKDIR /app
 
