@@ -335,7 +335,7 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
             >
               {store.name}
               {storeCounts && (storeCounts.get(store.id) ?? 0) > 0 && (
-                <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center ${
+                <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-5 text-center ${
                   isSelected
                     ? 'bg-blue-400/30 text-white'
                     : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
@@ -370,7 +370,7 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
             >
               None
               {noneCount > 0 && (
-                <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center ${
+                <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-5 text-center ${
                   noneIsSelected
                     ? 'bg-blue-400/30 text-white'
                     : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
@@ -393,7 +393,7 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
                 onChange={(e) => setEditName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleSaveRename(); if (e.key === 'Escape') setEditingStoreId(null); }}
                 autoFocus
-                className="w-full text-sm px-2 py-1 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"
+                className="w-full text-sm px-2 py-1 border rounded-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"
               />
             )}
             {excludedStoreIds.has(editingStoreId) ? (

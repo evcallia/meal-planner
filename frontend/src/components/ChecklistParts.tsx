@@ -76,7 +76,7 @@ export function SectionCombobox({ sections, value, onChange }: {
         onChange={e => { onChange(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
-        className="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 pl-2 pr-7 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        className="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-sm text-sm py-0.5 pl-2 pr-7 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
       />
       {value.trim() && (
         <button
@@ -250,10 +250,10 @@ export function ChecklistItemRow({
     return (
       <div ref={editFormRef} className={`px-4 py-1.5 space-y-1.5 ${getEditHighlight(editHighlightColor).form}`}>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 flex-shrink-0">
+          <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={() => setEditQuantity(String(Math.max(0, qtyNum - 1) || ''))}
-              className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
+              className="w-7 h-7 flex items-center justify-center rounded-sm bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
             >
               −
             </button>
@@ -262,7 +262,7 @@ export function ChecklistItemRow({
             </span>
             <button
               onClick={() => setEditQuantity(String(qtyNum + 1))}
-              className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
+              className="w-7 h-7 flex items-center justify-center rounded-sm bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
             >
               +
             </button>
@@ -276,7 +276,7 @@ export function ChecklistItemRow({
               if (e.key === 'Enter') commitEdit();
               if (e.key === 'Escape') cancelEdit();
             }}
-            className="flex-1 min-w-0 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="flex-1 min-w-0 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-sm text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
           />
         </div>
         <SectionCombobox
@@ -385,7 +385,7 @@ export function ChecklistItemRow({
         {/* Desktop drag handle for items */}
         {dragHandlers && handleMouseDown && (
           <svg
-            className="drag-handle w-3.5 h-3.5 text-gray-300 dark:text-gray-600 flex-shrink-0 mt-0.5 cursor-grab active:cursor-grabbing"
+            className="drag-handle w-3.5 h-3.5 text-gray-300 dark:text-gray-600 shrink-0 mt-0.5 cursor-grab active:cursor-grabbing"
             fill="currentColor"
             viewBox="0 0 20 20"
             onMouseDown={handleMouseDown}
@@ -400,7 +400,7 @@ export function ChecklistItemRow({
           onClick={() => onToggle(item.id, !item.checked)}
           aria-label={item.checked ? `Uncheck ${item.name}` : `Check ${item.name}`}
           className={`
-            flex-shrink-0 w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5
+            shrink-0 w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5
             transition-colors duration-150
             ${item.checked
               ? 'bg-green-500 border-green-500 dark:bg-green-600 dark:border-green-600'
@@ -419,7 +419,7 @@ export function ChecklistItemRow({
         <div className="flex flex-col min-w-0 flex-1" onClick={startEditing}>
           <span
             className={`
-              min-w-0 break-words cursor-pointer
+              min-w-0 wrap-break-word cursor-pointer
               text-sm
               ${item.checked
                 ? 'text-gray-400 dark:text-gray-500 line-through'
@@ -445,7 +445,7 @@ export function ChecklistItemRow({
         <button
           type="button"
           onClick={() => onDelete(item.id)}
-          className="hover-delete-btn flex-shrink-0 items-center ml-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
+          className="hover-delete-btn shrink-0 items-center ml-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
           aria-label="Delete item"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -585,7 +585,7 @@ export function ChecklistSectionCard({
       >
         <div className="flex items-center gap-2">
           <svg
-            className="drag-handle w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0 cursor-grab active:cursor-grabbing"
+            className="drag-handle w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0 cursor-grab active:cursor-grabbing"
             fill="currentColor"
             viewBox="0 0 20 20"
             onMouseDown={sectionHandleMouseDown}
@@ -603,7 +603,7 @@ export function ChecklistSectionCard({
                 if (e.key === 'Escape') { setEditNameValue(section.name); setIsEditingName(false); }
               }}
               onBlur={commitRename}
-              className="font-semibold text-sm bg-white dark:bg-gray-700 border rounded px-1.5 py-0.5 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 min-w-0"
+              className="font-semibold text-sm bg-white dark:bg-gray-700 border rounded-sm px-1.5 py-0.5 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-1 min-w-0"
               style={{ borderColor: 'var(--edit-accent)' }}
             />
           ) : (
@@ -705,7 +705,7 @@ export function ChecklistSectionCard({
                   if (e.key === 'Enter') onAddItem(section.id);
                   if (e.key === 'Escape') onStartAdd(null);
                 }}
-                className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500 text-sm py-1"
+                className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
               />
               <button
                 onClick={() => onAddItem(section.id)}

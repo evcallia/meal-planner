@@ -167,7 +167,7 @@ export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightC
       style={{ '--edit-accent': getEditHighlight(editHighlightColor).accent } as React.CSSProperties}
     >
       {/* Sticky header: action bar */}
-      <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
+      <div className="sticky z-9 glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
       {/* Action bar */}
       <div className="flex items-center gap-2">
         {isAddingSection ? (
@@ -182,17 +182,17 @@ export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightC
                 if (e.key === 'Escape') { setNewSectionName(''); setIsAddingSection(false); }
               }}
               placeholder="Section name..."
-              className="flex-1 bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none text-sm"
+              className="flex-1 bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden text-sm"
             />
             <button
               onClick={handleAddSection}
-              className="text-blue-500 hover:text-blue-600 text-sm font-medium flex-shrink-0"
+              className="text-blue-500 hover:text-blue-600 text-sm font-medium shrink-0"
             >
               Add
             </button>
             <button
               onClick={() => { setNewSectionName(''); setIsAddingSection(false); }}
-              className="text-gray-400 hover:text-gray-600 text-sm flex-shrink-0"
+              className="text-gray-400 hover:text-gray-600 text-sm shrink-0"
             >
               Cancel
             </button>
@@ -399,7 +399,7 @@ function PantrySectionCard({
       >
         <div className="flex items-center gap-2">
           <svg
-            className="drag-handle w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0 cursor-grab active:cursor-grabbing"
+            className="drag-handle w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0 cursor-grab active:cursor-grabbing"
             fill="currentColor"
             viewBox="0 0 20 20"
             onMouseDown={sectionHandleMouseDown}
@@ -417,7 +417,7 @@ function PantrySectionCard({
                 if (e.key === 'Escape') { setEditNameValue(section.name); setIsEditingName(false); }
               }}
               onBlur={commitRename}
-              className="font-semibold text-sm bg-white dark:bg-gray-700 border rounded px-1.5 py-0.5 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 min-w-0"
+              className="font-semibold text-sm bg-white dark:bg-gray-700 border rounded-sm px-1.5 py-0.5 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-1 min-w-0"
               style={{ borderColor: 'var(--edit-accent)' }}
             />
           ) : (
@@ -511,7 +511,7 @@ function PantrySectionCard({
                 }}
                 placeholder="Item name..."
                 autoFocus
-                className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500 text-sm py-1"
+                className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
               />
               <input
                 type="number"
@@ -522,7 +522,7 @@ function PantrySectionCard({
                 onKeyDown={e => {
                   if (e.key === 'Enter') onAddItem(section.id);
                 }}
-                className="w-12 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500 text-sm py-1 text-center"
+                className="w-12 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:border-blue-500 text-sm py-1 text-center"
               />
               <button
                 onClick={() => onAddItem(section.id)}
@@ -618,17 +618,17 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
             if (e.key === 'Enter') commitEdit();
             if (e.key === 'Escape') cancelEdit();
           }}
-          className="flex-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="flex-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-sm text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
         />
         <button
           onClick={commitEdit}
-          className="text-blue-500 hover:text-blue-600 text-sm font-medium flex-shrink-0"
+          className="text-blue-500 hover:text-blue-600 text-sm font-medium shrink-0"
         >
           Save
         </button>
         <button
           onClick={cancelEdit}
-          className="text-gray-400 hover:text-gray-600 text-sm flex-shrink-0"
+          className="text-gray-400 hover:text-gray-600 text-sm shrink-0"
         >
           Cancel
         </button>
@@ -708,7 +708,7 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
         {/* Drag handle */}
         {dragHandlers && handleMouseDown && (
           <svg
-            className="drag-handle w-3.5 h-3.5 text-gray-300 dark:text-gray-600 flex-shrink-0 cursor-grab active:cursor-grabbing"
+            className="drag-handle w-3.5 h-3.5 text-gray-300 dark:text-gray-600 shrink-0 cursor-grab active:cursor-grabbing"
             fill="currentColor"
             viewBox="0 0 20 20"
             onMouseDown={handleMouseDown}
@@ -719,7 +719,7 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
 
         {/* Item name — tap to edit */}
         <span
-          className="flex-1 min-w-0 break-words cursor-pointer text-sm text-gray-800 dark:text-gray-200"
+          className="flex-1 min-w-0 wrap-break-word cursor-pointer text-sm text-gray-800 dark:text-gray-200"
           onClick={startEditing}
         >
           {item.name}
@@ -729,29 +729,29 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
         <button
           type="button"
           onClick={() => onAdjustQuantity(item.id, -1)}
-          className="w-7 h-7 flex items-center justify-center rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 text-sm font-bold flex-shrink-0"
+          className="w-7 h-7 flex items-center justify-center rounded-sm bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 text-sm font-bold shrink-0"
           aria-label={`Decrease ${item.name}`}
         >
           −
         </button>
-        <span className="w-8 text-center text-sm font-medium text-gray-900 dark:text-gray-100 flex-shrink-0">
+        <span className="w-8 text-center text-sm font-medium text-gray-900 dark:text-gray-100 shrink-0">
           {item.quantity}
         </span>
         <button
           type="button"
           onClick={() => onAdjustQuantity(item.id, 1)}
-          className="w-7 h-7 flex items-center justify-center rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 text-sm font-bold flex-shrink-0"
+          className="w-7 h-7 flex items-center justify-center rounded-sm bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 text-sm font-bold shrink-0"
           aria-label={`Increase ${item.name}`}
         >
           +
         </button>
 
         {/* Desktop delete button — fixed-width wrapper prevents layout shift on hover */}
-        <div className="w-5 flex-shrink-0 hidden md:flex items-center justify-center">
+        <div className="w-5 shrink-0 hidden md:flex items-center justify-center">
           <button
             type="button"
             onClick={() => onDelete(item.id)}
-            className="hover-delete-btn flex-shrink-0 items-center text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
+            className="hover-delete-btn shrink-0 items-center text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
             aria-label={`Remove ${item.name}`}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

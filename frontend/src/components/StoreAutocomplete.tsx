@@ -130,7 +130,7 @@ export function StoreAutocomplete({
             }}
             onBlur={() => close()}
             placeholder={placeholder}
-            className="w-full pl-3 pr-7 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full pl-3 pr-7 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
           />
           {displayValue && (
             <button
@@ -147,7 +147,7 @@ export function StoreAutocomplete({
         </div>
       </div>
       {isOpen && (
-        <div className={`absolute z-50 w-full glass-menu rounded max-h-40 overflow-y-auto ${openUpward ? 'bottom-full mb-1' : 'mt-1'}`}>
+        <div className={`absolute z-50 w-full glass-menu rounded-sm max-h-40 overflow-y-auto ${openUpward ? 'bottom-full mb-1' : 'mt-1'}`}>
           {filtered.map(store => (
             <button
               key={store.id}

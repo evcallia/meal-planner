@@ -312,7 +312,7 @@ The backend is a Go rewrite of the original FastAPI app (same API contract). Lay
 
 ## Sticky Toolbars
 - **PageHeader measures itself**: `ResizeObserver` sets `--header-h` CSS variable on `:root` with the header's `offsetHeight`
-- **Toolbar positioning**: Grocery action bar, pantry action bar, and Future Meals panel use `sticky` with `style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}` and `z-[9]` (below nav bar's `z-10`). The `24px` accounts for nav bar margin + gap
+- **Toolbar positioning**: Grocery action bar, pantry action bar, and Future Meals panel use `sticky` with `style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}` and `z-9` (below nav bar's `z-10`). The `24px` accounts for nav bar margin + gap
 - **Toolbar styling**: Rounded glass pills (`glass rounded-2xl p-3`)
 - **Grocery toolbar collapse**: Store filter chips toggle via inline chevron button. State persisted to localStorage (`meal-planner-toolbar-expanded`). Action bar row (Add items + sort + kebab + chevron) always visible
 
@@ -370,7 +370,7 @@ The backend is a Go rewrite of the original FastAPI app (same API contract). Lay
 - **Calendar single-fetch**: CalendarView init fetches one `getDays` call for the full range (past 2 weeks through future 8 weeks) and one `getEvents` call, instead of separate calls per range
 - **Calendar prefetch range**: Module-level `prefetchedStart`/`prefetchedEnd` strings track the pre-fetched date range. `loadNextWeek`/`loadPreviousWeek` skip API calls when the requested range falls within these boundaries — only hit API when scrolling past the prefetched window
 - **Calendar remount guard**: `showAllEvents`/`showHolidays` effect uses prev-value refs to only fire on actual changes, not on component remount (prevents redundant API calls on tab switch)
-- **Calendar scroll-to-today**: `scrollToElementWithOffset` accounts for nav bar height (`--header-h` CSS var), sticky panels (`.sticky.z-\[9\]`), and a 48px extra offset so "Load previous" button is also visible
+- **Calendar scroll-to-today**: `scrollToElementWithOffset` accounts for nav bar height (`--header-h` CSS var), sticky panels (`.sticky.z-9`), and a 48px extra offset so "Load previous" button is also visible
 - **Calendar load-previous scroll preservation**: `loadPreviousWeek` uses `flushSync` + scroll anchor pattern — captures first visible day card's position, flushes the state update synchronously, then adjusts `window.scrollBy` so the view stays in place while new days appear above
 
 ## Testing Patterns

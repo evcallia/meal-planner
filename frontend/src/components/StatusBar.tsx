@@ -71,7 +71,7 @@ export function StatusToast({ status, pendingCount }: { status: ConnectionStatus
 
   if (!toast) return null;
   return (
-    <div className="fixed top-3 left-1/2 z-[60] pointer-events-none status-toast-in">
+    <div className="fixed top-3 left-1/2 z-60 pointer-events-none status-toast-in">
       <div className={`${TONES[toast.tone]} text-white px-4 py-2 rounded-full shadow-lg text-sm font-medium flex items-center gap-2`}>
         {toast.tone === 'syncing' ? <SpinIcon className="w-4 h-4 animate-spin" /> : toast.tone === 'offline' ? <OfflineIcon className="w-4 h-4" /> : null}
         <span>{toast.text}</span>

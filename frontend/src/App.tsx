@@ -400,7 +400,7 @@ function MealsPage({
       <PageHeader title="Meals" user={user} onShowSettings={onShowSettings} status={status} pendingCount={pendingCount} updateAvailable={updateAvailable} unseenActivity={unseenActivity} onShowActivity={onShowActivity} />
       <main className="flex-1 max-w-lg mx-auto w-full px-4 pb-28">
         {settings.showMealIdeas && (
-          <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
+          <div className="sticky z-9 glass rounded-2xl mt-4 mb-2 p-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
             <MealIdeasPanel onSchedule={handleScheduleMeal} onUnschedule={handleUnscheduleMeal} compactView={settings.compactView} />
           </div>
         )}

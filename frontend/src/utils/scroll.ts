@@ -6,7 +6,7 @@ export function scrollToElementWithOffset(
   // Account for nav bar height via CSS variable set by PageHeader's ResizeObserver
   const headerH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--header-h')) || 48;
   // Sticky panels (e.g. Future Meals) sit below the nav with ~24px gap
-  const stickyPanels = document.querySelectorAll<HTMLElement>('.sticky.z-\\[9\\]');
+  const stickyPanels = document.querySelectorAll<HTMLElement>('.sticky.z-9');
   let stickyHeight = 0;
   for (const panel of stickyPanels) {
     stickyHeight += panel.getBoundingClientRect().height;

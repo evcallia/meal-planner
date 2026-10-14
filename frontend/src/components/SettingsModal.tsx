@@ -310,7 +310,7 @@ function NotifyToggle({ label, description, checked, disabled, onChange }: Notif
         disabled={disabled}
         onClick={onChange}
         className={`
-          flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+          shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
           ${checked ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
           ${disabled ? 'cursor-not-allowed' : ''}
         `}
@@ -689,7 +689,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               aria-checked={isDark}
               onClick={onToggleDarkMode}
               className={`
-                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
                 ${isDark ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
               `}
             >
@@ -716,7 +716,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               aria-checked={settings.compactView}
               onClick={() => onUpdate({ compactView: !settings.compactView })}
               className={`
-                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
                 ${settings.compactView ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
               `}
             >
@@ -806,7 +806,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               aria-checked={settings.showMealIdeas}
               onClick={() => onUpdate({ showMealIdeas: !settings.showMealIdeas })}
               className={`
-                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
                 ${settings.showMealIdeas ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
               `}
             >
@@ -833,7 +833,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
               aria-checked={settings.showItemizedColumn}
               onClick={() => onUpdate({ showItemizedColumn: !settings.showItemizedColumn })}
               className={`
-                flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
                 ${settings.showItemizedColumn ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
               `}
             >
@@ -927,7 +927,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
                 aria-checked={settings.showHolidays}
                 onClick={() => onUpdate({ showHolidays: !settings.showHolidays })}
                 className={`
-                  flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                  shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
                   ${settings.showHolidays ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
                 `}
               >
@@ -986,7 +986,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
                 aria-checked={settings.showAllEvents}
                 onClick={() => onUpdate({ showAllEvents: !settings.showAllEvents })}
                 className={`
-                  flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                  shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors
                   ${settings.showAllEvents ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}
                 `}
               >
@@ -1231,7 +1231,7 @@ export function SettingsModal({ settings, onUpdate, onClose, isDark, onToggleDar
                               setPendingChanges(prev => prev.filter(c => c.id !== change.id));
                             }
                           }}
-                          className="shrink-0 px-2 py-1 text-xs font-medium text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/30 rounded hover:bg-orange-100 dark:hover:bg-orange-900/50 transition-colors"
+                          className="shrink-0 px-2 py-1 text-xs font-medium text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/30 rounded-sm hover:bg-orange-100 dark:hover:bg-orange-900/50 transition-colors"
                         >
                           Skip
                         </button>

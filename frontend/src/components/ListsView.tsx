@@ -274,7 +274,7 @@ export function ListsView({
     <div className="edit-accent-scope" style={{ '--edit-accent': getEditHighlight(editHighlightColor).accent } as React.CSSProperties}>
       {/* Tab strip */}
       {tabs.length > 0 && (
-        <div className="sticky z-[9] glass rounded-2xl mt-4 mb-3 p-2" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
+        <div className="sticky z-9 glass rounded-2xl mt-4 mb-3 p-2" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
           <div className="flex items-center gap-1.5">
             <div ref={tabStripRef} className="flex items-center gap-1.5 overflow-x-auto no-scrollbar flex-1 min-w-0">
               {(dragOrder ? (dragOrder.map(id => tabs.find(l => l.id === id)).filter(Boolean) as TrackerList[]) : tabs).map((l) => {
@@ -289,7 +289,7 @@ export function ListsView({
                       onClick={() => { if (!justDraggedRef.current) goTo(i); }}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors select-none ${dragId === l.id ? 'opacity-60 scale-105 ring-2 ring-blue-400' : ''} ${act ? 'bg-blue-500 text-white' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50'}`}
                     >
-                      <span className="max-w-[10rem] truncate pointer-events-none">{l.name}</span>
+                      <span className="max-w-40 truncate pointer-events-none">{l.name}</span>
                       {tabMute(l.id).muted && <MutedIcon label={tabMute(l.id).label} />}
                       {due > 0 && (
                         <span className={`min-w-[16px] h-4 px-1 inline-flex items-center justify-center text-[10px] font-bold rounded-full pointer-events-none ${act ? 'bg-white/25 text-white' : 'bg-red-500 text-white'}`}>{due}</span>
@@ -324,7 +324,7 @@ export function ListsView({
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Search tasks across all groups…"
-                className="w-full pl-3 pr-9 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-sm"
+                className="w-full pl-3 pr-9 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-hidden text-sm"
               />
               <button
                 // preventDefault on pointer-down so tapping X never blurs the
@@ -364,7 +364,7 @@ export function ListsView({
             onChange={e => setNewListName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleCreateList(); if (e.key === 'Escape') setNewListOpen(false); }}
             placeholder="Group name (e.g. House upkeep)"
-            className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none"
+            className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-hidden"
           />
           <div className="flex items-center gap-2">
             {LIST_COLORS.map(c => (
@@ -588,7 +588,7 @@ function ListPanel({ list, tracker, onOpenTask, onShare, notify, notifyLocked, o
             onChange={e => setRenameValue(e.target.value)}
             onBlur={commitRename}
             onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(false); }}
-            className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-lg font-bold"
+            className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-hidden text-lg font-bold"
           />
         ) : (
           <h2
@@ -666,7 +666,7 @@ function ListPanel({ list, tracker, onOpenTask, onShare, notify, notifyLocked, o
             onKeyDown={e => { if (e.key === 'Enter') handleAddTask(); if (e.key === 'Escape') setAddOpen(false); }}
             onFocus={e => { const el = e.currentTarget; setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300); }}
             placeholder="Task name"
-            className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-sm"
+            className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-hidden text-sm"
           />
           <div className="flex items-center gap-1 shrink-0">
             <input
@@ -677,7 +677,7 @@ function ListPanel({ list, tracker, onOpenTask, onShare, notify, notifyLocked, o
               onBlur={e => { e.currentTarget.placeholder = '—'; }}
               placeholder="—"
               inputMode="numeric"
-              className="w-12 px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-sm text-center"
+              className="w-12 px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-hidden text-sm text-center"
               title="Target interval in days (optional)"
             />
             <span className="text-xs text-gray-400">days</span>
@@ -738,7 +738,7 @@ function ListNotifyModal({ listName, notify, locked, onToggle, onClose }: {
                   aria-label={label}
                   disabled={isLocked}
                   onClick={() => onToggle(field)}
-                  className={`flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${notify[field] ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${isLocked ? 'cursor-not-allowed' : ''}`}
+                  className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${notify[field] ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${isLocked ? 'cursor-not-allowed' : ''}`}
                 >
                   <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${notify[field] ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>
@@ -1212,7 +1212,7 @@ function TaskDetailModal({ list, task, tracker, user, onClose, notifyDue, notify
               onChange={e => setEditName(e.target.value)}
               onFocus={() => { focusedFieldRef.current = 'name'; }}
               onBlur={() => { focusedFieldRef.current = null; commitEdits(); }}
-              className="w-full text-lg font-bold bg-transparent text-gray-900 dark:text-gray-100 outline-none border-b border-transparent focus:border-gray-300 dark:focus:border-gray-600"
+              className="w-full text-lg font-bold bg-transparent text-gray-900 dark:text-gray-100 outline-hidden border-b border-transparent focus:border-gray-300 dark:focus:border-gray-600"
             />
             <div className={`text-xs mt-0.5 ${RECENCY_CLASSES[r.level].text}`}>Last done {formatAgo(task.last_done_at)}</div>
           </div>
@@ -1275,7 +1275,7 @@ function TaskDetailModal({ list, task, tracker, user, onClose, notifyDue, notify
                 aria-label="Due reminders for this task"
                 disabled={notifyDueLocked}
                 onClick={() => onSetNotifyDue(!notifyDue)}
-                className={`flex-shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${notifyDue ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${notifyDueLocked ? 'cursor-not-allowed' : ''}`}
+                className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${notifyDue ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${notifyDueLocked ? 'cursor-not-allowed' : ''}`}
               >
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${notifyDue ? 'translate-x-6' : 'translate-x-1'}`} />
               </button>
@@ -1295,14 +1295,14 @@ function TaskDetailModal({ list, task, tracker, user, onClose, notifyDue, notify
                 value={noteInput}
                 onChange={e => setNoteInput(e.target.value)}
                 placeholder="Note (optional)"
-                className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-sm"
+                className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-hidden text-sm"
               />
               {members.length > 1 && (
                 <select
                   value={whoSub}
                   onChange={e => setWhoSub(e.target.value)}
                   title="Who did it"
-                  className="shrink-0 max-w-[7rem] px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-sm"
+                  className="shrink-0 max-w-28 px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-hidden text-sm"
                 >
                   {members.map(m => <option key={m.sub} value={m.sub}>{m.sub === user.sub ? 'You' : firstName(m.name)}</option>)}
                 </select>
@@ -1338,7 +1338,7 @@ function TaskDetailModal({ list, task, tracker, user, onClose, notifyDue, notify
                 onBlur={e => { e.currentTarget.placeholder = '—'; focusedFieldRef.current = null; commitEdits(); }}
                 placeholder="—"
                 inputMode="numeric"
-                className="w-16 px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-center"
+                className="w-16 px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-hidden text-center"
               />
               <span className="text-gray-500 dark:text-gray-400">days</span>
             </div>
@@ -1355,7 +1355,7 @@ function TaskDetailModal({ list, task, tracker, user, onClose, notifyDue, notify
             onBlur={() => { focusedFieldRef.current = null; commitEdits(); }}
             placeholder="Task notes (optional)"
             rows={2}
-            className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-sm resize-none"
+            className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-hidden text-sm resize-none"
           />
 
           {/* History with gap pills */}
@@ -1385,7 +1385,7 @@ function TaskDetailModal({ list, task, tracker, user, onClose, notifyDue, notify
                             {log.kind === 'skip' && <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-amber-400 text-amber-950 dark:bg-amber-500/30 dark:text-amber-300 uppercase tracking-wide font-bold">Skipped</span>}
                             {log.created_by_name && <span className="text-gray-400"> · {firstName(log.created_by_name)}</span>}
                           </div>
-                          {log.note && <div className="text-xs text-gray-400 break-words whitespace-pre-wrap">{log.note}</div>}
+                          {log.note && <div className="text-xs text-gray-400 wrap-break-word whitespace-pre-wrap">{log.note}</div>}
                         </div>
                         <button onClick={() => handleDeleteLog(log)} className="shrink-0 mt-0.5 text-gray-400 hover:text-red-500" aria-label="Delete entry">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
@@ -1486,7 +1486,7 @@ function ShareModal({ list, tracker, onClose }: {
                 value=""
                 disabled={busy}
                 onChange={e => { if (e.target.value) doShare(e.target.value); }}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-none text-sm disabled:opacity-50"
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 outline-hidden text-sm disabled:opacity-50"
               >
                 <option value="">Select a person…</option>
                 {candidates.map(u => (
