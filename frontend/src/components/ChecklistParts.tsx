@@ -708,10 +708,12 @@ export function ChecklistSectionCard({
   headerMeta,
   headerActions,
 }: ChecklistSectionCardProps) {
+  const sectionRef = useRef<HTMLDivElement>(null);
   const itemContainerRef = useRef<HTMLDivElement>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState(section.name);
   const headerInputRef = useRef<HTMLInputElement>(null);
+  const addInputRef = useRef<HTMLInputElement>(null);
 
   const commitRename = useCallback(() => {
     const trimmed = editNameValue.trim();
@@ -720,6 +722,23 @@ export function ChecklistSectionCard({
     }
     setIsEditingName(false);
   }, [editNameValue, section.id, section.name, onRenameSection]);
+
+  // Add stays open after a successful add (rapid entry) instead of unmounting
+  // the still-focused input — that unmount is what triggers iOS's visual-
+  // viewport "jump to top" bug. Refocus explicitly: a click on the Add button
+  // (as opposed to pressing Enter) moves focus to the button first, and since
+  // the input never unmounts here, `autoFocus` won't re-fire to pull it back.
+  const handleAdd = useCallback(() => {
+    Promise.resolve(onAddItem(section.id)).then(() => {
+      addInputRef.current?.focus();
+    });
+  }, [onAddItem, section.id]);
+
+  // Cancel / Escape still unmount the form, so anchor the scroll position on
+  // the section itself across that change (see exitEditAnchored).
+  const closeAdd = useCallback(() => {
+    exitEditAnchored(sectionRef.current, () => onStartAdd(null));
+  }, [onStartAdd]);
 
   useEffect(() => {
     if (isEditingName && headerInputRef.current) {
@@ -738,7 +757,7 @@ export function ChecklistSectionCard({
   });
 
   return (
-    <div className="glass rounded-lg">
+    <div ref={sectionRef} className="glass rounded-lg">
       {/* Section Header -- long-press to drag section */}
       <div
         className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 rounded-t-lg"
@@ -863,20 +882,21 @@ export function ChecklistSectionCard({
                 onDelete={onDeleteItemDefault}
                 placeholder="Item name..."
                 autoFocus
+                inputRef={addInputRef}
                 onKeyDown={e => {
-                  if (e.key === 'Enter') onAddItem(section.id);
-                  if (e.key === 'Escape') onStartAdd(null);
+                  if (e.key === 'Enter') handleAdd();
+                  if (e.key === 'Escape') closeAdd();
                 }}
                 className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
               />
               <button
-                onClick={() => onAddItem(section.id)}
+                onClick={handleAdd}
                 className="text-blue-500 hover:text-blue-600 text-sm font-medium"
               >
                 Add
               </button>
               <button
-                onClick={() => onStartAdd(null)}
+                onClick={closeAdd}
                 className="text-gray-400 hover:text-gray-600 text-sm"
               >
                 Cancel

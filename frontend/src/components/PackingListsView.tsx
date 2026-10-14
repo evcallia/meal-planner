@@ -422,8 +422,9 @@ export function PackingListsView({
     const m = name.match(/^\((\d+)\)\s+(.+)$/);
     const bagId = itemDefaultsMap.get((m ? m[2] : name).toLowerCase())?.storeId ?? null;
     await packing.addItem(activeList.id, sectionId, m ? m[2] : name, m ? m[1] : null, bagId);
+    // Keep the form open for rapid entry — ChecklistSectionCard refocuses the
+    // (still-mounted) input itself. Closing only happens via Cancel/Escape.
     setNewItemName('');
-    setAddingToSection(null);
   }, [newItemName, activeList, packing, itemDefaultsMap]);
 
   const handleChangeItemSection = useCallback(async (itemId: string, targetName: string) => {

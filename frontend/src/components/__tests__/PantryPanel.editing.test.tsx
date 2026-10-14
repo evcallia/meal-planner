@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { PantryPanel } from '../PantryPanel';
+import { exitEditAnchored } from '../../utils/exitEditAnchored';
+
+vi.mock('../../utils/exitEditAnchored', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/exitEditAnchored')>();
+  return { exitEditAnchored: vi.fn(actual.exitEditAnchored) };
+});
 
 const mockAddSection = vi.fn();
 const mockDeleteSection = vi.fn();
@@ -153,6 +159,58 @@ describe('PantryPanel - editing flows', () => {
     // Should have a number input for quantity
     const qtyInput = screen.getByDisplayValue('1');
     expect(qtyInput).toBeInTheDocument();
+  });
+
+  it('keeps the inline add form open, clears the name, and refocuses the input after a successful add', async () => {
+    render(<PantryPanel />);
+    const addButtons = screen.getAllByText('+ Add item');
+    fireEvent.click(addButtons[0]);
+
+    const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Rice' } });
+    const addBtn = screen.getAllByText('Add').find(el => el.tagName === 'BUTTON')!;
+    fireEvent.click(addBtn);
+
+    await waitFor(() => expect(mockAddItem).toHaveBeenCalled());
+    // Form stays open (input still present) and is cleared + refocused,
+    // rather than unmounting (which is what triggers iOS's scroll-jump bug).
+    await waitFor(() => expect(screen.getByPlaceholderText('Item name...')).toHaveValue(''));
+    expect(screen.getByPlaceholderText('Item name...')).toBe(document.activeElement);
+  });
+
+  it('does not call addItem, clear the input, or close the form for an empty name', () => {
+    render(<PantryPanel />);
+    const addButtons = screen.getAllByText('+ Add item');
+    fireEvent.click(addButtons[0]);
+
+    const addBtn = screen.getAllByText('Add').find(el => el.tagName === 'BUTTON')!;
+    fireEvent.click(addBtn);
+
+    expect(mockAddItem).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText('Item name...')).toBeInTheDocument();
+  });
+
+  it('pressing Escape in the inline add form closes it via the anchored-exit helper', () => {
+    render(<PantryPanel />);
+    const addButtons = screen.getAllByText('+ Add item');
+    fireEvent.click(addButtons[0]);
+
+    const input = screen.getByPlaceholderText('Item name...');
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    expect(exitEditAnchored).toHaveBeenCalled();
+    expect(screen.queryByPlaceholderText('Item name...')).not.toBeInTheDocument();
+  });
+
+  it('clicking Cancel in the inline add form closes it via the anchored-exit helper', () => {
+    render(<PantryPanel />);
+    const addButtons = screen.getAllByText('+ Add item');
+    fireEvent.click(addButtons[0]);
+
+    fireEvent.click(screen.getByText('Cancel'));
+
+    expect(exitEditAnchored).toHaveBeenCalled();
+    expect(screen.queryByPlaceholderText('Item name...')).not.toBeInTheDocument();
   });
 
   it('section add form submits on Enter keypress in section name input', async () => {

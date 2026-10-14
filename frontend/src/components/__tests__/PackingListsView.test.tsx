@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, within, act } from '@testing-library/react';
+import { render, screen, fireEvent, within, act, waitFor } from '@testing-library/react';
 import { PackingListsView } from '../PackingListsView';
 import type { PackingList, UserInfo } from '../../types';
+import { exitEditAnchored } from '../../utils/exitEditAnchored';
+
+vi.mock('../../utils/exitEditAnchored', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/exitEditAnchored')>();
+  return { exitEditAnchored: vi.fn(actual.exitEditAnchored) };
+});
 
 const mockToggleItem = vi.fn();
 const mockAddItem = vi.fn();
@@ -187,6 +193,54 @@ describe('PackingListsView', () => {
     await fireEvent.click(screen.getByTestId('packing-quick-add-submit'));
 
     expect(mockCreateSection).toHaveBeenCalledWith('l1', 'Tech');
+  });
+
+  it('keeps the per-section inline add form open, clears the name, and refocuses the input after a successful add', async () => {
+    renderView();
+    fireEvent.click(screen.getByText('+ Add item'));
+
+    const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Umbrella' } });
+    const addBtn = screen.getAllByText('Add').find(el => el.tagName === 'BUTTON')!;
+    fireEvent.click(addBtn);
+
+    await waitFor(() => expect(mockAddItem).toHaveBeenCalled());
+    // Form stays open (input still present) and is cleared + refocused,
+    // rather than unmounting (which is what triggers iOS's scroll-jump bug).
+    await waitFor(() => expect(screen.getByPlaceholderText('Item name...')).toHaveValue(''));
+    expect(screen.getByPlaceholderText('Item name...')).toBe(document.activeElement);
+  });
+
+  it('does not call addItem, clear the input, or close the form for an empty name', () => {
+    renderView();
+    fireEvent.click(screen.getByText('+ Add item'));
+
+    const addBtn = screen.getAllByText('Add').find(el => el.tagName === 'BUTTON')!;
+    fireEvent.click(addBtn);
+
+    expect(mockAddItem).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText('Item name...')).toBeInTheDocument();
+  });
+
+  it('pressing Escape in the inline add form closes it via the anchored-exit helper', () => {
+    renderView();
+    fireEvent.click(screen.getByText('+ Add item'));
+
+    const input = screen.getByPlaceholderText('Item name...');
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    expect(exitEditAnchored).toHaveBeenCalled();
+    expect(screen.queryByPlaceholderText('Item name...')).not.toBeInTheDocument();
+  });
+
+  it('clicking Cancel in the inline add form closes it via the anchored-exit helper', () => {
+    renderView();
+    fireEvent.click(screen.getByText('+ Add item'));
+
+    fireEvent.click(screen.getByText('Cancel'));
+
+    expect(exitEditAnchored).toHaveBeenCalled();
+    expect(screen.queryByPlaceholderText('Item name...')).not.toBeInTheDocument();
   });
 
   it('edits a list\'s name and color together', () => {

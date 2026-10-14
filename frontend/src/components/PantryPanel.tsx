@@ -128,9 +128,10 @@ export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightC
     if (!newItemName.trim()) return;
     const qty = parseInt(newItemQty) || 1;
     await addItem(sectionId, newItemName.trim(), qty);
+    // Keep the form open for rapid entry — PantrySectionCard refocuses the
+    // (still-mounted) input itself. Closing only happens via Cancel/Escape.
     setNewItemName('');
     setNewItemQty('1');
-    setAddingToSection(null);
   }, [newItemName, newItemQty, addItem]);
 
   const handleClearAll = useCallback(async () => {
@@ -361,10 +362,12 @@ function PantrySectionCard({
   onNewItemQtyChange,
   onAddItem,
 }: PantrySectionCardProps) {
+  const sectionRef = useRef<HTMLDivElement>(null);
   const itemContainerRef = useRef<HTMLDivElement>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState(section.name);
   const headerInputRef = useRef<HTMLInputElement>(null);
+  const addInputRef = useRef<HTMLInputElement>(null);
 
   const commitRename = useCallback(() => {
     const trimmed = editNameValue.trim();
@@ -373,6 +376,23 @@ function PantrySectionCard({
     }
     setIsEditingName(false);
   }, [editNameValue, section.id, section.name, onRenameSection]);
+
+  // Add stays open after a successful add (rapid entry) instead of unmounting
+  // the still-focused input — that unmount is what triggers iOS's visual-
+  // viewport "jump to top" bug. Refocus explicitly: a click on the Add button
+  // (as opposed to pressing Enter) moves focus to the button first, and since
+  // the input never unmounts here, `autoFocus` won't re-fire to pull it back.
+  const handleAdd = useCallback(() => {
+    Promise.resolve(onAddItem(section.id)).then(() => {
+      addInputRef.current?.focus();
+    });
+  }, [onAddItem, section.id]);
+
+  // Cancel / Escape still unmount the form, so anchor the scroll position on
+  // the section itself across that change (see exitEditAnchored).
+  const closeAdd = useCallback(() => {
+    exitEditAnchored(sectionRef.current, () => onStartAdd(null));
+  }, [onStartAdd]);
 
   useEffect(() => {
     if (isEditingName && headerInputRef.current) {
@@ -391,7 +411,7 @@ function PantrySectionCard({
   });
 
   return (
-    <div className="glass rounded-lg overflow-hidden">
+    <div ref={sectionRef} className="glass rounded-lg overflow-hidden">
       {/* Section Header */}
       <div
         className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2"
@@ -502,12 +522,13 @@ function PantrySectionCard({
           {addingToSection === section.id ? (
             <div className="flex items-center gap-2 px-4 py-2">
               <input
+                ref={addInputRef}
                 type="text"
                 value={newItemName}
                 onChange={e => onNewItemNameChange(e.target.value)}
                 onKeyDown={e => {
-                  if (e.key === 'Enter') onAddItem(section.id);
-                  if (e.key === 'Escape') onStartAdd(null);
+                  if (e.key === 'Enter') handleAdd();
+                  if (e.key === 'Escape') closeAdd();
                 }}
                 placeholder="Item name..."
                 autoFocus
@@ -520,18 +541,18 @@ function PantrySectionCard({
                 value={newItemQty}
                 onChange={e => onNewItemQtyChange(e.target.value)}
                 onKeyDown={e => {
-                  if (e.key === 'Enter') onAddItem(section.id);
+                  if (e.key === 'Enter') handleAdd();
                 }}
                 className="w-12 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:border-blue-500 text-sm py-1 text-center"
               />
               <button
-                onClick={() => onAddItem(section.id)}
+                onClick={handleAdd}
                 className="text-blue-500 hover:text-blue-600 text-sm font-medium"
               >
                 Add
               </button>
               <button
-                onClick={() => onStartAdd(null)}
+                onClick={closeAdd}
                 className="text-gray-400 hover:text-gray-600 text-sm"
               >
                 Cancel

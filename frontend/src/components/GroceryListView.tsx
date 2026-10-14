@@ -697,8 +697,9 @@ export function GroceryListView({
     // Never touch the target section — the user picked it explicitly.
     const nameLower = name.toLowerCase();
     await addItem(sectionId, name, qty, itemDefaultsMap.get(nameLower)?.storeId ?? null);
+    // Keep the form open for rapid entry — ChecklistSectionCard refocuses the
+    // (still-mounted) input itself. Closing only happens via Cancel/Escape.
     setNewItemName('');
-    setAddingToSection(null);
   }, [newItemName, itemDefaultsMap, addItem]);
 
   const handleQuickAdd = useCallback(async () => {
