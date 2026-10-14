@@ -316,6 +316,74 @@ describe('GroceryListView - additional coverage', () => {
     });
   });
 
+  describe('keyboard-close scroll correction on the top quick-add form', () => {
+    // Mirrors the stubbing style in hooks/__tests__/useScrollIntoViewOnEdit.test.ts
+    // and the per-section add form describe block above. This is the surface
+    // the group-by-recipe view relies on exclusively (no per-section add form
+    // there), so it's the one most likely to be mid-edit when the keyboard
+    // closes.
+    function stubViewport(height: number) {
+      const resizeListeners: EventListener[] = [];
+      const viewport = {
+        height,
+        addEventListener: vi.fn((_: string, fn: EventListener) => resizeListeners.push(fn)),
+        removeEventListener: vi.fn(),
+      };
+      vi.stubGlobal('visualViewport', viewport);
+      return { viewport, fire: () => resizeListeners.forEach(fn => fn(new Event('resize'))) };
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('only corrects scroll once the quick-add form is open, on a keyboard-close resize', () => {
+      mockSections = sectionsWithMultiple;
+      const { viewport, fire } = stubViewport(window.innerHeight - 300);
+      render(<GroceryListView />);
+
+      // Quick-add closed: nothing is subscribed, so a resize is a no-op.
+      viewport.height = window.innerHeight - 100;
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+
+      // Open quick-add, then simulate the keyboard closing (viewport grows).
+      fireEvent.click(screen.getByText('Add items'));
+      viewport.height = window.innerHeight - 50;
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    });
+
+    it('suppresses the correction during a deliberate touch-scroll', () => {
+      mockSections = sectionsWithMultiple;
+      const { viewport, fire } = stubViewport(window.innerHeight - 300);
+      render(<GroceryListView />);
+      fireEvent.click(screen.getByText('Add items'));
+
+      fireEvent.touchStart(document);
+      viewport.height = window.innerHeight - 100; // keyboard closing mid deliberate scroll
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+
+      fireEvent.touchEnd(document);
+      viewport.height = window.innerHeight - 50; // keyboard keeps closing after the touch ends
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    });
+
+    it('switches the correction to the paste-mode textarea once "Paste a list" is chosen', () => {
+      mockSections = sectionsWithMultiple;
+      const { viewport, fire } = stubViewport(window.innerHeight - 300);
+      render(<GroceryListView />);
+      fireEvent.click(screen.getByText('Add items'));
+      fireEvent.click(screen.getByText('Paste a list'));
+
+      viewport.height = window.innerHeight - 50;
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    });
+  });
+
   it('clicking section name opens rename mode', () => {
     mockSections = sectionsWithMultiple;
     render(<GroceryListView />);

@@ -13,6 +13,7 @@ import {
   MenuRadioOption,
   NONE_STORE_ID,
 } from './ChecklistParts';
+import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
 import { getEditHighlight } from '../utils/editHighlightColors';
 import { toTitleCase } from '../utils/titleCase';
 import { parseServerDate } from '../utils/serverDate';
@@ -174,6 +175,16 @@ export function GroceryListView({
   const sectionContainerRef = useRef<HTMLDivElement>(null);
   const sectionDropdownRef = useRef<HTMLDivElement>(null);
   const quickAddItemRef = useRef<HTMLInputElement>(null);
+  // Same iOS keyboard-open/close viewport correction as the per-section add
+  // form and item edit forms — these are the top toolbar's two inline add
+  // surfaces (only one is ever mounted at a time, per addMode). The nested
+  // section combobox needs no ref of its own: scrollIntoView targets the
+  // whole form container, so it rides along with whichever of these two is
+  // active.
+  const quickAddFormRef = useRef<HTMLDivElement>(null);
+  const pasteFormRef = useRef<HTMLDivElement>(null);
+  useScrollIntoViewOnEdit(quickAddFormRef, addMode === 'quick');
+  useScrollIntoViewOnEdit(pasteFormRef, addMode === 'paste');
 
   // Recipe filter chips (Recipe Keeper attribution). Unlike the store
   // filter, "hide recipes" does NOT null these out — see groceryHideRecipes
@@ -832,7 +843,7 @@ export function GroceryListView({
         {sections.length === 0 || addMode !== 'closed' ? (
           <div className="flex-1 glass rounded-lg p-4">
             {addMode === 'paste' ? (
-              <>
+              <div ref={pasteFormRef}>
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
                     {sections.length === 0 ? 'Add your grocery list' : 'Paste grocery list'}
@@ -890,9 +901,9 @@ export function GroceryListView({
                 >
                   Back to quick add
                 </button>
-              </>
+              </div>
             ) : (
-              <>
+              <div ref={quickAddFormRef}>
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
                     {sections.length === 0 ? 'Add your grocery list' : 'Add Items'}
@@ -1045,7 +1056,7 @@ export function GroceryListView({
                     Paste a list
                   </button>
                 </div>
-              </>
+              </div>
             )}
           </div>
         ) : (
@@ -1296,8 +1307,10 @@ export function GroceryListView({
         )
       ) : groupBy === 'recipe' ? (
         /* Group by "recipe" — one card per recipe; a collapsed item appears
-           under every recipe it belongs to. Read/check-focused, not
-           reorderable (see recipeGroups above for why). */
+           under every recipe it belongs to, so it's not reorderable (see
+           recipeGroups above for why — no drag handlers below). Inline edit
+           still works: each copy gets a composite `editId` (group+item) so
+           only the tapped copy enters edit mode. */
         recipeGroups.length > 0 && (
           <div className="mt-4 space-y-4" data-testid="recipe-groups">
             {recipeGroups.map(group => (
@@ -1328,7 +1341,7 @@ export function GroceryListView({
                       onChangeSection={handleChangeItemSection}
                       hideChips={hideStores}
                       hideRecipes={hideRecipes}
-                      allowEdit={false}
+                      editId={`${group.id}-${item.id}`}
                     />
                   ))}
                 </div>

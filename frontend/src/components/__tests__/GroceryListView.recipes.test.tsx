@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { GroceryListView } from '../GroceryListView';
 
 const mockMergeList = vi.fn();
@@ -237,15 +237,83 @@ describe('GroceryListView - group by recipe editing', () => {
     mockStores = [];
   });
 
-  it('does not open an inline edit form for a multi-recipe item shown in two groups', () => {
+  it('tapping one copy of a multi-recipe item enters edit mode only for that copy', () => {
     render(<GroceryListView groupBy="recipe" />);
+    const groups = screen.getAllByTestId('recipe-group');
+    const figGroup = groups.find(g => within(g).getByRole('heading').textContent === 'Fig Cocktail')!;
+    const thaiGroup = groups.find(g => within(g).getByRole('heading').textContent === 'Thai Curry')!;
+
     // "Lemon" renders once per recipe group (Fig Cocktail AND Thai Curry).
-    const lemonRows = screen.getAllByText('Lemon');
-    expect(lemonRows.length).toBeGreaterThan(1);
-    fireEvent.click(lemonRows[0]);
-    // Suppressed in this view — no edit form (Save/Cancel) mounts anywhere,
-    // so there's nothing to fight over a shared commitEditingRef.
+    fireEvent.click(within(figGroup).getByText('Lemon'));
+
+    // Only the tapped (Fig Cocktail) copy mounts an edit form — the Thai
+    // Curry copy, which shares the same item id, stays a normal row. This is
+    // the composite editId (`${group.id}-${item.id}`) doing its job: each
+    // copy only matches editingItemId when it's the one actually tapped.
+    expect(within(figGroup).getByText('Save')).toBeInTheDocument();
+    expect(within(thaiGroup).queryByText('Save')).not.toBeInTheDocument();
+    expect(within(thaiGroup).getByText('Lemon')).toBeInTheDocument();
+  });
+
+  it('committing an edit on one copy updates the item, and the other copy reflects the change', async () => {
+    mockEditItem.mockImplementation((id: string, updates: Record<string, unknown>) => {
+      mockSections = mockSections.map(s => ({
+        ...s,
+        items: s.items.map((i: any) => (i.id === id ? { ...i, ...updates } : i)),
+      }));
+    });
+    const { rerender } = render(<GroceryListView groupBy="recipe" />);
+    let groups = screen.getAllByTestId('recipe-group');
+    const figGroup = groups.find(g => within(g).getByRole('heading').textContent === 'Fig Cocktail')!;
+
+    fireEvent.click(within(figGroup).getByText('Lemon'));
+    const input = within(figGroup).getByDisplayValue('Lemon');
+    fireEvent.change(input, { target: { value: 'Lime' } });
+    fireEvent.click(within(figGroup).getByText('Save'));
+
+    await waitFor(() => {
+      expect(mockEditItem).toHaveBeenCalledWith('i1', expect.objectContaining({ name: 'Lime' }));
+    });
+
+    rerender(<GroceryListView groupBy="recipe" />);
+    groups = screen.getAllByTestId('recipe-group');
+    const newFigGroup = groups.find(g => within(g).getByRole('heading').textContent === 'Fig Cocktail')!;
+    const newThaiGroup = groups.find(g => within(g).getByRole('heading').textContent === 'Thai Curry')!;
+    expect(within(newFigGroup).getByText('Lime')).toBeInTheDocument();
+    expect(within(newThaiGroup).getByText('Lime')).toBeInTheDocument();
+  });
+
+  it('an edit left open in category view does not appear mounted after switching to group-by-recipe', () => {
+    // editingItemId is component state, independent of the groupBy prop — a
+    // stale bare item id from a different view's default editId must not
+    // coincidentally match a composite editId in the recipe view.
+    const { rerender } = render(<GroceryListView groupBy="category" />);
+    fireEvent.click(screen.getByText('Lemon'));
+    expect(screen.getByText('Save')).toBeInTheDocument();
+
+    rerender(<GroceryListView groupBy="recipe" />);
     expect(screen.queryByText('Save')).not.toBeInTheDocument();
+  });
+});
+
+describe('GroceryListView - category/none view editing regression (composite identity default)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSections = recipeSections;
+    mockLoading = false;
+    mockStores = [];
+  });
+
+  it('entering edit mode in category view still works for an item that also has recipe attribution', () => {
+    render(<GroceryListView groupBy="category" />);
+    fireEvent.click(screen.getByText('Lemon'));
+    expect(screen.getByText('Save')).toBeInTheDocument();
+  });
+
+  it('entering edit mode in the flat ("none" groupBy) view still works', () => {
+    render(<GroceryListView groupBy="none" />);
+    fireEvent.click(screen.getByText('Lemon'));
+    expect(screen.getByText('Save')).toBeInTheDocument();
   });
 });
 

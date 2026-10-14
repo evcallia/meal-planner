@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { ChecklistItemRow, ChecklistItem } from '../ChecklistParts';
@@ -219,39 +219,13 @@ describe('ChecklistItemRow - recipe attribution', () => {
     expect(screen.queryByText(/No recipe/)).not.toBeInTheDocument();
   });
 
-  it('suppresses inline editing when allowEdit is false (group-by-recipe view)', () => {
-    const onEditingItemChange = vi.fn();
-    const commitEditingRef = { current: null } as React.MutableRefObject<(() => void) | null>;
-    const item: ChecklistItem = { ...baseItem, recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 1 }] };
-    render(
-      <ChecklistItemRow
-        item={item}
-        onToggle={vi.fn()}
-        onDelete={vi.fn()}
-        onEdit={vi.fn()}
-        chips={[]}
-        chipId={null}
-        onCreateChip={vi.fn()}
-        editingItemId={null}
-        onEditingItemChange={onEditingItemChange}
-        commitEditingRef={commitEditingRef}
-        sectionName="Produce"
-        allSections={[{ id: 's1', name: 'Produce' }]}
-        editHighlightColor="emerald"
-        onChangeSection={vi.fn()}
-        allowEdit={false}
-      />
-    );
-    fireEvent.click(screen.getByText('Lemon'));
-    expect(onEditingItemChange).not.toHaveBeenCalled();
-  });
-
-  it('never renders the edit form when allowEdit is false, even if editingItemId already matches', () => {
+  it('a stale editingItemId from another view (a bare item id) never matches a composite editId', () => {
     // Guards the actual duplicate-forms bug: a two-recipe item mounts one
     // ChecklistItemRow per group, all sharing the same editingItemId state.
-    // If editingItemId were somehow already set to this item's id (e.g. an
-    // edit started in category view before switching to group-by-recipe),
-    // this row must still render as a normal row, not a second edit form.
+    // If editingItemId were somehow already set to this item's bare id (e.g.
+    // an edit started in category view, which uses the default editId,
+    // before switching to group-by-recipe), this row — rendered with a
+    // composite editId — must still render as a normal row, not an edit form.
     const commitEditingRef = { current: null } as React.MutableRefObject<(() => void) | null>;
     const item: ChecklistItem = { ...baseItem, recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 1 }] };
     render(
@@ -270,10 +244,52 @@ describe('ChecklistItemRow - recipe attribution', () => {
         allSections={[{ id: 's1', name: 'Produce' }]}
         editHighlightColor="emerald"
         onChangeSection={vi.fn()}
-        allowEdit={false}
+        editId={`r1-${item.id}`}
       />
     );
     expect(screen.queryByText('Save')).not.toBeInTheDocument();
     expect(screen.getByText('Lemon')).toBeInTheDocument();
+  });
+
+  it('only the tapped copy enters edit mode when the same item renders twice under different editIds', () => {
+    // Mirrors how GroceryListView's group-by-recipe view renders a
+    // multi-recipe item once per group, sharing one editingItemId state.
+    function DualCopyHarness({ item }: { item: ChecklistItem }) {
+      const [editingItemId, setEditingItemId] = useState<string | null>(null);
+      const commitEditingRef = useRef<(() => void) | null>(null);
+      const handleChange = (id: string | null) => {
+        if (id !== null && editingItemId !== null && id !== editingItemId) {
+          commitEditingRef.current?.();
+        }
+        setEditingItemId(id);
+      };
+      const shared = {
+        item, onToggle: vi.fn(), onDelete: vi.fn(), onEdit: vi.fn(),
+        chips: [], chipId: null, onCreateChip: vi.fn(),
+        editingItemId, onEditingItemChange: handleChange, commitEditingRef,
+        sectionName: 'Produce', allSections: [{ id: 's1', name: 'Produce' }],
+        editHighlightColor: 'emerald', onChangeSection: vi.fn(),
+      };
+      return (
+        <>
+          <div data-testid="copy-a"><ChecklistItemRow {...shared} editId="g1-i1" /></div>
+          <div data-testid="copy-b"><ChecklistItemRow {...shared} editId="g2-i1" /></div>
+        </>
+      );
+    }
+
+    const item: ChecklistItem = {
+      ...baseItem,
+      recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 1 }, { id: 'r2', title: 'Thai Curry', count: 1 }],
+    };
+    render(<DualCopyHarness item={item} />);
+    const copyA = screen.getByTestId('copy-a');
+    const copyB = screen.getByTestId('copy-b');
+
+    fireEvent.click(within(copyA).getByText('Lemon'));
+
+    expect(within(copyA).getByText('Save')).toBeInTheDocument();
+    expect(within(copyB).queryByText('Save')).not.toBeInTheDocument();
+    expect(within(copyB).getByText('Lemon')).toBeInTheDocument();
   });
 });
