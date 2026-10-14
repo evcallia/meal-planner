@@ -368,6 +368,8 @@ function PantrySectionCard({
   const [editNameValue, setEditNameValue] = useState(section.name);
   const headerInputRef = useRef<HTMLInputElement>(null);
   const addInputRef = useRef<HTMLInputElement>(null);
+  const addFormRef = useRef<HTMLDivElement>(null);
+  useScrollIntoViewOnEdit(addFormRef, addingToSection === section.id);
 
   const commitRename = useCallback(() => {
     const trimmed = editNameValue.trim();
@@ -520,7 +522,7 @@ function PantrySectionCard({
 
           {/* Add item inline */}
           {addingToSection === section.id ? (
-            <div className="flex items-center gap-2 px-4 py-2">
+            <div ref={addFormRef} className="flex items-center gap-2 px-4 py-2">
               <input
                 ref={addInputRef}
                 type="text"

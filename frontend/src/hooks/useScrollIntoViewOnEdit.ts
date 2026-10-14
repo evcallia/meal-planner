@@ -1,10 +1,13 @@
 import { useEffect, type RefObject } from 'react';
 
-// Keeps an inline edit form visible on mobile: when the iOS keyboard opens it
+// Keeps an inline form visible on mobile: when the iOS keyboard opens it
 // shrinks the visual viewport and the browser may scroll the row off-screen.
-export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, isEditing: boolean) {
+// Named `active` rather than `isEditing`: this covers both inline edit forms
+// and inline add forms (any form whose focused input can trigger the iOS
+// keyboard-open/close viewport dance).
+export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, active: boolean) {
   useEffect(() => {
-    if (!isEditing) return;
+    if (!active) return;
 
     let lastHeight = window.visualViewport?.height ?? window.innerHeight;
 
@@ -58,5 +61,5 @@ export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, isEd
       document.removeEventListener('touchend', onTouchEnd);
       document.removeEventListener('touchcancel', onTouchEnd);
     };
-  }, [isEditing, ref]);
+  }, [active, ref]);
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { PantryPanel } from '../PantryPanel';
 import { exitEditAnchored } from '../../utils/exitEditAnchored';
@@ -211,6 +211,56 @@ describe('PantryPanel - editing flows', () => {
 
     expect(exitEditAnchored).toHaveBeenCalled();
     expect(screen.queryByPlaceholderText('Item name...')).not.toBeInTheDocument();
+  });
+
+  describe('keyboard-close scroll correction on the inline add form', () => {
+    // Mirrors the stubbing style in hooks/__tests__/useScrollIntoViewOnEdit.test.ts
+    function stubViewport(height: number) {
+      const resizeListeners: EventListener[] = [];
+      const viewport = {
+        height,
+        addEventListener: vi.fn((_: string, fn: EventListener) => resizeListeners.push(fn)),
+        removeEventListener: vi.fn(),
+      };
+      vi.stubGlobal('visualViewport', viewport);
+      return { viewport, fire: () => resizeListeners.forEach(fn => fn(new Event('resize'))) };
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('only corrects scroll once the add form is open, on a keyboard-close resize', () => {
+      const { viewport, fire } = stubViewport(window.innerHeight - 300);
+      render(<PantryPanel />);
+
+      // Add form closed: nothing is subscribed, so a resize is a no-op.
+      viewport.height = window.innerHeight - 100;
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+
+      // Open the add form, then simulate the keyboard closing (viewport grows).
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+      viewport.height = window.innerHeight - 50;
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    });
+
+    it('suppresses the correction during a deliberate touch-scroll', () => {
+      const { viewport, fire } = stubViewport(window.innerHeight - 300);
+      render(<PantryPanel />);
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+
+      fireEvent.touchStart(document);
+      viewport.height = window.innerHeight - 100; // keyboard closing mid deliberate scroll
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+
+      fireEvent.touchEnd(document);
+      viewport.height = window.innerHeight - 50; // keyboard keeps closing after the touch ends
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    });
   });
 
   it('section add form submits on Enter keypress in section name input', async () => {

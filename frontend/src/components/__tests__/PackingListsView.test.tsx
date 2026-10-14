@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, within, act, waitFor } from '@testing-library/react';
 import { PackingListsView } from '../PackingListsView';
 import type { PackingList, UserInfo } from '../../types';
@@ -241,6 +241,56 @@ describe('PackingListsView', () => {
 
     expect(exitEditAnchored).toHaveBeenCalled();
     expect(screen.queryByPlaceholderText('Item name...')).not.toBeInTheDocument();
+  });
+
+  describe('keyboard-close scroll correction on the inline add form', () => {
+    // Mirrors the stubbing style in hooks/__tests__/useScrollIntoViewOnEdit.test.ts
+    function stubViewport(height: number) {
+      const resizeListeners: EventListener[] = [];
+      const viewport = {
+        height,
+        addEventListener: vi.fn((_: string, fn: EventListener) => resizeListeners.push(fn)),
+        removeEventListener: vi.fn(),
+      };
+      vi.stubGlobal('visualViewport', viewport);
+      return { viewport, fire: () => resizeListeners.forEach(fn => fn(new Event('resize'))) };
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('only corrects scroll once the add form is open, on a keyboard-close resize', () => {
+      const { viewport, fire } = stubViewport(window.innerHeight - 300);
+      renderView();
+
+      // Add form closed: nothing is subscribed, so a resize is a no-op.
+      viewport.height = window.innerHeight - 100;
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+
+      // Open the add form, then simulate the keyboard closing (viewport grows).
+      fireEvent.click(screen.getByText('+ Add item'));
+      viewport.height = window.innerHeight - 50;
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    });
+
+    it('suppresses the correction during a deliberate touch-scroll', () => {
+      const { viewport, fire } = stubViewport(window.innerHeight - 300);
+      renderView();
+      fireEvent.click(screen.getByText('+ Add item'));
+
+      fireEvent.touchStart(document);
+      viewport.height = window.innerHeight - 100; // keyboard closing mid deliberate scroll
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+
+      fireEvent.touchEnd(document);
+      viewport.height = window.innerHeight - 50; // keyboard keeps closing after the touch ends
+      fire();
+      expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    });
   });
 
   it('edits a list\'s name and color together', () => {
