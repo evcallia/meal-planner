@@ -94,7 +94,7 @@ export function ActivityPanel({ entries, lastSeen, loading, onClose, onSeen, upd
                 <span className="w-2.5 h-2.5 bg-red-500 rounded-full shrink-0" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Recipe Keeper sync error</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 break-words">{recipeKeeperStatus.last_error}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 wrap-break-word">{recipeKeeperStatus.last_error}</p>
                 </div>
               </div>
             </div>

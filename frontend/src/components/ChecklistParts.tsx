@@ -249,7 +249,7 @@ function RecipeLine({ recipes, quantity, hidden }: { recipes: RecipeRef[]; quant
           data-testid="recipe-popover"
           role="dialog"
           style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left }}
-          className="z-[60] glass-menu rounded-lg py-1 min-w-[180px] max-w-[240px] max-h-[60vh] overflow-y-auto shadow-lg"
+          className="z-60 glass-menu rounded-lg py-1 min-w-[180px] max-w-[240px] max-h-[60vh] overflow-y-auto shadow-lg"
           onClick={e => e.stopPropagation()}
         >
           <div className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
