@@ -635,7 +635,7 @@ export function GroceryListView({
       style={{ '--edit-accent': getEditHighlight(editHighlightColor).accent } as React.CSSProperties}
     >
       {/* Sticky header: action bar + store chips */}
-      <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3 space-y-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
+      <div className="sticky z-9 glass rounded-2xl mt-4 mb-2 p-3 space-y-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
       {/* Action bar: add items + sort + kebab + chevron */}
       <div className="flex items-center gap-2">
         {sections.length === 0 || addMode !== 'closed' ? (
@@ -661,7 +661,7 @@ export function GroceryListView({
                   value={inputText}
                   onChange={e => setInputText(e.target.value)}
                   placeholder={'Type or paste grocery list...\n\n[Produce]\n(2) Bananas\nArugula\n\n[Dairy]\nMilk\nYogurt'}
-                  className="w-full h-32 p-3 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full h-32 p-3 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                 />
                 <div className="flex items-center gap-2 mt-2">
                   <button
@@ -744,12 +744,12 @@ export function GroceryListView({
                         resetQuickAdd();
                       }
                     }}
-                    className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                   />
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button onClick={() => setQuickAddQuantity(q => Math.max(0, q - 1))} className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold">&minus;</button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => setQuickAddQuantity(q => Math.max(0, q - 1))} className="w-7 h-7 flex items-center justify-center rounded-sm bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold">&minus;</button>
                     <span className="w-6 text-center text-sm font-medium text-blue-600 dark:text-blue-400">{quickAddQuantity || '\u2013'}</span>
-                    <button onClick={() => setQuickAddQuantity(q => q + 1)} className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold">+</button>
+                    <button onClick={() => setQuickAddQuantity(q => q + 1)} className="w-7 h-7 flex items-center justify-center rounded-sm bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold">+</button>
                   </div>
                 </div>
 
@@ -773,7 +773,7 @@ export function GroceryListView({
                         }
                       }}
                       placeholder="Default"
-                      className="w-full px-3 py-1.5 pr-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-1.5 pr-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                     />
                     {quickAddSection && (
                       <button
@@ -870,7 +870,7 @@ export function GroceryListView({
             {stores.length > 0 && !hideStores && (
               <button
                 onClick={() => setSortByStore(prev => !prev)}
-                className={`p-2 rounded ${sortByStore ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'}`}
+                className={`p-2 rounded-sm ${sortByStore ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'}`}
                 title={sortByStore ? 'Unsort' : 'Sort by store'}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">

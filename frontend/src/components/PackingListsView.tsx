@@ -554,7 +554,7 @@ export function PackingListsView({
       className="edit-accent-scope"
       style={{ '--edit-accent': getEditHighlight(editHighlightColor).accent } as React.CSSProperties}
     >
-      <div className="sticky z-[9] glass rounded-2xl mt-4 mb-2 p-3 space-y-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
+      <div className="sticky z-9 glass rounded-2xl mt-4 mb-2 p-3 space-y-3" style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
         {/* List tabs */}
         <div className="flex items-center gap-2">
           <div ref={tabStripRef} className="flex-1 min-w-0 flex gap-2 overflow-x-auto no-scrollbar" data-testid="packing-tabs">
@@ -596,7 +596,7 @@ export function PackingListsView({
               onKeyDown={e => { if (e.key === 'Enter') handleCreateList(); if (e.key === 'Escape') setNewListOpen(false); }}
               placeholder="List name (e.g. Home projects)"
               data-testid="new-list-name"
-              className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
             />
             <div className="flex items-center gap-2">
               {LIST_COLORS.map(c => (
@@ -654,12 +654,12 @@ export function PackingListsView({
                         if (e.key === 'Enter') { e.preventDefault(); handleQuickAdd(); }
                         if (e.key === 'Escape') setAddOpen(false);
                       }}
-                      className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="flex-1 min-w-0 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                     />
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <button onClick={() => setQuickQty(q => Math.max(0, q - 1))} className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 text-sm font-bold">&minus;</button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => setQuickQty(q => Math.max(0, q - 1))} className="w-7 h-7 flex items-center justify-center rounded-sm bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 text-sm font-bold">&minus;</button>
                       <span className="w-6 text-center text-sm font-medium text-blue-600 dark:text-blue-400">{quickQty || '–'}</span>
-                      <button onClick={() => setQuickQty(q => q + 1)} className="w-7 h-7 flex items-center justify-center rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 text-sm font-bold">+</button>
+                      <button onClick={() => setQuickQty(q => q + 1)} className="w-7 h-7 flex items-center justify-center rounded-sm bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 text-sm font-bold">+</button>
                     </div>
                   </div>
 
@@ -673,7 +673,7 @@ export function PackingListsView({
                         onChange={e => { setQuickSection(e.target.value); setSectionDropdownOpen(true); }}
                         onFocus={e => { e.target.select(); setSectionDropdownOpen(true); }}
                         placeholder="General"
-                        className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                       />
                       {sectionDropdownOpen && sectionOptions.length > 0 && (
                         <div className="absolute z-30 left-0 right-0 mt-1 glass-menu rounded-lg max-h-40 overflow-y-auto shadow-lg">
@@ -864,7 +864,7 @@ export function PackingListsView({
                     if (e.key === 'Enter') saveListMeta();
                     if (e.key === 'Escape') setEditingListMeta(false);
                   }}
-                  className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                 />
                 <div className="flex items-center gap-2">
                   {LIST_COLORS.map(c => (
@@ -912,7 +912,7 @@ export function PackingListsView({
           portal — the same approach as the per-section menu — is what makes it
           reliably float above everything (z above the nav's z-30). */}
       {flash && createPortal(
-        <div className="fixed left-1/2 -translate-x-1/2 z-[60] w-full max-w-lg px-4 packing-flash-in"
+        <div className="fixed left-1/2 -translate-x-1/2 z-60 w-full max-w-lg px-4 packing-flash-in"
           style={{ top: 'calc(var(--header-h, 48px) + 24px)' }}>
         <div
           role="status"
@@ -1143,7 +1143,7 @@ function SectionMenu({ sectionName, itemCount, targets, onCopyTo, onDelete }: {
           data-testid="section-menu"
           style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, right: pos.right }}
           // Above the bottom nav island (z-30) and every card's own context.
-          className="z-[60] glass-menu rounded-lg py-1 min-w-[220px] max-h-[60vh] overflow-y-auto shadow-lg"
+          className="z-60 glass-menu rounded-lg py-1 min-w-[220px] max-h-[60vh] overflow-y-auto shadow-lg"
           onClick={e => e.stopPropagation()}
         >
           <div className="px-4 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">

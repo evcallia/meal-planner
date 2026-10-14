@@ -110,7 +110,7 @@ describe('GroceryListView - additional coverage', () => {
     render(<GroceryListView />);
     // Find the checkbox button next to "Apples" - it's the unchecked checkbox
     // Each item row has a checkbox button - click one
-    const checkboxes = screen.getAllByRole('button').filter(b => b.className.includes('rounded border-2'));
+    const checkboxes = screen.getAllByRole('button').filter(b => b.className.includes('rounded-sm border-2'));
     if (checkboxes.length > 0) {
       fireEvent.click(checkboxes[0]);
       expect(mockToggleItem).toHaveBeenCalled();

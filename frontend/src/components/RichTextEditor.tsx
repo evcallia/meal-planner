@@ -135,7 +135,7 @@ export function RichTextEditor({ value, onChange, onBlur, placeholder, autoFocus
             e.preventDefault(); // Prevent losing selection
             applyBold();
           }}
-          className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 font-bold text-sm"
+          className="p-1.5 rounded-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 font-bold text-sm"
           title="Bold (Cmd+B)"
         >
           B
@@ -160,9 +160,9 @@ export function RichTextEditor({ value, onChange, onBlur, placeholder, autoFocus
           handleInput();
         }}
         data-placeholder={placeholder}
-        className="min-h-[80px] outline-none text-gray-800 dark:text-gray-200
-          [&_a]:text-blue-600 [&_a]:dark:text-blue-400 [&_a]:underline
-          empty:before:content-[attr(data-placeholder)] empty:before:text-gray-400 empty:before:dark:text-gray-500 empty:before:italic"
+        className="min-h-[80px] outline-hidden text-gray-800 dark:text-gray-200
+          [&_a]:text-blue-600 dark:[&_a]:text-blue-400 [&_a]:underline
+          empty:before:content-[attr(data-placeholder)] empty:before:text-gray-400 dark:empty:before:text-gray-500 empty:before:italic"
       />
     </div>
   );

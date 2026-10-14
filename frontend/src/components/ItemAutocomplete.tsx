@@ -141,7 +141,7 @@ export function ItemAutocomplete({
         placeholder={placeholder}
         autoFocus={autoFocus}
         data-testid={testId}
-        className={className ?? "flex-1 min-w-0 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"}
+        className={className ?? "flex-1 min-w-0 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500"}
       />
       {isOpen && filtered.length > 0 && (
         <div className={`absolute z-50 left-0 right-0 glass-menu rounded-lg max-h-40 overflow-y-auto shadow-lg ${openUpward ? 'bottom-full mb-1' : 'mt-1'}`}>

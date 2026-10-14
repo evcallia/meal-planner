@@ -484,7 +484,7 @@ export function DayCard({
           <div className="px-2 py-1.5 flex items-start gap-2">
             {/* Date column */}
             <div className={`
-              flex-shrink-0 w-10 text-center
+              shrink-0 w-10 text-center
               ${isToday
                 ? 'text-blue-600 dark:text-blue-400'
                 : isWeekend
@@ -514,7 +514,7 @@ export function DayCard({
                       <button
                         type="button"
                         aria-label="Event options"
-                        className={`flex-shrink-0 p-0.5 -ml-0.5 rounded ${ec.hover} ${ec.hoverDark}`}
+                        className={`shrink-0 p-0.5 -ml-0.5 rounded-sm ${ec.hover} ${ec.hoverDark}`}
                         onPointerDown={(e) => e.stopPropagation()}
                         onTouchStart={(e) => e.stopPropagation()}
                         onClick={(e) => openEventActionsFromTarget(event, e.currentTarget)}
@@ -527,7 +527,7 @@ export function DayCard({
                         <span className="block truncate">{event.title}</span>
                       </div>
                       {!event.all_day && (
-                        <span className={`flex-shrink-0 ${ec.text} ${ec.textDark}`}>{formatTime(event.start_time)}</span>
+                        <span className={`shrink-0 ${ec.text} ${ec.textDark}`}>{formatTime(event.start_time)}</span>
                       )}
                     </div>
                   );
@@ -581,7 +581,7 @@ export function DayCard({
                       const showInsertAfter = !mealDragState.isDragging && crossDragTargetIndex === lines.length && i === lines.length - 1;
                       return (
                         <div key={i} data-drag-index={i} style={style} {...dragHandlers}>
-                          {showInsertBefore && <div className="h-0.5 bg-blue-500 rounded" />}
+                          {showInsertBefore && <div className="h-0.5 bg-blue-500 rounded-sm" />}
                           <div className="flex items-start gap-1.5">
                             {/* Inline checkbox */}
                             {showItemizedColumn && (
@@ -589,7 +589,7 @@ export function DayCard({
                                 type="button"
                                 onClick={() => onToggleItemized(i, !isItemized)}
                                 className={`
-                                  flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center mt-[5px]
+                                  shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center mt-[5px]
                                   transition-colors duration-150
                                   ${isItemized
                                     ? 'bg-green-500 border-green-500 dark:bg-green-600 dark:border-green-600'
@@ -621,7 +621,7 @@ export function DayCard({
                               />
                             </div>
                           </div>
-                          {showInsertAfter && <div className="h-0.5 bg-blue-500 rounded" />}
+                          {showInsertAfter && <div className="h-0.5 bg-blue-500 rounded-sm" />}
                         </div>
                       );
                     })}
@@ -629,7 +629,7 @@ export function DayCard({
                 ) : (
                   <div>
                     {crossDragTargetIndex === 0 && lines.length === 0 && (
-                      <div className="h-0.5 bg-blue-500 rounded" />
+                      <div className="h-0.5 bg-blue-500 rounded-sm" />
                     )}
                     <div
                       onClick={enterEditMode}
@@ -712,8 +712,8 @@ export function DayCard({
       {eventsLoading && (
         <div className="px-4 py-2 glass-subtle border-b border-gray-100 dark:border-gray-700">
           <div className="flex items-center gap-2 text-sm py-1 animate-pulse">
-            <div className="w-4 h-4 bg-gray-200 dark:bg-gray-600 rounded" />
-            <div className="h-4 bg-gray-200 dark:bg-gray-600 rounded w-32" />
+            <div className="w-4 h-4 bg-gray-200 dark:bg-gray-600 rounded-sm" />
+            <div className="h-4 bg-gray-200 dark:bg-gray-600 rounded-sm w-32" />
           </div>
         </div>
       )}
@@ -737,7 +737,7 @@ export function DayCard({
                 <button
                   type="button"
                   aria-label="Event options"
-                  className={`flex-shrink-0 p-1 -ml-1 rounded ${ec.hover} ${ec.hoverDark} ${ec.text} ${ec.textDark}`}
+                  className={`shrink-0 p-1 -ml-1 rounded-sm ${ec.hover} ${ec.hoverDark} ${ec.text} ${ec.textDark}`}
                   onPointerDown={(e) => e.stopPropagation()}
                   onTouchStart={(e) => e.stopPropagation()}
                   onClick={(e) => openEventActionsFromTarget(event, e.currentTarget)}
@@ -747,7 +747,7 @@ export function DayCard({
                   </svg>
                 </button>
                 <div className="flex-1 min-w-0 overflow-hidden">
-                  <span className={`${ec.textStrong} ${ec.textStrongDark} font-medium break-words`}>{event.title}</span>
+                  <span className={`${ec.textStrong} ${ec.textStrongDark} font-medium wrap-break-word`}>{event.title}</span>
                 </div>
                 {!event.all_day && (
                   <span className={`${ec.text} ${ec.textDark}`}>{formatTime(event.start_time)}</span>
@@ -810,7 +810,7 @@ export function DayCard({
                     const showInsertAfter = !mealDragState.isDragging && crossDragTargetIndex === lines.length && i === lines.length - 1;
                     return (
                       <div key={i} data-drag-index={i} style={style} {...dragHandlers}>
-                        {showInsertBefore && <div className="h-0.5 bg-blue-500 rounded" />}
+                        {showInsertBefore && <div className="h-0.5 bg-blue-500 rounded-sm" />}
                         <MealItem
                           html={line}
                           itemized={itemsMap.get(i) || false}
@@ -825,7 +825,7 @@ export function DayCard({
                           showItemizedColumn={showItemizedColumn}
                           dragHandleMouseDown={getMealHandleMouseDown(i)}
                         />
-                        {showInsertAfter && <div className="h-0.5 bg-blue-500 rounded" />}
+                        {showInsertAfter && <div className="h-0.5 bg-blue-500 rounded-sm" />}
                       </div>
                     );
                   })}
@@ -833,7 +833,7 @@ export function DayCard({
               ) : (
                 <div>
                   {crossDragTargetIndex === 0 && lines.length === 0 && (
-                    <div className="h-0.5 bg-blue-500 rounded" />
+                    <div className="h-0.5 bg-blue-500 rounded-sm" />
                   )}
                   <p
                     onClick={enterEditMode}
