@@ -24,12 +24,12 @@ Key details:
 - On macOS with Homebrew, export `PATH="/opt/homebrew/bin:$PATH"` if npm/node isn't found
 - **Go commands need the sandbox disabled.** Go is installed (Homebrew, `/opt/homebrew/bin/go`), but the sandbox blocks all three things it needs: the build cache (`~/Library/Caches/go-build`), the module cache (`~/go`), and `proxy.golang.org` for downloads. Redirecting `GOCACHE`/`GOMODCACHE` into the scratchpad doesn't help — the download still fails. Run Go unsandboxed
 - **Test timezone matters.** `internal/ical` converts zone-qualified event times into `time.Local` (see the calendar section), so a test that parses a `TZID=`/`Z` datetime must pin the zone with `withZone(t, ...)` or it passes only on a machine in the zone it was written for. Sweep with `TZ=UTC go test -count=1 ./internal/ical/` and a non-UTC zone
-- Docker is the fallback when a native run isn't wanted (the `mealplanner-gomod` volume caches modules, so only the first run downloads). Note it pins **go1.26** while local is go1.27, and they do not agree on every test — see the known failure below:
+- Docker is the fallback when a native run isn't wanted (the `mealplanner-gomod` volume caches modules, so only the first run downloads). Note it pins **go1.26** while local is go1.27:
   ```bash
   docker run --rm -v "$PWD/backend":/src -v mealplanner-gomod:/go/pkg/mod -w /src \
     golang:1.26-alpine sh -c 'go build ./... && go vet ./... && go test ./...'
   ```
-- **Known pre-existing failure:** `TestInitializeCacheAndShutdown` (`internal/ical/service_test.go`) fails under **go1.27** in a full-package run ("initial refresh should have written metadata: record not found"), in every timezone, and passes in isolation with `-run`. It passes under go1.26. Reproduced on `f8dc551`, so it predates the rename work — it is test-ordering/state leakage, not a regression to chase
+- **Formerly flaky under go1.27.1:** `TestInitializeCacheAndShutdown` (`internal/ical/service_test.go`) used to fail in a full-package run ("initial refresh should have written metadata: record not found") while passing in isolation with `-run`. It passes consistently on **go1.27.2** (full-package runs, local zone and `TZ=UTC`), so keep local Go current (`brew upgrade go`). If it ever reappears, it's test-ordering/state leakage, not a regression to chase
 - Shell cwd may reset — always use absolute paths or `cd` in the same command
 - **`frontend/.npmrc` has `allow-remote=all` — keep it.** npm 12 (which Renovate uses for lockfile updates) misreads registry tarballs of `bundleDependencies` packages (Tailwind's `oxide-wasm32-wasi`) as "remote" and fails with `EALLOWREMOTE`, so every Renovate PR shipped without a lockfile. npm 11 prints a harmless "Unknown project config" warning about it. `renovate.json` groups React with `@testing-library/*` (RTL majors pin a React peer range) and runs weekly lock-file maintenance
 
