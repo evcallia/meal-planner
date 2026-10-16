@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "packageRules": [
+    {
+      "description": "React and its testing library must move together (RTL majors pin a React peer range)",
+      "matchPackageNames": ["react", "react-dom", "@types/react", "@types/react-dom", "@testing-library/**"],
+      "groupName": "react and testing-library"
+    }
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  }
+}
