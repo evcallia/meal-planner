@@ -31,6 +31,7 @@ Key details:
   ```
 - **Known pre-existing failure:** `TestInitializeCacheAndShutdown` (`internal/ical/service_test.go`) fails under **go1.27** in a full-package run ("initial refresh should have written metadata: record not found"), in every timezone, and passes in isolation with `-run`. It passes under go1.26. Reproduced on `f8dc551`, so it predates the rename work — it is test-ordering/state leakage, not a regression to chase
 - Shell cwd may reset — always use absolute paths or `cd` in the same command
+- **`frontend/.npmrc` has `allow-remote=all` — keep it.** npm 12 (which Renovate uses for lockfile updates) misreads registry tarballs of `bundleDependencies` packages (Tailwind's `oxide-wasm32-wasi`) as "remote" and fails with `EALLOWREMOTE`, so every Renovate PR shipped without a lockfile. npm 11 prints a harmless "Unknown project config" warning about it. `renovate.json` groups React with `@testing-library/*` (RTL majors pin a React peer range) and runs weekly lock-file maintenance
 
 ## Dev Server (bring it up after every change)
 Every change gets verified in the running app, not just in tests. Rebuild and restart from the checkout you're working in, then confirm it answers:
