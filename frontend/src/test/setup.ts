@@ -38,7 +38,13 @@ const localStorageMock = {
   removeItem: vi.fn(),
   clear: vi.fn(),
 }
-global.localStorage = localStorageMock
+// Vitest 5 exposes happy-dom's localStorage as a getter-only global, so plain
+// assignment throws — redefine the property instead.
+Object.defineProperty(globalThis, 'localStorage', {
+  value: localStorageMock,
+  writable: true,
+  configurable: true,
+})
 
 // Default fetch mock to prevent real network calls in tests
 global.fetch = vi.fn(() => Promise.resolve({
