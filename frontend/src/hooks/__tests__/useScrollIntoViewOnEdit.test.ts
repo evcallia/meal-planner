@@ -81,7 +81,7 @@ describe('useScrollIntoViewOnEdit', () => {
     vi.unstubAllGlobals();
   });
 
-  it('uses an instant nearest scroll while the keyboard is closing (viewport growing)', () => {
+  it('ignores viewport growth (keyboard closing) — usePinOnKeyboardClose owns that case now', () => {
     const resizeListeners: EventListener[] = [];
     const viewport = {
       height: window.innerHeight - 300, // keyboard fully open at mount
@@ -94,18 +94,20 @@ describe('useScrollIntoViewOnEdit', () => {
       initialProps: { editing: true },
     });
 
-    // Keyboard begins closing: viewport grows. Pre-fix a smooth scroll here
-    // raced the edit-form unmount; now it must be an instant 'nearest' scroll
-    // (keeps a still-open form visible without an animation that can race).
+    // Keyboard begins closing: viewport grows. A scrollIntoView call here
+    // (previously an instant 'nearest' scroll) didn't hold position against
+    // iOS's own scroll restoration — either a no-op or itself a competing
+    // movement. usePinOnKeyboardClose owns the close case now (wired
+    // alongside this hook at every inline-add-form call site), so this hook
+    // must do nothing on growth.
     viewport.height = window.innerHeight - 200;
     resizeListeners.forEach(fn => fn(new Event('resize')));
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    expect(scrollIntoView).not.toHaveBeenCalled();
 
     // Keyboard re-opens / shrinks again: smooth centering resumes
     viewport.height = window.innerHeight - 300;
     resizeListeners.forEach(fn => fn(new Event('resize')));
-    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
     expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'center', behavior: 'smooth' });
     vi.unstubAllGlobals();
   });

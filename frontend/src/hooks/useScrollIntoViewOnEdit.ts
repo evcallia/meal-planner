@@ -33,15 +33,14 @@ export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, acti
       const growing = viewport.height > lastHeight;
       lastHeight = viewport.height;
       if (touchActive) return;
-      if (growing) {
-        // Keyboard CLOSING. A smooth scroll here would race the edit form's
-        // unmount when Save was tapped (the in-flight animation lands
-        // arbitrarily), but doing nothing lets iOS's scroll restoration carry
-        // a still-open form off-screen. Instant + 'nearest' is safe: it can't
-        // race (no animation) and it's a no-op when the row is already visible.
-        ref.current?.scrollIntoView({ block: 'nearest' });
-        return;
-      }
+      // Keyboard CLOSING (viewport growing): leave this alone. A corrective
+      // scroll here used to be `scrollIntoView({ block: 'nearest' })`, but
+      // against iOS's own scroll restoration that's either a no-op (already
+      // visible) or itself a competing movement — it doesn't hold position.
+      // `usePinOnKeyboardClose` is the real fix for that case; wire it
+      // alongside this hook wherever a form stays mounted across keyboard
+      // close.
+      if (growing) return;
       scrollIntoView();
     };
 

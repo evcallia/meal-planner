@@ -3,6 +3,7 @@ import { usePantry } from '../hooks/usePantry';
 import { PantrySection } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
+import { usePinOnKeyboardClose } from '../hooks/usePinOnKeyboardClose';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
 import { getEditHighlight } from '../utils/editHighlightColors';
 
@@ -370,6 +371,7 @@ function PantrySectionCard({
   const addInputRef = useRef<HTMLInputElement>(null);
   const addFormRef = useRef<HTMLDivElement>(null);
   useScrollIntoViewOnEdit(addFormRef, addingToSection === section.id);
+  usePinOnKeyboardClose(addFormRef, addingToSection === section.id);
 
   const commitRename = useCallback(() => {
     const trimmed = editNameValue.trim();
@@ -381,9 +383,13 @@ function PantrySectionCard({
 
   // Add stays open after a successful add (rapid entry) instead of unmounting
   // the still-focused input — that unmount is what triggers iOS's visual-
-  // viewport "jump to top" bug. Refocus explicitly: a click on the Add button
-  // (as opposed to pressing Enter) moves focus to the button first, and since
-  // the input never unmounts here, `autoFocus` won't re-fire to pull it back.
+  // viewport "jump to top" bug. The Add button's onMouseDown below prevents
+  // the default focus-shift so the input (and the iOS keyboard) never loses
+  // focus in the first place — the real fix, since a `.focus()` call after
+  // an await can't reopen a keyboard iOS already closed outside a user-
+  // gesture context. This `.focus()` is now just belt-and-braces (e.g. in
+  // case something else ever steals focus during the add) — harmless since
+  // the input never unmounts here, so it's a no-op the rest of the time.
   const handleAdd = useCallback(() => {
     Promise.resolve(onAddItem(section.id)).then(() => {
       addInputRef.current?.focus();
@@ -548,6 +554,7 @@ function PantrySectionCard({
                 className="w-12 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:border-blue-500 text-sm py-1 text-center"
               />
               <button
+                onMouseDown={e => e.preventDefault()}
                 onClick={handleAdd}
                 className="text-blue-500 hover:text-blue-600 text-sm font-medium"
               >

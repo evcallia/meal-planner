@@ -14,6 +14,7 @@ import {
   NONE_STORE_ID,
 } from './ChecklistParts';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
+import { usePinOnKeyboardClose } from '../hooks/usePinOnKeyboardClose';
 import { getEditHighlight } from '../utils/editHighlightColors';
 import { toTitleCase } from '../utils/titleCase';
 import { parseServerDate } from '../utils/serverDate';
@@ -185,6 +186,8 @@ export function GroceryListView({
   const pasteFormRef = useRef<HTMLDivElement>(null);
   useScrollIntoViewOnEdit(quickAddFormRef, addMode === 'quick');
   useScrollIntoViewOnEdit(pasteFormRef, addMode === 'paste');
+  usePinOnKeyboardClose(quickAddFormRef, addMode === 'quick');
+  usePinOnKeyboardClose(pasteFormRef, addMode === 'paste');
 
   // Recipe filter chips (Recipe Keeper attribution). Unlike the store
   // filter, "hide recipes" does NOT null these out — see groceryHideRecipes
