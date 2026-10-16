@@ -277,6 +277,18 @@ describe('GroceryListView - additional coverage', () => {
     expect(document.activeElement).toBe(input);
 
     const addBtn = screen.getAllByText('Add').find(el => el.tagName === 'BUTTON')!;
+    // The actual mechanism under test: the button suppresses the browser's
+    // default focus-shift on mousedown, so the input — and with it the iOS
+    // keyboard — never loses focus. Asserting `activeElement` alone cannot
+    // see this: the post-add `.focus()` fallback restores focus in
+    // happy-dom whether or not the guard exists, whereas on real iOS a
+    // `.focus()` outside a user-gesture context cannot reopen a keyboard
+    // that has already been dismissed. Verified by deletion — removing the
+    // `onMouseDown` guard fails this assertion and nothing else.
+    const mousedown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    addBtn.dispatchEvent(mousedown);
+    expect(mousedown.defaultPrevented).toBe(true);
+
     await user.click(addBtn);
 
     expect(document.activeElement).toBe(input);
