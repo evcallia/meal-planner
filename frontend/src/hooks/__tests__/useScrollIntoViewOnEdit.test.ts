@@ -81,7 +81,7 @@ describe('useScrollIntoViewOnEdit', () => {
     vi.unstubAllGlobals();
   });
 
-  it('ignores viewport growth (keyboard closing) — usePinOnKeyboardClose owns that case now', () => {
+  it('ignores viewport growth (keyboard closing) — a scroll cannot counter it', () => {
     const resizeListeners: EventListener[] = [];
     const viewport = {
       height: window.innerHeight - 300, // keyboard fully open at mount
@@ -97,7 +97,7 @@ describe('useScrollIntoViewOnEdit', () => {
     // Keyboard begins closing: viewport grows. A scrollIntoView call here
     // (previously an instant 'nearest' scroll) didn't hold position against
     // iOS's own scroll restoration — either a no-op or itself a competing
-    // movement. usePinOnKeyboardClose owns the close case now (wired
+    // movement. The close case is handled by unmounting the form (wired
     // alongside this hook at every inline-add-form call site), so this hook
     // must do nothing on growth.
     viewport.height = window.innerHeight - 200;

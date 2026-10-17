@@ -45,6 +45,32 @@ describe('ItemAutocomplete', () => {
     expect(props.onSelect).toHaveBeenCalledWith('Sweet Potato');
   });
 
+  // Load-bearing for the inline add forms: those close themselves when focus
+  // leaves (closeOnBlurOutside), so a suggestion that stole focus would
+  // unmount the form before its own click could land — and on iOS it would
+  // dismiss the keyboard mid-entry.
+  it('keeps focus on the input when a suggestion is tapped', () => {
+    renderAutocomplete({ value: 'swe' });
+    fireEvent.focus(screen.getByPlaceholderText('Item name...'));
+    const suggestion = screen.getByText('Sweet Potato');
+
+    const mousedown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    suggestion.dispatchEvent(mousedown);
+
+    expect(mousedown.defaultPrevented).toBe(true);
+  });
+
+  it('keeps focus on the input when a suggestion delete button is tapped', () => {
+    renderAutocomplete({ value: 'swe' });
+    fireEvent.focus(screen.getByPlaceholderText('Item name...'));
+    const del = screen.getByLabelText('Delete Sweet Chili Sauce');
+
+    const mousedown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    del.dispatchEvent(mousedown);
+
+    expect(mousedown.defaultPrevented).toBe(true);
+  });
+
   it('shows delete button only for items not on the current list', () => {
     renderAutocomplete({ value: 's' });
     const input = screen.getByPlaceholderText('Item name...');

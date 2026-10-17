@@ -3,8 +3,8 @@ import { usePantry } from '../hooks/usePantry';
 import { PantrySection } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
-import { usePinOnKeyboardClose } from '../hooks/usePinOnKeyboardClose';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
+import { closeOnBlurOutside } from '../utils/closeOnBlurOutside';
 import { getEditHighlight } from '../utils/editHighlightColors';
 
 export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightColor?: string } = {}) {
@@ -371,7 +371,6 @@ function PantrySectionCard({
   const addInputRef = useRef<HTMLInputElement>(null);
   const addFormRef = useRef<HTMLDivElement>(null);
   useScrollIntoViewOnEdit(addFormRef, addingToSection === section.id);
-  usePinOnKeyboardClose(addFormRef, addingToSection === section.id);
 
   const commitRename = useCallback(() => {
     const trimmed = editNameValue.trim();
@@ -538,6 +537,7 @@ function PantrySectionCard({
                   if (e.key === 'Enter') handleAdd();
                   if (e.key === 'Escape') closeAdd();
                 }}
+                onBlur={() => closeOnBlurOutside(addFormRef.current, closeAdd)}
                 placeholder="Item name..."
                 autoFocus
                 className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
@@ -551,6 +551,7 @@ function PantrySectionCard({
                 onKeyDown={e => {
                   if (e.key === 'Enter') handleAdd();
                 }}
+                onBlur={() => closeOnBlurOutside(addFormRef.current, closeAdd)}
                 className="w-12 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:border-blue-500 text-sm py-1 text-center"
               />
               <button

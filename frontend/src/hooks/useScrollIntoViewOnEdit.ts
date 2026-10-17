@@ -33,13 +33,15 @@ export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, acti
       const growing = viewport.height > lastHeight;
       lastHeight = viewport.height;
       if (touchActive) return;
-      // Keyboard CLOSING (viewport growing): leave this alone. A corrective
-      // scroll here used to be `scrollIntoView({ block: 'nearest' })`, but
-      // against iOS's own scroll restoration that's either a no-op (already
-      // visible) or itself a competing movement — it doesn't hold position.
-      // `usePinOnKeyboardClose` is the real fix for that case; wire it
-      // alongside this hook wherever a form stays mounted across keyboard
-      // close.
+      // Keyboard CLOSING (viewport growing): leave this alone. Correcting
+      // here is futile — a scroll cannot counter what iOS does on close,
+      // because the movement is a visual-viewport change and this code can
+      // only see and act on layout coordinates (two attempts at it,
+      // `scrollIntoView({ block: 'nearest' })` and an anchored scroll pin,
+      // both measured as no-ops on device). Forms that stay mounted across
+      // the close instead unmount themselves via `closeOnBlurOutside` +
+      // `exitEditAnchored`, which works because the unmount IS a layout
+      // change.
       if (growing) return;
       scrollIntoView();
     };

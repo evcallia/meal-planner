@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GroceryListView } from '../GroceryListView';
 import { exitEditAnchored } from '../../utils/exitEditAnchored';
@@ -295,184 +295,64 @@ describe('GroceryListView - additional coverage', () => {
     await waitFor(() => expect(mockAddItem).toHaveBeenCalled());
   });
 
-  // The old approach here (an instant `scrollIntoView({ block: 'nearest' })`
-  // on the keyboard-closing resize) didn't hold position against iOS's own
-  // scroll restoration — either a no-op or itself a competing movement.
-  // `usePinOnKeyboardClose` replaces it with the same anchored-pin technique
-  // `exitEditAnchored` uses: measure the form's position the instant the
-  // close is detected, then repeatedly counter drift via `window.scrollBy`.
-  describe('keyboard-close scroll correction on the inline add form', () => {
-    // Mirrors the stubbing style in hooks/__tests__/useScrollIntoViewOnEdit.test.ts
-    function stubViewport(height: number) {
-      const resizeListeners: EventListener[] = [];
-      const viewport = {
-        height,
-        addEventListener: vi.fn((_: string, fn: EventListener) => resizeListeners.push(fn)),
-        removeEventListener: vi.fn(),
-      };
-      vi.stubGlobal('visualViewport', viewport);
-      return { viewport, fire: () => resizeListeners.forEach(fn => fn(new Event('resize'))) };
-    }
-
-    afterEach(() => {
-      vi.unstubAllGlobals();
-      vi.restoreAllMocks();
-    });
-
-    it('pins the form via window.scrollBy once it is open, on a keyboard-close resize', () => {
-      mockSections = sectionsWithMultiple;
-      const { viewport, fire } = stubViewport(window.innerHeight - 300); // keyboard open
-      render(<GroceryListView />);
-      const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
-      // getBoundingClientRect returns a fresh value on every call so a real
-      // pin attempt always sees nonzero drift (jsdom/happy-dom don't lay
-      // out content, so every element reports the same static rect
-      // otherwise — a false negative, not a sign the pin didn't run).
-      let n = 0;
-      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-        () => ({ top: (n++) * 10 } as DOMRect)
-      );
-
-      // Add form closed: nothing is subscribed, so a keyboard-close resize is a no-op.
-      viewport.height = window.innerHeight;
-      fire();
-      expect(scrollBy).not.toHaveBeenCalled();
-      viewport.height = window.innerHeight - 300; // keyboard "re-opens" before the form mounts
-
-      // Open the add form, then simulate the keyboard closing (viewport
-      // grows back past the threshold).
-      fireEvent.click(screen.getAllByText('+ Add item')[0]);
-      viewport.height = window.innerHeight;
-      fire();
-      expect(scrollBy).toHaveBeenCalled();
-    });
-
-    it('suppresses the correction during a deliberate touch-scroll', () => {
-      mockSections = sectionsWithMultiple;
-      const { viewport, fire } = stubViewport(window.innerHeight - 300);
-      render(<GroceryListView />);
-      const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
-      // getBoundingClientRect returns a fresh value on every call so a real
-      // pin attempt always sees nonzero drift (jsdom/happy-dom don't lay
-      // out content, so every element reports the same static rect
-      // otherwise — a false negative, not a sign the pin didn't run).
-      let n = 0;
-      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-        () => ({ top: (n++) * 10 } as DOMRect)
-      );
-      fireEvent.click(screen.getAllByText('+ Add item')[0]);
-
-      fireEvent.touchStart(document);
-      viewport.height = window.innerHeight; // keyboard closes mid deliberate scroll
-      fire();
-      expect(scrollBy).not.toHaveBeenCalled();
-      fireEvent.touchEnd(document);
-
-      // A fresh open->close transition after the touch ends still corrects.
-      viewport.height = window.innerHeight - 300;
-      fire();
-      viewport.height = window.innerHeight;
-      fire();
-      expect(scrollBy).toHaveBeenCalled();
-    });
+  // The blur-close defers one frame so focus can land on its real target.
+  const nextFrame = () => act(async () => {
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
   });
 
-  describe('keyboard-close scroll correction on the top quick-add form', () => {
-    // Mirrors the stubbing style above. This is the surface the
-    // group-by-recipe view relies on exclusively (no per-section add form
-    // there), so it's the one most likely to be mid-edit when the keyboard
-    // closes.
-    function stubViewport(height: number) {
-      const resizeListeners: EventListener[] = [];
-      const viewport = {
-        height,
-        addEventListener: vi.fn((_: string, fn: EventListener) => resizeListeners.push(fn)),
-        removeEventListener: vi.fn(),
-      };
-      vi.stubGlobal('visualViewport', viewport);
-      return { viewport, fire: () => resizeListeners.forEach(fn => fn(new Event('resize'))) };
-    }
+  // Dismissing the keyboard with the add form open used to leave the form
+  // mounted, and that is the one state in the app where position cannot be
+  // held: with no layout change there is nothing for exitEditAnchored's pin
+  // to measure, and iOS's movement is a visual-viewport change that is
+  // invisible to getBoundingClientRect/window.scrollBy. Blur now routes the
+  // form down the same anchored-unmount path the Meals tab and the inline
+  // edit rows already use. Typed text lives in the parent, so it survives.
+  describe('dismissing the keyboard with the inline add form open', () => {
+    it('closes the form through the anchored path when focus leaves it', async () => {
+      mockSections = sectionsWithMultiple;
+      render(<GroceryListView />);
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+      const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'Grapes' } });
+      vi.mocked(exitEditAnchored).mockClear();
 
-    afterEach(() => {
-      vi.unstubAllGlobals();
-      vi.restoreAllMocks();
+      input.blur();
+      fireEvent.blur(input);
+      await nextFrame();
+
+      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
+      expect(exitEditAnchored).toHaveBeenCalled();
     });
 
-    it('pins the form via window.scrollBy once it is open, on a keyboard-close resize', () => {
+    it('keeps the typed name so reopening the form restores it', async () => {
       mockSections = sectionsWithMultiple;
-      const { viewport, fire } = stubViewport(window.innerHeight - 300); // keyboard open
       render(<GroceryListView />);
-      const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
-      // getBoundingClientRect returns a fresh value on every call so a real
-      // pin attempt always sees nonzero drift (jsdom/happy-dom don't lay
-      // out content, so every element reports the same static rect
-      // otherwise — a false negative, not a sign the pin didn't run).
-      let n = 0;
-      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-        () => ({ top: (n++) * 10 } as DOMRect)
-      );
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+      const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'Grapes' } });
 
-      // Quick-add closed: nothing is subscribed, so a keyboard-close resize is a no-op.
-      viewport.height = window.innerHeight;
-      fire();
-      expect(scrollBy).not.toHaveBeenCalled();
-      viewport.height = window.innerHeight - 300; // keyboard "re-opens" before quick-add mounts
+      input.blur();
+      fireEvent.blur(input);
+      await nextFrame();
+      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
 
-      // Open quick-add, then simulate the keyboard closing (viewport grows
-      // back past the threshold).
-      fireEvent.click(screen.getByText('Add items'));
-      viewport.height = window.innerHeight;
-      fire();
-      expect(scrollBy).toHaveBeenCalled();
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+      expect(screen.getByPlaceholderText('Item name...')).toHaveValue('Grapes');
     });
 
-    it('suppresses the correction during a deliberate touch-scroll', () => {
+    it('stays open when focus moves to another control inside the form', async () => {
       mockSections = sectionsWithMultiple;
-      const { viewport, fire } = stubViewport(window.innerHeight - 300);
       render(<GroceryListView />);
-      const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
-      // getBoundingClientRect returns a fresh value on every call so a real
-      // pin attempt always sees nonzero drift (jsdom/happy-dom don't lay
-      // out content, so every element reports the same static rect
-      // otherwise — a false negative, not a sign the pin didn't run).
-      let n = 0;
-      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-        () => ({ top: (n++) * 10 } as DOMRect)
-      );
-      fireEvent.click(screen.getByText('Add items'));
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+      const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'Grapes' } });
 
-      fireEvent.touchStart(document);
-      viewport.height = window.innerHeight; // keyboard closes mid deliberate scroll
-      fire();
-      expect(scrollBy).not.toHaveBeenCalled();
-      fireEvent.touchEnd(document);
+      const addBtn = screen.getAllByText('Add').find(el => el.tagName === 'BUTTON')! as HTMLButtonElement;
+      addBtn.focus();
+      fireEvent.blur(input);
+      await nextFrame();
 
-      viewport.height = window.innerHeight - 300;
-      fire();
-      viewport.height = window.innerHeight;
-      fire();
-      expect(scrollBy).toHaveBeenCalled();
-    });
-
-    it('switches the correction to the paste-mode textarea once "Paste a list" is chosen', () => {
-      mockSections = sectionsWithMultiple;
-      const { viewport, fire } = stubViewport(window.innerHeight - 300); // keyboard open
-      render(<GroceryListView />);
-      const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
-      // getBoundingClientRect returns a fresh value on every call so a real
-      // pin attempt always sees nonzero drift (jsdom/happy-dom don't lay
-      // out content, so every element reports the same static rect
-      // otherwise — a false negative, not a sign the pin didn't run).
-      let n = 0;
-      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-        () => ({ top: (n++) * 10 } as DOMRect)
-      );
-      fireEvent.click(screen.getByText('Add items'));
-      fireEvent.click(screen.getByText('Paste a list'));
-
-      viewport.height = window.innerHeight;
-      fire();
-      expect(scrollBy).toHaveBeenCalled();
+      expect(screen.getByPlaceholderText('Item name...')).toBeInTheDocument();
     });
   });
 

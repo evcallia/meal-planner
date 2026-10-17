@@ -272,83 +272,61 @@ describe('PackingListsView', () => {
     await waitFor(() => expect(mockAddItem).toHaveBeenCalled());
   });
 
-  // The old approach here (an instant `scrollIntoView({ block: 'nearest' })`
-  // on the keyboard-closing resize) didn't hold position against iOS's own
-  // scroll restoration — either a no-op or itself a competing movement.
-  // `usePinOnKeyboardClose` replaces it with the same anchored-pin technique
-  // `exitEditAnchored` uses: measure the form's position the instant the
-  // close is detected, then repeatedly counter drift via `window.scrollBy`.
-  describe('keyboard-close scroll correction on the inline add form', () => {
-    // Mirrors the stubbing style in hooks/__tests__/useScrollIntoViewOnEdit.test.ts
-    function stubViewport(height: number) {
-      const resizeListeners: EventListener[] = [];
-      const viewport = {
-        height,
-        addEventListener: vi.fn((_: string, fn: EventListener) => resizeListeners.push(fn)),
-        removeEventListener: vi.fn(),
-      };
-      vi.stubGlobal('visualViewport', viewport);
-      return { viewport, fire: () => resizeListeners.forEach(fn => fn(new Event('resize'))) };
-    }
+  // The blur-close defers one frame so focus can land on its real target.
+  const nextFrame = () => act(async () => {
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+  });
 
-    afterEach(() => {
-      vi.unstubAllGlobals();
-      vi.restoreAllMocks();
+  // Dismissing the keyboard with the add form open used to leave the form
+  // mounted, and that is the one state in the app where position cannot be
+  // held: with no layout change there is nothing for exitEditAnchored's pin
+  // to measure, and iOS's movement is a visual-viewport change that is
+  // invisible to getBoundingClientRect/window.scrollBy. Blur now routes the
+  // form down the same anchored-unmount path the Meals tab and the inline
+  // edit rows already use. Typed text lives in the parent, so it survives.
+  describe('dismissing the keyboard with the inline add form open', () => {
+    it('closes the form through the anchored path when focus leaves it', async () => {
+      renderView();
+      fireEvent.click(screen.getByText('+ Add item'));
+      const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'Grapes' } });
+      vi.mocked(exitEditAnchored).mockClear();
+
+      input.blur();
+      fireEvent.blur(input);
+      await nextFrame();
+
+      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
+      expect(exitEditAnchored).toHaveBeenCalled();
     });
 
-    it('pins the form via window.scrollBy once it is open, on a keyboard-close resize', () => {
-      const { viewport, fire } = stubViewport(window.innerHeight - 300); // keyboard open
+    it('keeps the typed name so reopening the form restores it', async () => {
       renderView();
-      const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
-      // getBoundingClientRect returns a fresh value on every call so a real
-      // pin attempt always sees nonzero drift (jsdom/happy-dom don't lay
-      // out content, so every element reports the same static rect
-      // otherwise — a false negative, not a sign the pin didn't run).
-      let n = 0;
-      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-        () => ({ top: (n++) * 10 } as DOMRect)
-      );
-
-      // Add form closed: nothing is subscribed, so a keyboard-close resize is a no-op.
-      viewport.height = window.innerHeight;
-      fire();
-      expect(scrollBy).not.toHaveBeenCalled();
-      viewport.height = window.innerHeight - 300; // keyboard "re-opens" before the form mounts
-
-      // Open the add form, then simulate the keyboard closing (viewport
-      // grows back past the threshold).
       fireEvent.click(screen.getByText('+ Add item'));
-      viewport.height = window.innerHeight;
-      fire();
-      expect(scrollBy).toHaveBeenCalled();
+      const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'Grapes' } });
+
+      input.blur();
+      fireEvent.blur(input);
+      await nextFrame();
+      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
+
+      fireEvent.click(screen.getByText('+ Add item'));
+      expect(screen.getByPlaceholderText('Item name...')).toHaveValue('Grapes');
     });
 
-    it('suppresses the correction during a deliberate touch-scroll', () => {
-      const { viewport, fire } = stubViewport(window.innerHeight - 300);
+    it('stays open when focus moves to another control inside the form', async () => {
       renderView();
-      const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
-      // getBoundingClientRect returns a fresh value on every call so a real
-      // pin attempt always sees nonzero drift (jsdom/happy-dom don't lay
-      // out content, so every element reports the same static rect
-      // otherwise — a false negative, not a sign the pin didn't run).
-      let n = 0;
-      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-        () => ({ top: (n++) * 10 } as DOMRect)
-      );
       fireEvent.click(screen.getByText('+ Add item'));
+      const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'Grapes' } });
 
-      fireEvent.touchStart(document);
-      viewport.height = window.innerHeight; // keyboard closes mid deliberate scroll
-      fire();
-      expect(scrollBy).not.toHaveBeenCalled();
-      fireEvent.touchEnd(document);
+      const addBtn = screen.getAllByText('Add').find(el => el.tagName === 'BUTTON')! as HTMLButtonElement;
+      addBtn.focus();
+      fireEvent.blur(input);
+      await nextFrame();
 
-      // A fresh open->close transition after the touch ends still corrects.
-      viewport.height = window.innerHeight - 300;
-      fire();
-      viewport.height = window.innerHeight;
-      fire();
-      expect(scrollBy).toHaveBeenCalled();
+      expect(screen.getByPlaceholderText('Item name...')).toBeInTheDocument();
     });
   });
 

@@ -5,8 +5,8 @@ import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { StoreAutocomplete } from './StoreAutocomplete';
 import { ItemAutocomplete } from './ItemAutocomplete';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
-import { usePinOnKeyboardClose } from '../hooks/usePinOnKeyboardClose';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
+import { closeOnBlurOutside } from '../utils/closeOnBlurOutside';
 import { getEditHighlight } from '../utils/editHighlightColors';
 import { parseQuantity } from '../utils/quantity';
 
@@ -720,7 +720,6 @@ export function ChecklistSectionCard({
   const addInputRef = useRef<HTMLInputElement>(null);
   const addFormRef = useRef<HTMLDivElement>(null);
   useScrollIntoViewOnEdit(addFormRef, addingToSection === section.id);
-  usePinOnKeyboardClose(addFormRef, addingToSection === section.id);
 
   const commitRename = useCallback(() => {
     const trimmed = editNameValue.trim();
@@ -898,6 +897,7 @@ export function ChecklistSectionCard({
                   if (e.key === 'Enter') handleAdd();
                   if (e.key === 'Escape') closeAdd();
                 }}
+                onBlur={() => closeOnBlurOutside(addFormRef.current, closeAdd)}
                 className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
               />
               <button
