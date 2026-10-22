@@ -1898,3 +1898,90 @@ func TestObserveSyncDistinguishesPollCadences(t *testing.T) {
 		})
 	}
 }
+
+// ranCount counts attempts that actually drained, for a kind.
+func (l *outcomeLog) ranCount(kind string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, o := range l.got {
+		if o.Kind == kind && o.Ran {
+			n++
+		}
+	}
+	return n
+}
+
+// TestSafetyTickerDoesNotDefeatTheIdleCadence pins the fix for a real defect:
+// the safety ticker used to sync UNCONDITIONALLY on its own period, so it
+// dominated any cadence slower than itself. With the shipped defaults —
+// a 15-minute ticker against a 30-minute idle cadence — a household with the
+// app closed everywhere was polling the vendor's live API every 15 minutes,
+// not every 30, and every second idle tick fired twice (one coalescing). The
+// IdlePollInterval setting was effectively capped at the safety period and
+// the startup log line overstated the saving. The ticker is now a WATCHDOG:
+// it only syncs when nothing else has for longer than the slowest cadence.
+func TestSafetyTickerDoesNotDefeatTheIdleCadence(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var calls int32
+	srv := syncCountingServer(t, &calls)
+	log := &outcomeLog{}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: testAuth(srv)},
+		Rec:    rec, DB: db,
+		PollInterval: time.Hour,
+		// The cadence under test: one tick inside the window below.
+		IdlePollInterval: 300 * time.Millisecond,
+		// Ticking 15x faster than the cadence, the way 15 minutes does
+		// against 30. It must not turn into 15x the syncs.
+		SafetyInterval: 20 * time.Millisecond,
+		ObserveSync:    log.observe,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.Run(ctx)
+
+	time.Sleep(400 * time.Millisecond)
+
+	// startup + one idle tick. A third is tolerated for scheduling jitter;
+	// the broken version produced ~20.
+	if got := log.ranCount(KindGrocery); got > 3 {
+		t.Errorf("%d grocery drains in 400ms with a 300ms cadence and a 20ms safety ticker; want ~2 — the watchdog is still driving the cadence", got)
+	}
+}
+
+// TestSafetyWatchdogSyncsWhenTheCadenceGoesSilent is the other half: the
+// watchdog must still be a real backstop. If the cadence timer stops firing
+// — the failure mode the connect-kick rearm logic could introduce — nothing
+// else in the loop would ever sync again, and the whole point of this ticker
+// is that the list cannot silently go stale forever.
+func TestSafetyWatchdogSyncsWhenTheCadenceGoesSilent(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var calls int32
+	srv := syncCountingServer(t, &calls)
+	log := &outcomeLog{}
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: testAuth(srv)},
+		Rec:    rec, DB: db,
+		// Both cadences an hour out: nothing but the watchdog can sync here.
+		PollInterval:     time.Hour,
+		IdlePollInterval: time.Hour,
+		SafetyInterval:   10 * time.Millisecond,
+		SafetyStaleAfter: 30 * time.Millisecond,
+		ObserveSync:      log.observe,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.Run(ctx)
+
+	out := log.waitFor(t, "a watchdog sync as reason=safety", hasReason(KindGrocery, ReasonSafety))
+	if !out.Ran {
+		t.Error("the watchdog reported an attempt that never ran")
+	}
+}

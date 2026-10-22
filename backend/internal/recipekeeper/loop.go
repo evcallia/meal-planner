@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"sync"
 	"time"
 
@@ -15,6 +16,12 @@ import (
 )
 
 const (
+	// safetyInterval is how often the WATCHDOG checks in — not how often it
+	// syncs. It used to sync unconditionally on this period, which silently
+	// capped every slower cadence: against the 30-minute idle cadence it meant
+	// a household with the app closed everywhere still hit the vendor's live
+	// API every 15 minutes, and every second idle tick fired twice. It now
+	// only acts when nothing else has synced for safetyStaleAfter (see Run).
 	safetyInterval = 15 * time.Minute
 
 	// defaultPollSeconds is RECIPE_KEEPER_POLL_SECONDS' default: the cadence
@@ -211,6 +218,19 @@ type Service struct {
 	// idlePollSeconds; production wiring goes through ResolveIdlePollInterval.
 	IdlePollInterval time.Duration
 
+	// SafetyInterval is how often the watchdog checks whether anything has
+	// synced recently. Zero means safetyInterval.
+	SafetyInterval time.Duration
+
+	// SafetyStaleAfter is how long without a completed sync attempt before
+	// the watchdog steps in. Zero derives it as IdlePollInterval +
+	// SafetyInterval: strictly slower than the slowest cadence, so a healthy
+	// loop always syncs on its own schedule and the watchdog stays dormant.
+	// An operator who deliberately sets a very slow idle cadence gets a
+	// correspondingly patient watchdog rather than having their setting
+	// overridden.
+	SafetyStaleAfter time.Duration
+
 	// ObserveSync, if set, is called exactly once per sync attempt — including
 	// the ones that never ran. Production wiring records Prometheus metrics
 	// (see cmd/server); tests use it to assert WHICH reason drove a sync.
@@ -248,9 +268,10 @@ type Service struct {
 	// which calls SyncOnce concurrently with the background Run loop, so
 	// these can no longer be plain unsynchronized ints/bools.
 	mu           sync.Mutex
-	failures     int  // consecutive failures of ANY kind; drives the transientAlertAt threshold
-	authFailures int  // consecutive AUTH failures specifically; drives the latch
-	stopped      bool // true once the auth latch has tripped — Run must stop
+	lastSyncRan  time.Time // when a sync last actually drained; drives the watchdog
+	failures     int       // consecutive failures of ANY kind; drives the transientAlertAt threshold
+	authFailures int       // consecutive AUTH failures specifically; drives the latch
+	stopped      bool      // true once the auth latch has tripped — Run must stop
 
 	// grocerySyncPending/recipeSyncPending coalesce a kick that arrives
 	// while that sync is already in flight: TriggerGrocerySync/
@@ -387,11 +408,31 @@ func (s *Service) syncOnce(ctx context.Context, reason string) error {
 }
 
 // observe reports an attempt, nil-hook-safe. Every sync entry point funnels
-// through here.
+// through here, which is also what makes it the right place to feed the
+// watchdog: a sync kicked by a mutation or the manual endpoint counts as
+// "something synced" just as much as a poll tick does.
 func (s *Service) observe(out SyncOutcome) {
+	if out.Ran {
+		s.mu.Lock()
+		s.lastSyncRan = time.Now()
+		s.mu.Unlock()
+	}
 	if s.ObserveSync != nil {
 		s.ObserveSync(out)
 	}
+}
+
+// sinceLastSync reports how long ago a sync last actually ran. The zero value
+// reads as "never", so the watchdog's first check after a start that synced
+// nothing (paused, or no list chosen) does fire — harmlessly, since those
+// paths no-op without touching the vendor API.
+func (s *Service) sinceLastSync() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastSyncRan.IsZero() {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Since(s.lastSyncRan)
 }
 
 // skipped marks an outcome as an attempt that asked for a sync but did no
@@ -955,7 +996,17 @@ func (s *Service) Run(ctx context.Context) {
 		deadline = time.Now().Add(d)
 	}
 
-	safety := time.NewTicker(safetyInterval)
+	safetyEvery := s.SafetyInterval
+	if safetyEvery <= 0 {
+		safetyEvery = safetyInterval
+	}
+	// Strictly slower than the slowest cadence, so a healthy loop always
+	// beats the watchdog to it and this never becomes a second clock.
+	staleAfter := s.SafetyStaleAfter
+	if staleAfter <= 0 {
+		staleAfter = idleInterval + safetyEvery
+	}
+	safety := time.NewTicker(safetyEvery)
 	defer safety.Stop()
 
 	for {
@@ -964,6 +1015,14 @@ func (s *Service) Run(ctx context.Context) {
 			return
 
 		case <-safety.C:
+			// A watchdog, not a cadence: only step in when nothing else has
+			// synced for staleAfter. Checking costs nothing and is NOT
+			// recorded — a tick that finds the loop healthy didn't ask for a
+			// sync, so counting it would add a series meaning "nothing
+			// happened". reason=safety appearing at all is the signal.
+			if s.sinceLastSync() < staleAfter {
+				continue
+			}
 			_ = s.syncOnce(ctx, ReasonSafety)
 			if s.isStopped() {
 				log.Printf("recipekeeper: sync disabled after repeated auth failures; fix credentials and restart, or trigger a manual sync, to resume")
