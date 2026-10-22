@@ -4,19 +4,19 @@
     {
       "name": "frontend",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-c", "export PATH=/opt/homebrew/bin:$PATH && cd /Users/evan.callia/Desktop/meal-planner/frontend && npm run dev"],
+      "runtimeArgs": ["-c", "cd \"$(git rev-parse --show-toplevel)/frontend\" && npm run dev"],
       "port": 5173
     },
     {
       "name": "backend",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-c", "cd /Users/evan.callia/Desktop/meal-planner && POSTGRES_HOST=localhost POSTGRES_PASSWORD=changeme APPLE_CALENDAR_EMAIL= OIDC_ISSUER= SECURE_COOKIES=false FRONTEND_URL=http://localhost:5173 /Users/evan.callia/Desktop/meal-planner/backend/.venv/bin/python -m uvicorn app.main:app --app-dir backend --reload --port 8001"],
+      "runtimeArgs": ["-c", "cd \"$(git rev-parse --show-toplevel)\" && PORT=8001 POSTGRES_HOST=localhost POSTGRES_PASSWORD=changeme APPLE_CALENDAR_EMAIL= OIDC_ISSUER= SECURE_COOKIES=false FRONTEND_URL=http://localhost:5173 /usr/local/go/bin/go run ./backend/cmd/server"],
       "port": 8001
     },
     {
       "name": "postgres",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-c", "export DOCKER_HOST=unix:///Users/evan.callia/.colima/default/docker.sock && (/opt/homebrew/bin/docker start mealplanner-pg 2>/dev/null || /opt/homebrew/bin/docker run --name mealplanner-pg -e POSTGRES_DB=mealplanner -e POSTGRES_USER=mealplanner -e POSTGRES_PASSWORD=changeme -p 5432:5432 -d postgres:16-alpine) && exec /opt/homebrew/bin/docker logs -f mealplanner-pg"],
+      "runtimeArgs": ["-c", "(docker start mealplanner-pg 2>/dev/null || docker run --name mealplanner-pg -e POSTGRES_DB=mealplanner -e POSTGRES_USER=mealplanner -e POSTGRES_PASSWORD=changeme -p 127.0.0.1:5432:5432 -d postgres:16-alpine) && exec docker logs -f mealplanner-pg"],
       "port": 5432
     }
   ]
