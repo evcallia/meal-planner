@@ -139,6 +139,57 @@ type Status struct {
 	Syncing bool `json:"syncing"`
 }
 
+// The reasons a sync can be asked for. These are metric label values, so the
+// set is deliberately small, stable and low-cardinality — every new one shows
+// up as new series in Prometheus and in every dashboard built on them.
+const (
+	ReasonStartup       = "startup"        // the initial sync inside Run
+	ReasonPollConnected = "poll_connected" // cadence tick, a client is watching
+	ReasonPollIdle      = "poll_idle"      // cadence tick, nobody connected
+	ReasonSafety        = "safety"         // the 15-minute backstop ticker
+	ReasonClientConnect = "client_connect" // an SSE client subscribed
+	ReasonManual        = "manual"         // POST /api/recipe-keeper/sync
+	ReasonMutation      = "mutation"       // a local grocery edit, pushing out
+	ReasonListSelected  = "list_selected"  // PUT /api/recipe-keeper/list
+	ReasonResume        = "resume"         // sync un-paused
+	ReasonCoalesced     = "coalesced"      // the extra run a mid-drain kick earned
+	ReasonAfterSync     = "after_sync"     // recipe cache top-up after a grocery sync
+	// ReasonUnspecified is what the exported SyncOnce reports: it is called
+	// directly by tests and has no caller to attribute.
+	ReasonUnspecified = "unspecified"
+)
+
+// What came of an attempt. Result is a label value; Ran/OK on SyncOutcome
+// carry the meaning for anything that needs to branch.
+const (
+	ResultSuccess   = "success"
+	ResultError     = "error"
+	ResultSkipped   = "skipped"   // paused, no list selected, or auth-latched
+	ResultCoalesced = "coalesced" // folded into a drain already in flight
+	ResultFloored   = "floored"   // connect kick inside ConnectKickInterval
+)
+
+// The two independent sync loops.
+const (
+	KindGrocery = "grocery"
+	KindRecipes = "recipes"
+)
+
+// SyncOutcome is one attempt, reported to Service.ObserveSync. It is a plain
+// struct of primitives so this package never imports the metrics package (or
+// Prometheus) — cmd/server maps it across, the same way OnChange and
+// SubscriberCount keep realtime and recipekeeper independent.
+type SyncOutcome struct {
+	Kind     string
+	Reason   string
+	Result   string
+	Ran      bool // a drain actually executed
+	OK       bool // ...and it succeeded
+	Duration time.Duration
+
+	Added, Updated, Deleted int
+}
+
 // Service drives the sync. OnChange is called after any inbound change so the
 // caller can broadcast SSE; it is nil in tests.
 type Service struct {
@@ -159,6 +210,12 @@ type Service struct {
 	// connected (including before the first one ever connects). Zero means
 	// idlePollSeconds; production wiring goes through ResolveIdlePollInterval.
 	IdlePollInterval time.Duration
+
+	// ObserveSync, if set, is called exactly once per sync attempt — including
+	// the ones that never ran. Production wiring records Prometheus metrics
+	// (see cmd/server); tests use it to assert WHICH reason drove a sync.
+	// Must not block: it runs on the syncing goroutine.
+	ObserveSync func(SyncOutcome)
 
 	// ConnectKickInterval is the minimum gap between two connect-driven
 	// syncs — see Run's Connected case and connectKickSeconds for why a
@@ -307,7 +364,44 @@ func lastRawLastModified(items []json.RawMessage) (string, bool) {
 // entities. See the comment above the item-bucket persist below for why a
 // bucket's watermark is only written to the DB once THAT bucket has
 // finished draining.
+// SyncOnce runs one full grocery sync. Callers that know WHY they are
+// syncing should use syncOnce so the attempt is attributed; this exported
+// entry point exists for tests and reports ReasonUnspecified.
 func (s *Service) SyncOnce(ctx context.Context) error {
+	return s.syncOnce(ctx, ReasonUnspecified)
+}
+
+// syncOnce runs a sync and reports exactly one SyncOutcome for it. Every
+// return inside syncOnceInner lands here, so an attempt can never go
+// unrecorded or be recorded twice.
+func (s *Service) syncOnce(ctx context.Context, reason string) error {
+	out := SyncOutcome{Kind: KindGrocery, Reason: reason, Result: ResultSuccess, Ran: true, OK: true}
+	start := time.Now()
+	err := s.syncOnceInner(ctx, &out)
+	if err != nil {
+		out.Result, out.OK = ResultError, false
+	}
+	out.Duration = time.Since(start)
+	s.observe(out)
+	return err
+}
+
+// observe reports an attempt, nil-hook-safe. Every sync entry point funnels
+// through here.
+func (s *Service) observe(out SyncOutcome) {
+	if s.ObserveSync != nil {
+		s.ObserveSync(out)
+	}
+}
+
+// skipped marks an outcome as an attempt that asked for a sync but did no
+// work — paused, no list selected, or the auth latch. Not an error: nothing
+// went wrong, there was simply nothing to do.
+func (out *SyncOutcome) skipped() {
+	out.Result, out.Ran, out.OK = ResultSkipped, false, false
+}
+
+func (s *Service) syncOnceInner(ctx context.Context, out *SyncOutcome) error {
 	// The pause switch is checked FIRST, before any watermark or list-id
 	// read: pausing must never advance a watermark, even by a no-op read
 	// that happens to fall in the same code path. A resumed sync starts
@@ -323,6 +417,7 @@ func (s *Service) SyncOnce(ctx context.Context) error {
 			log.Printf("recipekeeper: sync is paused — skipping until resumed (PUT /api/recipe-keeper/paused or the Settings toggle)")
 		}
 		s.mu.Unlock()
+		out.skipped()
 		return nil
 	}
 	s.mu.Lock()
@@ -338,6 +433,7 @@ func (s *Service) SyncOnce(ctx context.Context) error {
 			log.Printf("recipekeeper: no shopping list selected yet — skipping sync until one is chosen (GET /api/recipe-keeper/lists, then PUT /api/recipe-keeper/list)")
 		}
 		s.mu.Unlock()
+		out.skipped()
 		return nil
 	}
 	s.mu.Lock()
@@ -510,6 +606,9 @@ func (s *Service) SyncOnce(ctx context.Context) error {
 
 		if itemDone && catDone && catItemDone {
 			s.recordSuccess()
+			out.Added = len(changes.Added)
+			out.Updated = len(changes.Updated)
+			out.Deleted = len(changes.Deleted)
 			if changes.Any() && s.OnChange != nil {
 				s.OnChange(changes)
 			}
@@ -582,24 +681,30 @@ func (s *Service) SyncRecipes(ctx context.Context) error {
 // the mutex — so a burst of triggers (startup racing the first SyncOnce,
 // then every subsequent SyncOnce) collapses to at most one extra run, never
 // zero and never one per trigger.
-func (s *Service) TriggerRecipeSync() {
+func (s *Service) TriggerRecipeSync(reason string) {
 	if IsPaused(s.DB) {
+		s.observe(SyncOutcome{Kind: KindRecipes, Reason: reason, Result: ResultSkipped})
 		return
 	}
 	if !s.recipeSyncMu.TryLock() {
 		s.mu.Lock()
 		s.recipeSyncPending = true
 		s.mu.Unlock()
+		s.observe(SyncOutcome{Kind: KindRecipes, Reason: reason, Result: ResultCoalesced})
 		return
 	}
 	parent := s.backgroundContext()
 	go func() {
 		defer s.recipeSyncMu.Unlock()
 		for {
+			out := SyncOutcome{Kind: KindRecipes, Reason: reason, Result: ResultSuccess, Ran: true, OK: true}
+			start := time.Now()
 			ctx, cancel := context.WithTimeout(parent, recipeSyncTimeout)
 			err := s.SyncRecipes(ctx)
 			cancel()
+			out.Duration = time.Since(start)
 			if err != nil {
+				out.Result, out.OK = ResultError, false
 				// Route through recordError like any other sync failure — an
 				// auth failure during a recipe pull is exactly as real (and as
 				// worth latching off) as one during a grocery pull, and a
@@ -607,6 +712,7 @@ func (s *Service) TriggerRecipeSync() {
 				// bookkeeping rather than being log-only.
 				s.recordError(err)
 			}
+			s.observe(out)
 
 			s.mu.Lock()
 			pending := s.recipeSyncPending
@@ -615,6 +721,9 @@ func (s *Service) TriggerRecipeSync() {
 			if !pending || s.isStopped() {
 				return
 			}
+			// The extra lap a mid-pull kick earned: it belongs to no single
+			// caller, so it is attributed to the coalescing itself.
+			reason = ReasonCoalesced
 		}
 	}()
 }
@@ -639,14 +748,16 @@ func (s *Service) TriggerRecipeSync() {
 // a slow or hung upstream can't accumulate goroutines indefinitely, and so
 // it is generously above a real full drain — a cancelled drain makes no
 // progress, because the watermark is only persisted once a drain completes.
-func (s *Service) TriggerGrocerySync() {
+func (s *Service) TriggerGrocerySync(reason string) {
 	if s.isStopped() || IsPaused(s.DB) {
+		s.observe(SyncOutcome{Kind: KindGrocery, Reason: reason, Result: ResultSkipped})
 		return
 	}
 	if !s.grocerySyncMu.TryLock() {
 		s.mu.Lock()
 		s.grocerySyncPending = true
 		s.mu.Unlock()
+		s.observe(SyncOutcome{Kind: KindGrocery, Reason: reason, Result: ResultCoalesced})
 		return
 	}
 	parent := s.backgroundContext()
@@ -662,7 +773,7 @@ func (s *Service) TriggerGrocerySync() {
 		defer s.grocerySyncMu.Unlock()
 		for {
 			ctx, cancel := context.WithTimeout(parent, grocerySyncTimeout)
-			_ = s.SyncOnce(ctx)
+			_ = s.syncOnce(ctx, reason)
 			cancel()
 
 			s.mu.Lock()
@@ -672,6 +783,9 @@ func (s *Service) TriggerGrocerySync() {
 			if !pending || s.isStopped() {
 				return
 			}
+			// The extra drain a mid-sync kick earned: it belongs to no single
+			// caller, so it is attributed to the coalescing itself.
+			reason = ReasonCoalesced
 		}
 	}()
 }
@@ -711,7 +825,7 @@ func (s *Service) recordSuccess() {
 	// Once the item bucket is caught up, opportunistically top up the recipe
 	// title cache too. TriggerRecipeSync no-ops if one is already running, and
 	// once the cache is warm the watermark makes each of these calls trivial.
-	s.TriggerRecipeSync()
+	s.TriggerRecipeSync(ReasonAfterSync)
 }
 
 // recordError surfaces auth failures immediately — they never self-heal — but
@@ -787,9 +901,9 @@ func (s *Service) Run(ctx context.Context) {
 
 	// Kick off the recipe-title cache warm-up in parallel — it must never
 	// block the first grocery sync below, which is why it runs detached.
-	s.TriggerRecipeSync()
+	s.TriggerRecipeSync(ReasonStartup)
 
-	if err := s.SyncOnce(ctx); err != nil {
+	if err := s.syncOnce(ctx, ReasonStartup); err != nil {
 		log.Printf("recipekeeper: initial sync: %v", err)
 	}
 	if s.isStopped() {
@@ -850,7 +964,7 @@ func (s *Service) Run(ctx context.Context) {
 			return
 
 		case <-safety.C:
-			_ = s.SyncOnce(ctx)
+			_ = s.syncOnce(ctx, ReasonSafety)
 			if s.isStopped() {
 				log.Printf("recipekeeper: sync disabled after repeated auth failures; fix credentials and restart, or trigger a manual sync, to resume")
 				return
@@ -880,8 +994,12 @@ func (s *Service) Run(ctx context.Context) {
 			kicked := false
 			if time.Since(lastConnectKick) >= kickFloor {
 				lastConnectKick = time.Now()
-				s.TriggerGrocerySync()
+				s.TriggerGrocerySync(ReasonClientConnect)
 				kicked = true
+			} else {
+				// Still an attempt somebody made — recorded so the ratio of
+				// floored to acted-on connects is visible rather than silent.
+				s.observe(SyncOutcome{Kind: KindGrocery, Reason: ReasonClientConnect, Result: ResultFloored})
 			}
 			if kicked || time.Until(deadline) > connectedInterval {
 				arm(connectedInterval)
@@ -891,7 +1009,14 @@ func (s *Service) Run(ctx context.Context) {
 			if s.isStopped() {
 				return
 			}
-			s.TriggerGrocerySync()
+			// Attribute the tick to the cadence it fired on, so the two are
+			// distinguishable in the metrics: a household with the app closed
+			// should show poll_idle, not a quieter stream of poll_connected.
+			tickReason := ReasonPollIdle
+			if countFn() > 0 {
+				tickReason = ReasonPollConnected
+			}
+			s.TriggerGrocerySync(tickReason)
 			// Re-evaluate presence for the NEXT tick's cadence: connected
 			// stays fast, idle (including the last subscriber having just
 			// disconnected) falls back to the slow cadence.

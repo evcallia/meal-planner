@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -288,4 +289,43 @@ func TestStatusEndpointReportsSyncingWhileDraining(t *testing.T) {
 
 	counter.setDelay(0)
 	waitForSyncIdle(t, ta)
+}
+
+// TestSyncEndpointAttributesTheSyncAsManual pins the metric label the button
+// produces. The reason label is only worth having if each entry point reports
+// its own, and a constant handed to a function is exactly the kind of thing
+// that gets copy-pasted wrong — "manual" showing up as "mutation" would
+// quietly misattribute every press in Grafana.
+func TestSyncEndpointAttributesTheSyncAsManual(t *testing.T) {
+	ta := newTestApp(t)
+	counter := enableRecipeKeeperWithListsAndCounter(t, ta, []map[string]any{
+		{"Id": "list-a", "Name": "Groceries", "IsDeleted": false},
+	}, 0)
+	selectListForSync(t, ta, counter)
+
+	var mu sync.Mutex
+	var reasons []string
+	ta.App.RecipeKeeper.ObserveSync = func(out recipekeeper.SyncOutcome) {
+		if out.Kind != recipekeeper.KindGrocery {
+			return
+		}
+		mu.Lock()
+		reasons = append(reasons, out.Reason)
+		mu.Unlock()
+	}
+
+	if resp := ta.POST("/api/recipe-keeper/sync", nil); resp.Status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", resp.Status, resp.Body)
+	}
+	waitForSyncIdle(t, ta)
+
+	mu.Lock()
+	got := append([]string(nil), reasons...)
+	mu.Unlock()
+	for _, r := range got {
+		if r == recipekeeper.ReasonManual {
+			return
+		}
+	}
+	t.Errorf("the manual endpoint reported reasons %v, want one of them to be %q", got, recipekeeper.ReasonManual)
 }

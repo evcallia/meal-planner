@@ -318,7 +318,7 @@ func TestTriggerRecipeSyncCoalescesWhileInFlight(t *testing.T) {
 		Rec:    rec, DB: db,
 	}
 
-	svc.TriggerRecipeSync()
+	svc.TriggerRecipeSync(ReasonUnspecified)
 	select {
 	case <-entered:
 	case <-time.After(2 * time.Second):
@@ -328,9 +328,9 @@ func TestTriggerRecipeSyncCoalescesWhileInFlight(t *testing.T) {
 	// Several more triggers landing while the first pull is still in
 	// flight (blocked on <-release below) — these must coalesce into
 	// exactly one extra pull, not be dropped and not each start their own.
-	svc.TriggerRecipeSync()
-	svc.TriggerRecipeSync()
-	svc.TriggerRecipeSync()
+	svc.TriggerRecipeSync(ReasonUnspecified)
+	svc.TriggerRecipeSync(ReasonUnspecified)
+	svc.TriggerRecipeSync(ReasonUnspecified)
 
 	close(release)
 	deadline := time.After(2 * time.Second)
@@ -850,7 +850,7 @@ func TestTriggerGrocerySyncTimeoutExceeds30Seconds(t *testing.T) {
 	}
 
 	start := time.Now()
-	svc.TriggerGrocerySync()
+	svc.TriggerGrocerySync(ReasonUnspecified)
 
 	var dl time.Time
 	select {
@@ -1017,7 +1017,7 @@ func TestTriggerGrocerySyncCoalescesWhileInFlight(t *testing.T) {
 		Rec:    rec, DB: db,
 	}
 
-	svc.TriggerGrocerySync()
+	svc.TriggerGrocerySync(ReasonUnspecified)
 	select {
 	case <-entered:
 	case <-time.After(2 * time.Second):
@@ -1028,9 +1028,9 @@ func TestTriggerGrocerySyncCoalescesWhileInFlight(t *testing.T) {
 	// flight — none of these may start a CONCURRENT second sync, but they
 	// must not be dropped either: together they should coalesce into
 	// exactly one extra sync once the first finishes.
-	svc.TriggerGrocerySync()
-	svc.TriggerGrocerySync()
-	svc.TriggerGrocerySync()
+	svc.TriggerGrocerySync(ReasonUnspecified)
+	svc.TriggerGrocerySync(ReasonUnspecified)
+	svc.TriggerGrocerySync(ReasonUnspecified)
 
 	close(release)
 	deadline := time.After(2 * time.Second)
@@ -1086,7 +1086,7 @@ func TestTriggerGrocerySyncSkipsWhenAuthLatchTripped(t *testing.T) {
 	}
 	before := atomic.LoadInt32(&tokenRequests)
 
-	svc.TriggerGrocerySync()
+	svc.TriggerGrocerySync(ReasonUnspecified)
 	// TriggerGrocerySync is fire-and-forget; give a would-be goroutine time
 	// to reach the server before asserting it never did.
 	time.Sleep(50 * time.Millisecond)
@@ -1757,5 +1757,144 @@ func waitForCalls(t *testing.T, calls *int32, want int32, msg string) {
 			t.Fatalf("%s (calls = %d, want %d)", msg, atomic.LoadInt32(calls), want)
 		case <-time.After(5 * time.Millisecond):
 		}
+	}
+}
+
+// outcomeLog collects what ObserveSync reports, for tests that care about the
+// attribution rather than the sync itself.
+type outcomeLog struct {
+	mu  sync.Mutex
+	got []SyncOutcome
+}
+
+func (l *outcomeLog) observe(o SyncOutcome) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.got = append(l.got, o)
+}
+
+// waitFor blocks until an outcome matching pred has been reported, and
+// returns it. On timeout it fails with everything seen so far, so a wrong
+// reason reads as a diff rather than a bare timeout.
+func (l *outcomeLog) waitFor(t *testing.T, msg string, pred func(SyncOutcome) bool) SyncOutcome {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		l.mu.Lock()
+		for _, o := range l.got {
+			if pred(o) {
+				l.mu.Unlock()
+				return o
+			}
+		}
+		seen := append([]SyncOutcome(nil), l.got...)
+		l.mu.Unlock()
+		select {
+		case <-deadline:
+			t.Fatalf("%s — never reported. Saw: %+v", msg, seen)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+func hasReason(kind, reason string) func(SyncOutcome) bool {
+	return func(o SyncOutcome) bool { return o.Kind == kind && o.Reason == reason }
+}
+
+// TestObserveSyncAttributesEachTrigger is the contract behind the Prometheus
+// reason label: every path that asks for a sync must say which path it was,
+// including the ones that do no work. Without this, "why did we just hit the
+// vendor API" is unanswerable — which is exactly the hole that made the
+// connect-kick behaviour impossible to verify in production.
+func TestObserveSyncAttributesEachTrigger(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var calls int32
+	srv := syncCountingServer(t, &calls)
+	log := &outcomeLog{}
+	connectedCh := make(chan struct{}, 1)
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: testAuth(srv)},
+		Rec:    rec, DB: db,
+		PollInterval:        time.Hour,
+		IdlePollInterval:    time.Hour,
+		ConnectKickInterval: time.Hour,
+		Connected:           connectedCh,
+		ObserveSync:         log.observe,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.Run(ctx)
+
+	startup := log.waitFor(t, "the initial sync as reason=startup", hasReason(KindGrocery, ReasonStartup))
+	if !startup.Ran || !startup.OK {
+		t.Errorf("startup outcome Ran=%v OK=%v, want both true", startup.Ran, startup.OK)
+	}
+	if startup.Duration <= 0 {
+		t.Error("startup outcome carried no duration")
+	}
+
+	connectedCh <- struct{}{}
+	connect := log.waitFor(t, "a connect-driven sync as reason=client_connect",
+		func(o SyncOutcome) bool {
+			return o.Reason == ReasonClientConnect && o.Result == ResultSuccess
+		})
+	if !connect.Ran {
+		t.Error("the connect-driven sync reported Ran=false")
+	}
+
+	// A second connect inside ConnectKickInterval does no work, but somebody
+	// still asked — it must be visible as floored rather than vanishing.
+	connectedCh <- struct{}{}
+	floored := log.waitFor(t, "the floored second connect as result=floored",
+		func(o SyncOutcome) bool { return o.Result == ResultFloored })
+	if floored.Reason != ReasonClientConnect {
+		t.Errorf("floored outcome reason = %q, want %q", floored.Reason, ReasonClientConnect)
+	}
+	if floored.Ran {
+		t.Error("a floored attempt reported Ran=true — nothing ran, so it must not land in the duration histogram")
+	}
+}
+
+// TestObserveSyncDistinguishesPollCadences proves a cadence tick is labelled
+// with the cadence it fired on. Merging them would hide the single most
+// useful thing the metric can say: whether the app is polling a third party
+// every minute because somebody is watching, or every half hour because
+// nobody is.
+func TestObserveSyncDistinguishesPollCadences(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		subscribers int
+		wantReason  string
+	}{
+		{"connected", 1, ReasonPollConnected},
+		{"idle", 0, ReasonPollIdle},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testDB(t)
+			rec := testReconciler(t, db)
+
+			var calls int32
+			srv := syncCountingServer(t, &calls)
+			log := &outcomeLog{}
+			svc := &Service{
+				Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: testAuth(srv)},
+				Rec:    rec, DB: db,
+				// Both short, so the tick fires promptly either way; which
+				// REASON it reports is what's under test, not the timing.
+				PollInterval:     15 * time.Millisecond,
+				IdlePollInterval: 15 * time.Millisecond,
+				SubscriberCount:  func() int { return tc.subscribers },
+				ObserveSync:      log.observe,
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go svc.Run(ctx)
+
+			log.waitFor(t, "a cadence tick as reason="+tc.wantReason, hasReason(KindGrocery, tc.wantReason))
+		})
 	}
 }

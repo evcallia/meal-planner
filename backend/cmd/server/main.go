@@ -22,6 +22,7 @@ import (
 	"mealplanner/internal/config"
 	"mealplanner/internal/db"
 	"mealplanner/internal/ical"
+	"mealplanner/internal/metrics"
 	"mealplanner/internal/recipekeeper"
 )
 
@@ -154,6 +155,25 @@ func main() {
 		// plain func value and a plain channel, not an import either way.
 		rkService.SubscriberCount = application.Broadcaster.Count
 		rkService.Connected = application.Broadcaster.Connected
+		// Prometheus, wired the same way: recipekeeper reports a plain struct
+		// of primitives and never imports the metrics package (nor, through
+		// it, Prometheus). This adapter is the only place the two vocabularies
+		// meet, and it is a field-for-field pass-through on purpose — any
+		// judgement about what a reason or result MEANS belongs in
+		// recipekeeper, which produces them.
+		rkService.ObserveSync = func(out recipekeeper.SyncOutcome) {
+			metrics.RecordSync(metrics.Sync{
+				Kind:     out.Kind,
+				Reason:   out.Reason,
+				Result:   out.Result,
+				Ran:      out.Ran,
+				OK:       out.OK,
+				Duration: out.Duration,
+				Added:    out.Added,
+				Updated:  out.Updated,
+				Deleted:  out.Deleted,
+			})
+		}
 		// Exposed on App so /api/recipe-keeper/status and /sync can reach it;
 		// nil (the zero value) on App when the integration isn't configured.
 		application.RecipeKeeper = rkService
@@ -192,6 +212,30 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 
+	// Metrics live on their own listener, NOT on the API port. Traefik routes
+	// only the API port, so this is reachable from the Docker network — where
+	// Prometheus runs — and from nowhere else; that is what lets it serve
+	// unauthenticated. Putting /metrics on the API mux would publish it on the
+	// public hostname, where the only thing standing in front of it would be a
+	// shared secret somebody has to rotate.
+	var metricsServer *http.Server
+	if settings.MetricsPort != "" {
+		metricsServer = &http.Server{
+			Addr:              ":" + settings.MetricsPort,
+			Handler:           metrics.Handler(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			log.Printf("metrics listening on %s/metrics", metricsServer.Addr)
+			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				// Never fatal: losing metrics must not take the app down.
+				log.Printf("metrics server error: %v", err)
+			}
+		}()
+	} else {
+		log.Printf("metrics disabled (METRICS_PORT is empty)")
+	}
+
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 
@@ -206,6 +250,9 @@ func main() {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		if metricsServer != nil {
+			_ = metricsServer.Shutdown(ctx)
+		}
 		_ = server.Shutdown(ctx)
 	}()
 

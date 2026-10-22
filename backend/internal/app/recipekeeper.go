@@ -53,7 +53,7 @@ func (a *App) handleRecipeKeeperSync(w http.ResponseWriter, r *http.Request, _ *
 	// later. Kick the same trigger the loop uses (background context, 5-min
 	// timeout, mutex + coalescing so this can't race a poll-driven drain)
 	// and report 202; the UI polls Status until `syncing` clears.
-	a.RecipeKeeper.TriggerGrocerySync()
+	a.RecipeKeeper.TriggerGrocerySync(recipekeeper.ReasonManual)
 	httpx.WriteJSON(w, http.StatusAccepted, a.RecipeKeeper.Status())
 }
 
@@ -121,8 +121,8 @@ func (a *App) handleRecipeKeeperSelectList(w http.ResponseWriter, r *http.Reques
 	// latch-aware, so it's safe to fire them here without waiting on either.
 	// TriggerGrocerySync pulls the list itself; TriggerRecipeSync warms the
 	// recipe-title cache a freshly-imported list needs for attribution.
-	a.RecipeKeeper.TriggerGrocerySync()
-	a.RecipeKeeper.TriggerRecipeSync()
+	a.RecipeKeeper.TriggerGrocerySync(recipekeeper.ReasonListSelected)
+	a.RecipeKeeper.TriggerRecipeSync(recipekeeper.ReasonListSelected)
 
 	httpx.WriteJSON(w, http.StatusOK, a.RecipeKeeper.Status())
 }
@@ -154,8 +154,8 @@ func (a *App) handleRecipeKeeperSetPaused(w http.ResponseWriter, r *http.Request
 
 	recipekeeper.SetPaused(a.RecipeKeeper.DB, payload.Paused)
 	if !payload.Paused {
-		a.RecipeKeeper.TriggerGrocerySync()
-		a.RecipeKeeper.TriggerRecipeSync()
+		a.RecipeKeeper.TriggerGrocerySync(recipekeeper.ReasonResume)
+		a.RecipeKeeper.TriggerRecipeSync(recipekeeper.ReasonResume)
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, a.RecipeKeeper.Status())

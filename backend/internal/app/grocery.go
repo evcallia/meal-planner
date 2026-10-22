@@ -68,7 +68,7 @@ func (a *App) recipeKeeperKick() {
 	if a.RecipeKeeper == nil {
 		return
 	}
-	a.RecipeKeeper.TriggerGrocerySync()
+	a.RecipeKeeper.TriggerGrocerySync(recipekeeper.ReasonMutation)
 }
 
 // upsertSectionDefault mirrors grocery._upsert_section_default: remember the

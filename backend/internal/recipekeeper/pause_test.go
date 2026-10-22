@@ -153,7 +153,7 @@ func TestTriggerGrocerySyncNoopWhenPaused(t *testing.T) {
 	}
 	SetPaused(db, true)
 
-	svc.TriggerGrocerySync()
+	svc.TriggerGrocerySync(ReasonUnspecified)
 	// TriggerGrocerySync is fire-and-forget; give a would-be goroutine time
 	// to reach the server before asserting it never did.
 	time.Sleep(50 * time.Millisecond)
@@ -185,7 +185,7 @@ func TestTriggerRecipeSyncNoopWhenPaused(t *testing.T) {
 	}
 	SetPaused(db, true)
 
-	svc.TriggerRecipeSync()
+	svc.TriggerRecipeSync(ReasonUnspecified)
 	time.Sleep(50 * time.Millisecond)
 
 	if got := atomic.LoadInt32(&requests); got != 0 {
