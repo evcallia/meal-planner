@@ -33,6 +33,17 @@ const (
 	// does.
 	minPollSeconds = 30
 
+	// connectKickSeconds is ConnectKickInterval's default: the minimum gap
+	// between two connect-driven syncs. Connected fires on every SSE
+	// subscribe, and a subscribe is cheaper to cause than a sync is to serve
+	// — an iOS PWA whose stream is suspended and resumed, a flaky connection
+	// reconnecting, every device in the household opening the app at dinner
+	// time. Without a floor each of those would drain a third party's live
+	// API. 15s is short enough that it never costs a user a perceptible wait
+	// (they would otherwise be waiting out PollInterval, four times longer)
+	// and long enough that a reconnect storm costs one sync, not hundreds.
+	connectKickSeconds = 15
+
 	// idlePollSeconds is RECIPE_KEEPER_IDLE_POLL_SECONDS' default and the
 	// cadence Run falls back to once the last SSE client disconnects (or
 	// while none has ever connected): a household with the app closed on
@@ -149,6 +160,13 @@ type Service struct {
 	// idlePollSeconds; production wiring goes through ResolveIdlePollInterval.
 	IdlePollInterval time.Duration
 
+	// ConnectKickInterval is the minimum gap between two connect-driven
+	// syncs — see Run's Connected case and connectKickSeconds for why a
+	// floor is needed at all. Zero means connectKickSeconds. Tests set it to
+	// an hour to prove kicks are floored, or leave it zero when they want
+	// each connect to act.
+	ConnectKickInterval time.Duration
+
 	// SubscriberCount, if set, reports how many SSE clients are currently
 	// connected — Run uses zero vs. nonzero to choose between IdlePollInterval
 	// and PollInterval on each tick. nil (tests that don't care, or before
@@ -158,12 +176,14 @@ type Service struct {
 	// realtime.Broadcaster's type, only that something can count subscribers.
 	SubscriberCount func() int
 
-	// Connected, if set, receives a value every time the SSE subscriber count
-	// transitions from 0 to 1 (see realtime.Broadcaster.Connected, which
-	// production wiring assigns here directly — the channel type alone is
-	// enough coupling, no import needed). Run selects on it to fire an
+	// Connected, if set, receives a value every time an SSE client subscribes
+	// — every one, not just the first (see realtime.Broadcaster.Connected,
+	// which production wiring assigns here directly — the channel type alone
+	// is enough coupling, no import needed). Run selects on it to fire an
 	// immediate sync the moment a client connects, rather than waiting up to
-	// IdlePollInterval for the next tick. nil is fine: connects are then only
+	// IdlePollInterval for the next tick, which is what makes a change made
+	// in the Recipe Keeper app show up because you opened Meal Planner
+	// instead of after the next poll. nil is fine: connects are then only
 	// noticed on the next tick, which still self-corrects to PollInterval.
 	Connected <-chan struct{}
 
@@ -799,8 +819,27 @@ func (s *Service) Run(ctx context.Context) {
 	if countFn() > 0 {
 		nextInterval = connectedInterval
 	}
+	kickFloor := s.ConnectKickInterval
+	if kickFloor <= 0 {
+		kickFloor = connectKickSeconds * time.Second
+	}
+	// Zero means "no connect has been acted on yet", so the first one always
+	// acts — there is nothing for it to be too soon after.
+	var lastConnectKick time.Time
+
 	timer := time.NewTimer(nextInterval)
 	defer timer.Stop()
+	deadline := time.Now().Add(nextInterval)
+	// arm replaces the pending tick with one d from now. Stop-then-drain is
+	// safe here because every call site has just taken a different case out
+	// of the select, so an already-fired timer's value is still buffered.
+	arm := func(d time.Duration) {
+		if !timer.Stop() {
+			<-timer.C
+		}
+		timer.Reset(d)
+		deadline = time.Now().Add(d)
+	}
 
 	safety := time.NewTicker(safetyInterval)
 	defer safety.Stop()
@@ -828,11 +867,25 @@ func (s *Service) Run(ctx context.Context) {
 			// latch-respecting entry point, so this is safe even if a sync
 			// (safety timer, a previous tick, or a manual trigger) is
 			// already in flight.
-			s.TriggerGrocerySync()
-			if !timer.Stop() {
-				<-timer.C
+			//
+			// Connected fires on every subscribe, so this case is reached
+			// far more often than once per person opening the app — hence
+			// the floor. A floored connect must still pull the next tick in
+			// to the fast cadence (the connect may be the first one, with
+			// the timer still on IdlePollInterval), but must never push it
+			// out: a client reconnecting faster than PollInterval would
+			// otherwise postpone the poll indefinitely while every one of
+			// its kicks was floored away, leaving the 15-minute safety
+			// timer as the only thing keeping the list fresh.
+			kicked := false
+			if time.Since(lastConnectKick) >= kickFloor {
+				lastConnectKick = time.Now()
+				s.TriggerGrocerySync()
+				kicked = true
 			}
-			timer.Reset(connectedInterval)
+			if kicked || time.Until(deadline) > connectedInterval {
+				arm(connectedInterval)
+			}
 
 		case <-timer.C:
 			if s.isStopped() {
@@ -846,7 +899,11 @@ func (s *Service) Run(ctx context.Context) {
 			if countFn() > 0 {
 				nextInterval = connectedInterval
 			}
+			// Reset directly rather than via arm: this timer has already
+			// fired and this case drained it, so arm's Stop-then-drain
+			// would block forever waiting for a value that will never come.
 			timer.Reset(nextInterval)
+			deadline = time.Now().Add(nextInterval)
 		}
 	}
 }

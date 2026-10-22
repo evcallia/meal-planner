@@ -696,7 +696,12 @@ func TestRunConnectDuringInFlightSyncCoalescesToOneExtra(t *testing.T) {
 		// a Connected signal, not a tick.
 		PollInterval:     time.Hour,
 		IdlePollInterval: time.Hour,
-		Connected:        connectedCh,
+		// This test is about coalescing, not about the connect floor, so
+		// take the floor out of the way: both connects below must reach
+		// TriggerGrocerySync for the coalescing to be what's observed.
+		// TestRunConnectKicksAreFloored covers the floor on its own.
+		ConnectKickInterval: time.Nanosecond,
+		Connected:           connectedCh,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1649,3 +1654,108 @@ func TestSyncOnceCategoryStallGuardTripsOnLastEntityMatchingCursor(t *testing.T)
 }
 
 func ptr(s string) *string { return &s }
+
+// TestRunConnectKicksAreFloored proves Run does not drain Recipe Keeper once
+// per connect. Connected now fires on EVERY subscribe (see
+// realtime.Broadcaster.Connected), which includes a device whose SSE stream
+// reconnects after iOS suspended it — potentially many times a minute — so
+// the kick is floored by ConnectKickInterval. Both poll intervals are an
+// hour, so nothing but a connect can sync here.
+func TestRunConnectKicksAreFloored(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var calls int32
+	srv := syncCountingServer(t, &calls)
+	connectedCh := make(chan struct{}, 1)
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: testAuth(srv)},
+		Rec:    rec, DB: db,
+		PollInterval:        time.Hour,
+		IdlePollInterval:    time.Hour,
+		ConnectKickInterval: time.Hour,
+		Connected:           connectedCh,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.Run(ctx)
+
+	waitForCalls(t, &calls, 1, "Run's initial sync never happened")
+
+	// The first connect is never floored — there is nothing to be too soon
+	// after — so this one must sync.
+	connectedCh <- struct{}{}
+	waitForCalls(t, &calls, 2, "the first Connected signal did not trigger a sync")
+
+	// The second arrives well inside ConnectKickInterval and must be dropped.
+	connectedCh <- struct{}{}
+	time.Sleep(200 * time.Millisecond)
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("calls = %d after a second connect inside the 1h ConnectKickInterval; want 2 — every reconnect must not cost a drain of a third party's live API", got)
+	}
+}
+
+// TestRunSuppressedConnectDoesNotPostponeThePoll proves a floored connect
+// leaves the poll schedule alone. Rearming the timer on every connect looks
+// harmless, but a client reconnecting faster than PollInterval would then
+// push the next tick out forever while every one of its kicks was being
+// floored away — freshness would silently degrade to the 15-minute safety
+// timer precisely when a client was present and polling should be fastest.
+func TestRunSuppressedConnectDoesNotPostponeThePoll(t *testing.T) {
+	db := testDB(t)
+	rec := testReconciler(t, db)
+
+	var calls int32
+	srv := syncCountingServer(t, &calls)
+	connectedCh := make(chan struct{}, 1)
+	svc := &Service{
+		Client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Auth: testAuth(srv)},
+		Rec:    rec, DB: db,
+		PollInterval:     40 * time.Millisecond,
+		IdlePollInterval: time.Hour,
+		// Every connect after the first is floored, so the syncs this test
+		// waits for can only come from the poll.
+		ConnectKickInterval: time.Hour,
+		Connected:           connectedCh,
+		SubscriberCount:     func() int { return 1 },
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.Run(ctx)
+
+	// A client reconnecting far faster than PollInterval, the way an iOS PWA
+	// flapping on a weak connection does. Non-blocking, like Subscribe.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(5 * time.Millisecond):
+				select {
+				case connectedCh <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+
+	waitForCalls(t, &calls, 5, "the poll stopped firing while connects kept arriving — a floored connect must not postpone the next tick")
+}
+
+// waitForCalls blocks until the counter reaches want, failing with msg on a
+// 2-second deadline.
+func waitForCalls(t *testing.T, calls *int32, want int32, msg string) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for atomic.LoadInt32(calls) < want {
+		select {
+		case <-deadline:
+			t.Fatalf("%s (calls = %d, want %d)", msg, atomic.LoadInt32(calls), want)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}

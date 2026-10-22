@@ -762,9 +762,12 @@ returns `200` for this client even when the server-side data genuinely changed (
 Sync is therefore entirely poll-driven, and adaptive rather than fixed-interval:
 `RECIPE_KEEPER_POLL_SECONDS` (default 60s, floor 30s) while at least one browser tab has
 an SSE connection open, `RECIPE_KEEPER_IDLE_POLL_SECONDS` (default 30 minutes) once the
-last one disconnects, and a tab connecting fires an immediate sync rather than waiting
-for the next tick (`internal/recipekeeper.Service.Run`). No parked connection, no
-timer-free freshness — just a cadence that backs off when nobody's watching.
+last one disconnects, and *any* tab connecting fires an immediate sync rather than
+waiting for the next tick — every subscribe, not just the first, so a second device
+opening the app refreshes too, floored at 15s so a reconnect storm costs one sync
+(`internal/recipekeeper.Service.Run`). No parked connection, no timer-free freshness —
+just a cadence that backs off when nobody's watching and snaps to attention when
+someone looks.
 
 ### Mapping to local items
 
