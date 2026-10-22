@@ -1,7 +1,11 @@
 # Meal Planner — Claude Instructions
 
-## Running Commands
-On macOS with Homebrew, Node/npm may not be in the default PATH.
+## Where development happens
+Everything runs in **homelab-vm** (Debian arm64, 192.168.68.88): Orca connects over SSH, so sessions, worktrees, git, Go/Node and Docker all live there. The Mac mini has no Docker and no checkout to work in.
+
+- `~/projects/meal-planner` is the base checkout, kept on `main`; Orca worktrees (under `~/orca/workspaces/`) are for development.
+- The same Docker host runs the whole home-lab stack (repo `local_docker`), including **prod** (`meal-planner` container, project `mealplanner`). Never touch it; the dev stack below is separate.
+- Toolchain: Go in `/usr/local/go/bin` (official tarball; update by reinstalling it), Node/npm from Debian apt.
 
 ```bash
 # Frontend tests
@@ -21,15 +25,15 @@ bash <project-root>/run-tests.sh
 ```
 
 Key details:
-- On macOS with Homebrew, export `PATH="/opt/homebrew/bin:$PATH"` if npm/node isn't found
-- **Go commands need the sandbox disabled.** Go is installed (Homebrew, `/opt/homebrew/bin/go`), but the sandbox blocks all three things it needs: the build cache (`~/Library/Caches/go-build`), the module cache (`~/go`), and `proxy.golang.org` for downloads. Redirecting `GOCACHE`/`GOMODCACHE` into the scratchpad doesn't help — the download still fails. Run Go unsandboxed
+- If `go` isn't found, export `PATH="/usr/local/go/bin:$PATH"`
+- **If the Bash sandbox is on, run Go unsandboxed.** It needs the build cache (`~/.cache/go-build`), the module cache (`~/go`) and `proxy.golang.org`; redirecting `GOCACHE`/`GOMODCACHE` into the scratchpad doesn't help — the download still fails
 - **Test timezone matters.** `internal/ical` converts zone-qualified event times into `time.Local` (see the calendar section), so a test that parses a `TZID=`/`Z` datetime must pin the zone with `withZone(t, ...)` or it passes only on a machine in the zone it was written for. Sweep with `TZ=UTC go test -count=1 ./internal/ical/` and a non-UTC zone
 - Docker is the fallback when a native run isn't wanted (the `mealplanner-gomod` volume caches modules, so only the first run downloads). Note it pins **go1.26** while local is go1.27:
   ```bash
   docker run --rm -v "$PWD/backend":/src -v mealplanner-gomod:/go/pkg/mod -w /src \
     golang:1.26-alpine sh -c 'go build ./... && go vet ./... && go test ./...'
   ```
-- **Formerly flaky under go1.27.1:** `TestInitializeCacheAndShutdown` (`internal/ical/service_test.go`) used to fail in a full-package run ("initial refresh should have written metadata: record not found") while passing in isolation with `-run`. It passes consistently on **go1.27.2** (full-package runs, local zone and `TZ=UTC`), so keep local Go current (`brew upgrade go`). If it ever reappears, it's test-ordering/state leakage, not a regression to chase
+- **Formerly flaky under go1.27.1:** `TestInitializeCacheAndShutdown` (`internal/ical/service_test.go`) used to fail in a full-package run ("initial refresh should have written metadata: record not found") while passing in isolation with `-run`. It passes consistently on **go1.27.2** (full-package runs, local zone and `TZ=UTC`), so keep local Go current (reinstall the tarball from go.dev). If it ever reappears, it's test-ordering/state leakage, not a regression to chase
 - Shell cwd may reset — always use absolute paths or `cd` in the same command
 - **`frontend/.npmrc` has `allow-remote=all` — keep it.** npm 12 (which Renovate uses for lockfile updates) misreads registry tarballs of `bundleDependencies` packages (Tailwind's `oxide-wasm32-wasi`) as "remote" and fails with `EALLOWREMOTE`, so every Renovate PR shipped without a lockfile. npm 11 prints a harmless "Unknown project config" warning about it. `renovate.json` groups React with `@testing-library/*` (RTL majors pin a React peer range) and runs weekly lock-file maintenance
 - **Avoid `overrides` in `frontend/package.json`.** Renovate bumps an overridden package via `npm install <pkg>@<ver>`, which npm rejects with `EOVERRIDE` ("conflicts with direct dependency"), and the frontend half of the PR silently ships without its lockfile. Every override the repo had (added for since-fixed transitive vulns) had gone dead and was removed. If one is truly needed, add it with a comment-tracked removal plan and expect to update it by hand
@@ -46,8 +50,8 @@ curl -s https://meal-planner-dev.evancallia.com/api/health     # -> {"status":"o
 
 **First run in a fresh worktree** — both files are gitignored, so a new worktree has neither:
 ```bash
-cp /Users/evan.callia/projects/meal-planner/.env .
-cp /Users/evan.callia/projects/meal-planner/docker-compose-dev.override.yml .
+cp ~/projects/meal-planner/.env .
+cp ~/projects/meal-planner/docker-compose-dev.override.yml .
 ```
 
 **Then point the db at the shared dev volume — this is the easy one to get wrong.** Compose derives the project name from the DIRECTORY, so a worktree called `my-feature` mints a brand-new **empty** `my-feature_postgres_data` rather than reusing the dev database. Add to `docker-compose-dev.override.yml`:
@@ -57,6 +61,8 @@ volumes:
     external: true
     name: meal-planner_postgres_data
 ```
+If that volume doesn't exist yet, run `docker compose up -d` once in `~/projects/meal-planner` to create it (external volumes aren't auto-created).
+
 Verify: `docker inspect <dir>-db-1 --format '{{range .Mounts}}{{.Name}}{{end}}'` must print `meal-planner_postgres_data`.
 
 Symptom if you miss it: meals/pantry/grocery look roughly normal (they're shared-global) but **Tasks and Lists are empty** — those are per-user by `owner_sub`, and signing in against a fresh DB self-registers a NEW account keyed by the raw provider sub, leaving your session cookie on an identity that owns nothing. Fix: reattach the volume, then **log out and back in** so `resolveIdentity` maps the provider sub onto your canonical one (sessions trust the cookie and don't re-resolve per request).
