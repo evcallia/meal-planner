@@ -34,8 +34,10 @@ func TestSyncEndpointWorksWhenNotPaused(t *testing.T) {
 	enableRecipeKeeper(t, ta) // fake server 401s every /token call
 
 	resp := ta.POST("/api/recipe-keeper/sync", nil)
-	// The fake server always 401s, so this is a 502 (upstream failure) —
-	// the important thing is it is NOT the 409 a paused refusal would be.
+	// The endpoint kicks the drain and returns 202 without waiting on it,
+	// so the fake server's 401 surfaces in last_error rather than in this
+	// response — the important thing is it is NOT the 409 a paused refusal
+	// would be.
 	if resp.Status == http.StatusConflict {
 		t.Fatalf("status = 409, want anything but that when not paused: %s", resp.Body)
 	}

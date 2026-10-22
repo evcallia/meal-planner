@@ -121,6 +121,11 @@ type Status struct {
 	// stateSyncPaused): while true, SyncOnce/SyncRecipes and the triggers
 	// that would call them are all no-ops, in both directions.
 	Paused bool `json:"paused"`
+	// Syncing is true while a grocery drain is in flight. POST
+	// /api/recipe-keeper/sync kicks a drain and returns 202 immediately
+	// rather than blocking on one, so this is how the caller learns the
+	// drain finished (see Service.Syncing).
+	Syncing bool `json:"syncing"`
 }
 
 // Service drives the sync. OnChange is called after any inbound change so the
@@ -179,6 +184,17 @@ type Service struct {
 	// per kick.
 	grocerySyncPending bool
 	recipeSyncPending  bool
+
+	// grocerySyncing reports whether a grocery drain is in flight, so the
+	// manual-sync endpoint can kick one and return immediately instead of
+	// blocking on it. It has to: a full drain runs ~14s, the frontend
+	// aborts every fetch at 5s (API_TIMEOUT in api/client.ts), and a
+	// cancelled drain persists no watermark at all — so a request-scoped
+	// sync could never finish, it just burned vendor API calls and
+	// returned "context canceled". The UI polls Status until this clears.
+	// Set synchronously by TriggerGrocerySync (not inside its goroutine)
+	// so the 202's own Status already reports true.
+	grocerySyncing bool
 
 	// recipeSyncMu guards SyncRecipes so only one full Recipe pull is ever in
 	// flight. Recipe entities embed base64 photos (~100-300 KB each), so the
@@ -614,7 +630,15 @@ func (s *Service) TriggerGrocerySync() {
 		return
 	}
 	parent := s.backgroundContext()
+	s.mu.Lock()
+	s.grocerySyncing = true
+	s.mu.Unlock()
 	go func() {
+		defer func() {
+			s.mu.Lock()
+			s.grocerySyncing = false
+			s.mu.Unlock()
+		}()
 		defer s.grocerySyncMu.Unlock()
 		for {
 			ctx, cancel := context.WithTimeout(parent, grocerySyncTimeout)
@@ -635,6 +659,16 @@ func (s *Service) TriggerGrocerySync() {
 // backgroundContext returns the context a detached recipe pull should run
 // under: the Run loop's own ctx once Run has started (so shutdown cancels an
 // in-progress pull), or a bare Background() before that.
+// Syncing reports whether a grocery drain kicked through
+// TriggerGrocerySync is still in flight. The manual-sync endpoint returns
+// this in its 202 and the UI polls it to know when the drain finished,
+// since the response can no longer carry that fact itself.
+func (s *Service) Syncing() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.grocerySyncing
+}
+
 func (s *Service) backgroundContext() context.Context {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -707,6 +741,7 @@ func (s *Service) Status() Status {
 		SelectedListID:   SelectedListID(s.DB),
 		SelectedListName: SelectedListName(s.DB),
 		Paused:           IsPaused(s.DB),
+		Syncing:          s.Syncing(),
 	}
 	if v := getState(s.DB, stateLastSync, ""); v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {

@@ -23,10 +23,23 @@ import (
 type recipeKeeperSyncCounter struct {
 	groceryHits int32
 	recipeHits  int32
+	// delayNanos is read per request so a test can select a list through
+	// PUT /api/recipe-keeper/list at full speed and only then slow the
+	// drain down. Without that, a test that wants a slow drain has to
+	// start slow, and the selection it needs first would be slow too —
+	// or it skips selecting, SyncOnce no-ops on "no list selected", and
+	// every timing assertion passes vacuously.
+	delayNanos int64
 }
 
 func (c *recipeKeeperSyncCounter) grocery() int { return int(atomic.LoadInt32(&c.groceryHits)) }
-func (c *recipeKeeperSyncCounter) recipe() int  { return int(atomic.LoadInt32(&c.recipeHits)) }
+func (c *recipeKeeperSyncCounter) setDelay(d time.Duration) {
+	atomic.StoreInt64(&c.delayNanos, int64(d))
+}
+func (c *recipeKeeperSyncCounter) delay() time.Duration {
+	return time.Duration(atomic.LoadInt64(&c.delayNanos))
+}
+func (c *recipeKeeperSyncCounter) recipe() int { return int(atomic.LoadInt32(&c.recipeHits)) }
 
 // enableRecipeKeeperWithListsAndCounter is enableRecipeKeeperWithLists (see
 // recipekeeper_test.go) plus a counter of which sync bucket each /api/sync
@@ -36,7 +49,7 @@ func (c *recipeKeeperSyncCounter) recipe() int  { return int(atomic.LoadInt32(&c
 // triggered background sync.
 func enableRecipeKeeperWithListsAndCounter(t *testing.T, ta *testApp, entities []map[string]any, delay time.Duration) *recipeKeeperSyncCounter {
 	t.Helper()
-	counter := &recipeKeeperSyncCounter{}
+	counter := &recipeKeeperSyncCounter{delayNanos: int64(delay)}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/token" {
 			w.Write([]byte(`{"access_token":"` + rkTestJWT(time.Now().Add(48*time.Hour)) + `"}`))
@@ -55,14 +68,14 @@ func enableRecipeKeeperWithListsAndCounter(t *testing.T, ta *testApp, entities [
 		}
 		if isSet("ShoppingListItemSyncEntityRequest") {
 			atomic.AddInt32(&counter.groceryHits, 1)
-			if delay > 0 {
-				time.Sleep(delay)
+			if d := counter.delay(); d > 0 {
+				time.Sleep(d)
 			}
 		}
 		if isSet("RecipeSyncEntityRequest") {
 			atomic.AddInt32(&counter.recipeHits, 1)
-			if delay > 0 {
-				time.Sleep(delay)
+			if d := counter.delay(); d > 0 {
+				time.Sleep(d)
 			}
 		}
 		raw := make([]json.RawMessage, len(entities))
@@ -168,4 +181,111 @@ func TestSelectListEndpointReturnsPromptlyDespiteSlowBackgroundSync(t *testing.T
 	if elapsed >= 1*time.Second {
 		t.Errorf("PUT took %s, want well under the background sync's 2s delay (handler must not wait on it)", elapsed)
 	}
+}
+
+// selectListForSync selects a list through the real endpoint and waits for
+// the drains that selection kicks to finish, leaving the service idle so a
+// following manual sync is measured on its own. Selecting is what makes a
+// drain do real work at all — SyncOnce no-ops on "no list selected", which
+// silently turns every timing assertion below into a vacuous pass.
+func selectListForSync(t *testing.T, ta *testApp, counter *recipeKeeperSyncCounter) {
+	t.Helper()
+	if resp := ta.PUT("/api/recipe-keeper/list", map[string]any{"list_id": "list-a"}); resp.Status != 200 {
+		t.Fatalf("selecting the list failed: status = %d: %s", resp.Status, resp.Body)
+	}
+	waitForCount(t, 2*time.Second, 1, counter.grocery, "the selection's own grocery sync")
+	waitForSyncIdle(t, ta)
+}
+
+// waitForSyncIdle blocks until no drain is in flight, so a test's own kick
+// isn't coalesced into one already running.
+func waitForSyncIdle(t *testing.T, ta *testApp) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if ta.GET("/api/recipe-keeper/status").Obj()["syncing"] == false {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the sync to go idle")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// The manual "Sync now" button must not block its HTTP response on the
+// drain. This is the regression test for a defect that shipped because the
+// endpoint had no happy-path coverage at all (only not-configured,
+// unauthenticated and paused): the handler called SyncOnce(r.Context())
+// directly, so a drain outlived the frontend's 5s fetch abort, the browser
+// cancelled the request, Go cancelled r.Context(), and the in-flight vendor
+// POST died with "context canceled" — persisting no watermark, so the press
+// accomplished nothing while the background poll loop running the same
+// SyncOnce succeeded seconds later.
+func TestSyncEndpointReturnsPromptlyDespiteSlowDrain(t *testing.T) {
+	ta := newTestApp(t)
+	counter := enableRecipeKeeperWithListsAndCounter(t, ta, []map[string]any{
+		{"Id": "list-a", "Name": "Groceries", "IsDeleted": false},
+	}, 0)
+	selectListForSync(t, ta, counter)
+	counter.setDelay(2 * time.Second)
+
+	start := time.Now()
+	resp := ta.POST("/api/recipe-keeper/sync", nil)
+	elapsed := time.Since(start)
+
+	if elapsed > time.Second {
+		t.Errorf("request took %v, want well under the 2s drain — the handler is awaiting it", elapsed)
+	}
+	if resp.Status != http.StatusAccepted {
+		t.Errorf("status = %d, want 202: %s", resp.Status, resp.Body)
+	}
+}
+
+// Returning promptly is only correct if the drain actually happens: the
+// handler must kick the same single-flight trigger the poll loop uses, on a
+// background context, rather than skipping the work.
+func TestSyncEndpointTriggersBackgroundDrain(t *testing.T) {
+	ta := newTestApp(t)
+	counter := enableRecipeKeeperWithListsAndCounter(t, ta, []map[string]any{
+		{"Id": "list-a", "Name": "Groceries", "IsDeleted": false},
+	}, 0)
+	selectListForSync(t, ta, counter)
+	baseline := counter.grocery()
+
+	if resp := ta.POST("/api/recipe-keeper/sync", nil); resp.Status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", resp.Status, resp.Body)
+	}
+
+	// The drain runs after the response, so this proves both that it
+	// happened and that it survived the request context being done.
+	waitForCount(t, 2*time.Second, baseline+1, counter.grocery, "the grocery drain to fire after the response")
+}
+
+// Because the response can no longer carry the drain's outcome, the status
+// endpoint has to report that one is in flight — that is the only signal the
+// UI has to keep its button busy and then show the result.
+func TestStatusEndpointReportsSyncingWhileDraining(t *testing.T) {
+	ta := newTestApp(t)
+	counter := enableRecipeKeeperWithListsAndCounter(t, ta, []map[string]any{
+		{"Id": "list-a", "Name": "Groceries", "IsDeleted": false},
+	}, 0)
+	selectListForSync(t, ta, counter)
+	counter.setDelay(time.Second)
+
+	resp := ta.POST("/api/recipe-keeper/sync", nil)
+	if resp.Status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", resp.Status, resp.Body)
+	}
+	// Set synchronously by the trigger, so the 202 itself already says so —
+	// no polling race for the UI to lose on its first read.
+	if resp.Obj()["syncing"] != true {
+		t.Errorf("202 body syncing = %v, want true", resp.Obj()["syncing"])
+	}
+	if obj := ta.GET("/api/recipe-keeper/status").Obj(); obj["syncing"] != true {
+		t.Errorf("status syncing = %v, want true while draining", obj["syncing"])
+	}
+
+	counter.setDelay(0)
+	waitForSyncIdle(t, ta)
 }

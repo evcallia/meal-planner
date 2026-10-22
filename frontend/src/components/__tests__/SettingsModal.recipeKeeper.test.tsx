@@ -22,6 +22,10 @@ vi.mock('../../api/client', () => ({
     enabled: true, last_sync: '2026-01-01T00:00:00Z', last_error: '', auth_failed: false, paused: false,
     selected_list_id: 'list-1', selected_list_name: 'Groceries',
   })),
+  getRecipeKeeperStatus: vi.fn(() => Promise.resolve({
+    enabled: true, last_sync: '2026-01-01T00:00:00Z', last_error: '', auth_failed: false, paused: false,
+    selected_list_id: 'list-1', selected_list_name: 'Groceries', syncing: false,
+  })),
   setRecipeKeeperPaused: vi.fn((paused: boolean) => Promise.resolve({
     enabled: true, last_sync: null, last_error: '', auth_failed: false, paused,
     selected_list_id: 'list-1', selected_list_name: 'Groceries',
@@ -44,11 +48,12 @@ vi.mock('../../db', () => ({
   getCalendarCacheTimestamp: vi.fn(() => Promise.resolve(null)),
 }));
 
-import { getRecipeKeeperLists, selectRecipeKeeperList, syncRecipeKeeperNow, setRecipeKeeperPaused } from '../../api/client';
+import { getRecipeKeeperLists, getRecipeKeeperStatus, selectRecipeKeeperList, syncRecipeKeeperNow, setRecipeKeeperPaused } from '../../api/client';
 
 const mockGetLists = vi.mocked(getRecipeKeeperLists);
 const mockSelectList = vi.mocked(selectRecipeKeeperList);
 const mockSyncNow = vi.mocked(syncRecipeKeeperNow);
+const mockGetStatus = vi.mocked(getRecipeKeeperStatus);
 const mockSetPaused = vi.mocked(setRecipeKeeperPaused);
 
 const defaultSettings: Settings = {
@@ -210,6 +215,53 @@ describe('SettingsModal - Recipe Keeper section', () => {
 
     expect(mockSyncNow).toHaveBeenCalled();
     await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith(expect.objectContaining({ last_sync: '2026-01-01T00:00:00Z' })));
+  });
+
+  // POST /sync answers 202 as soon as the drain is KICKED, never when it
+  // finishes — a full drain runs ~14s, far past fetchAPI's 5s abort, which
+  // is exactly why blocking on it could never work. So the button has to
+  // keep watching the status until the drain clears and then report what it
+  // recorded, rather than treating the 202 as the outcome.
+  it('"Sync now" waits for the kicked drain to finish and surfaces its error', async () => {
+    mockSyncNow.mockResolvedValueOnce({
+      enabled: true, last_sync: null, last_error: '', auth_failed: false, paused: false,
+      selected_list_id: 'list-1', selected_list_name: 'Groceries', syncing: true,
+    });
+    mockGetStatus.mockResolvedValueOnce({
+      enabled: true, last_sync: null, last_error: '', auth_failed: false, paused: false,
+      selected_list_id: 'list-1', selected_list_name: 'Groceries', syncing: true,
+    });
+    mockGetStatus.mockResolvedValueOnce({
+      enabled: true, last_sync: '2026-02-02T00:00:00Z', last_error: 'upstream exploded',
+      auth_failed: false, paused: false,
+      selected_list_id: 'list-1', selected_list_name: 'Groceries', syncing: false,
+    });
+    const onStatusChange = vi.fn();
+    render(
+      <SettingsModal
+        settings={defaultSettings}
+        onUpdate={vi.fn()}
+        onClose={vi.fn()}
+        isDark={false}
+        onToggleDarkMode={vi.fn()}
+        recipeKeeperStatus={enabledStatus({ selected_list_id: 'list-1', selected_list_name: 'Groceries' })}
+        onRecipeKeeperStatusChange={onStatusChange}
+      />
+    );
+    await waitFor(() => expect(screen.getByText('Settings')).toBeInTheDocument());
+    expandSections();
+    await waitFor(() => expect(mockGetLists).toHaveBeenCalled());
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Sync now'));
+      await Promise.resolve();
+    });
+
+    // Two polls: the drain was still running on the first.
+    await waitFor(() => expect(mockGetStatus).toHaveBeenCalledTimes(2), { timeout: 10_000 });
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith(
+      expect.objectContaining({ last_sync: '2026-02-02T00:00:00Z' })));
+    await waitFor(() => expect(screen.getByText(/upstream exploded/)).toBeInTheDocument());
   });
 
   it('calls the refresh callback when "Sync now" fails, so the status does not sit stale', async () => {

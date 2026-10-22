@@ -864,6 +864,11 @@ export interface RecipeKeeperStatus {
   // valve so shopping can continue through a misbehaving sync. See
   // CLAUDE.md "Recipe Keeper Sync".
   paused: boolean;
+  // True while a grocery drain is in flight. POST /recipe-keeper/sync
+  // returns 202 as soon as it has kicked one — a full drain outlives
+  // API_TIMEOUT — so a caller that wants the outcome polls the status
+  // endpoint until this clears.
+  syncing: boolean;
 }
 
 export async function getRecipeKeeperStatus(): Promise<RecipeKeeperStatus> {

@@ -44,11 +44,17 @@ func (a *App) handleRecipeKeeperSync(w http.ResponseWriter, r *http.Request, _ *
 		httpx.Detail(w, http.StatusConflict, "Recipe Keeper sync is paused — resume it in Settings before syncing")
 		return
 	}
-	if err := a.RecipeKeeper.SyncOnce(r.Context()); err != nil {
-		httpx.Detail(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, a.RecipeKeeper.Status())
+	// Deliberately NOT SyncOnce(r.Context()): a full drain runs ~14s, the
+	// frontend aborts every fetch at 5s (API_TIMEOUT in api/client.ts), and
+	// a cancelled drain persists no watermark — so a request-scoped sync
+	// could never complete. It burned ~18s of vendor API calls per press
+	// and failed with "context canceled" while the background poll loop,
+	// running the same SyncOnce on its own context, succeeded seconds
+	// later. Kick the same trigger the loop uses (background context, 5-min
+	// timeout, mutex + coalescing so this can't race a poll-driven drain)
+	// and report 202; the UI polls Status until `syncing` clears.
+	a.RecipeKeeper.TriggerGrocerySync()
+	httpx.WriteJSON(w, http.StatusAccepted, a.RecipeKeeper.Status())
 }
 
 // handleRecipeKeeperLists is the discovery endpoint: a Recipe Keeper shopping

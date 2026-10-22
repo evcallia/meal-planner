@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, ReactNode } from 'react';
 import { Settings } from '../hooks/useSettings';
-import { getCalendarCacheStatus, refreshCalendarCache, CalendarCacheStatus, getHiddenCalendarEvents, unhideCalendarEvent, HiddenCalendarEvent, sendTestPushNotification, getRecipeKeeperLists, selectRecipeKeeperList, syncRecipeKeeperNow, setRecipeKeeperPaused, RecipeKeeperListOption, RecipeKeeperStatus } from '../api/client';
+import { getCalendarCacheStatus, refreshCalendarCache, CalendarCacheStatus, getHiddenCalendarEvents, unhideCalendarEvent, HiddenCalendarEvent, sendTestPushNotification, getRecipeKeeperLists, getRecipeKeeperStatus, selectRecipeKeeperList, syncRecipeKeeperNow, setRecipeKeeperPaused, RecipeKeeperListOption, RecipeKeeperStatus } from '../api/client';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { isPushSupported, getPushSubscription, enablePush, disablePush } from '../utils/push';
 import { parseServerDate } from '../utils/recency';
@@ -367,6 +367,14 @@ function formatSyncAge(dateString: string | null): string {
   return formatRelativeTime(dateString);
 }
 
+// "Sync now" kicks a drain the backend runs in the background (202) and
+// then watches the status until it clears. A full drain measured ~14s
+// live; SYNC_WAIT_MAX_MS is a ceiling on how long the button stays busy,
+// not on the drain itself — the backend's own 5-minute timeout bounds
+// that, and useRecipeKeeperStatus's 60s poll picks up anything slower.
+const SYNC_POLL_MS = 1500;
+const SYNC_WAIT_MAX_MS = 60_000;
+
 // One read-only row plus a list picker and "Sync now" button — no
 // credential fields, since those are env vars and a password box that can't
 // write them would be a lie. Its own component so the list fetch only runs
@@ -442,7 +450,19 @@ function RecipeKeeperSettings({ status, onStatusChange, onRefresh }: {
     setSyncing(true);
     setActionError(null);
     try {
-      onStatusChange(await syncRecipeKeeperNow());
+      // The endpoint answers 202 as soon as the drain is kicked, not when
+      // it finishes — a full drain runs well past fetchAPI's 5s abort — so
+      // keep the button busy and watch the status until the drain clears,
+      // then surface whatever it recorded.
+      let next = await syncRecipeKeeperNow();
+      onStatusChange(next);
+      const deadline = Date.now() + SYNC_WAIT_MAX_MS;
+      while (next.syncing && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, SYNC_POLL_MS));
+        next = await getRecipeKeeperStatus();
+        onStatusChange(next);
+      }
+      if (next.last_error) setActionError(next.last_error);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Sync failed');
       onRefresh?.();
