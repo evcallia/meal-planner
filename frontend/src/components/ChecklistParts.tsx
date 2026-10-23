@@ -418,7 +418,19 @@ export function ChecklistItemRow({
   if (isEditing) {
     const qtyNum = parseInt(editQuantity) || 0;
     return (
-      <div ref={editFormRef} className={`px-4 py-1.5 space-y-1.5 ${getEditHighlight(editHighlightColor).form}`}>
+      <div
+        ref={editFormRef}
+        // On the FORM, not the name input: iOS's dismiss key fires focusout
+        // from whichever field had focus, and the quantity, section and chip
+        // fields are all part of the same edit. Blurring out of any of them
+        // commits the whole form; moving between them does not (focusout
+        // bubbles, and closeOnBlurOutside re-checks where focus landed).
+        onBlur={() => {
+          kbLog('editRow:form-blur', { editName, editSectionName, editChipId, focus: kbFocus() });
+          closeOnBlurOutside(editFormRef, commitEdit);
+        }}
+        className={`px-4 py-1.5 space-y-1.5 ${getEditHighlight(editHighlightColor).form}`}
+      >
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 shrink-0">
             <button
@@ -445,13 +457,6 @@ export function ChecklistItemRow({
             onKeyDown={e => {
               if (e.key === 'Enter') commitEdit();
               if (e.key === 'Escape') cancelEdit();
-            }}
-            onBlur={() => {
-              kbLog('editRow:input-blur', { editName, focus: kbFocus() });
-              // Measured on device: iOS's keyboard-dismiss key fires
-              // focusout with focus landing on <body>, so an ordinary
-              // blur IS the signal. This row had no blur path at all.
-              closeOnBlurOutside(editFormRef, commitEdit);
             }}
             className="flex-1 min-w-0 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-sm text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
           />
@@ -765,6 +770,20 @@ export function ChecklistSectionCard({
     exitEditAnchored(sectionRef.current, () => onStartAdd(null));
   }, [onStartAdd]);
 
+  // Dismissing the keyboard (or otherwise moving focus out of the form)
+  // ADDS what was typed, then closes. It used to just close and leave the
+  // text for next time, which read as "my item vanished" — the Add button
+  // was the only thing that worked. Closing matters as much as adding: a
+  // form left mounted with the keyboard gone is the one state whose scroll
+  // position cannot be held, and exitEditAnchored needs the unmount.
+  const commitAddAndClose = useCallback(() => {
+    if (!newItemName.trim()) {
+      closeAdd();
+      return;
+    }
+    Promise.resolve(onAddItem(section.id)).finally(closeAdd);
+  }, [newItemName, onAddItem, section.id, closeAdd]);
+
   useEffect(() => {
     if (isEditingName && headerInputRef.current) {
       headerInputRef.current.focus();
@@ -912,7 +931,7 @@ export function ChecklistSectionCard({
                   if (e.key === 'Enter') handleAdd();
                   if (e.key === 'Escape') closeAdd();
                 }}
-                onBlur={() => closeOnBlurOutside(addFormRef, closeAdd)}
+                onBlur={() => closeOnBlurOutside(addFormRef, commitAddAndClose)}
                 className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
               />
               <button

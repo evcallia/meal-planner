@@ -20,6 +20,7 @@ const mockReorderSections = vi.fn();
 const mockReorderItems = vi.fn();
 const mockRenameSection = vi.fn();
 const mockMoveItem = vi.fn();
+const mockRenameItem = vi.fn();
 
 let mockSections: any[] = [];
 let mockLoading = false;
@@ -32,6 +33,7 @@ vi.mock('../../hooks/usePantry', () => ({
     deleteSection: mockDeleteSection,
     addItem: mockAddItem,
     updateItem: mockUpdateItem,
+    renameItem: mockRenameItem,
     adjustQuantity: mockAdjustQuantity,
     removeItem: mockRemoveItem,
     clearAll: mockClearAll,
@@ -75,7 +77,10 @@ describe('PantryPanel - editing flows', () => {
     expect(screen.getByText('Save')).toBeInTheDocument();
   });
 
-  it('editing name and saving calls updateItem', () => {
+  // Name edits route through renameItem, not the raw updateItem: that is
+  // what puts them on the undo stack (updateItem is the debounced writer and
+  // pushes nothing, so pantry name edits were previously not undoable).
+  it('editing name and saving calls the undoable rename', () => {
     render(<PantryPanel />);
     fireEvent.click(screen.getByText('Milk'));
 
@@ -83,7 +88,8 @@ describe('PantryPanel - editing flows', () => {
     fireEvent.change(input, { target: { value: 'Oat Milk' } });
     fireEvent.click(screen.getByText('Save'));
 
-    expect(mockUpdateItem).toHaveBeenCalledWith('1', { name: 'Oat Milk' });
+    expect(mockRenameItem).toHaveBeenCalledWith('1', 'Oat Milk');
+    expect(mockUpdateItem).not.toHaveBeenCalled();
   });
 
   it('pressing Enter in edit saves', () => {
@@ -94,7 +100,7 @@ describe('PantryPanel - editing flows', () => {
     fireEvent.change(input, { target: { value: 'Oat Milk' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    expect(mockUpdateItem).toHaveBeenCalled();
+    expect(mockRenameItem).toHaveBeenCalled();
   });
 
   it('pressing Escape in edit cancels', () => {
@@ -271,7 +277,7 @@ describe('PantryPanel - editing flows', () => {
       expect(exitEditAnchored).toHaveBeenCalled();
     });
 
-    it('keeps the typed name so reopening the form restores it', async () => {
+    it('adds what was typed rather than discarding it', async () => {
       render(<PantryPanel />);
       fireEvent.click(screen.getAllByText('+ Add item')[0]);
       const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
@@ -280,10 +286,24 @@ describe('PantryPanel - editing flows', () => {
       input.blur();
       fireEvent.blur(input);
       await nextFrame();
-      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
 
+      // It used to close and keep the text for next time, which read as the
+      // item vanishing — the Add button was the only thing that worked.
+      expect(mockAddItem).toHaveBeenCalledWith('s1', 'Grapes', 1);
+      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
+    });
+
+    it('just closes when nothing was typed', async () => {
+      render(<PantryPanel />);
       fireEvent.click(screen.getAllByText('+ Add item')[0]);
-      expect(screen.getByPlaceholderText('Item name...')).toHaveValue('Grapes');
+      const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+
+      input.blur();
+      fireEvent.blur(input);
+      await nextFrame();
+
+      expect(mockAddItem).not.toHaveBeenCalled();
+      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
     });
 
     it('stays open when focus moves to another control inside the form', async () => {

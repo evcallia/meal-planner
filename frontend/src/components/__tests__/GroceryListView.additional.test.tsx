@@ -324,7 +324,7 @@ describe('GroceryListView - additional coverage', () => {
       expect(exitEditAnchored).toHaveBeenCalled();
     });
 
-    it('keeps the typed name so reopening the form restores it', async () => {
+    it('adds what was typed rather than discarding it', async () => {
       mockSections = sectionsWithMultiple;
       render(<GroceryListView />);
       fireEvent.click(screen.getAllByText('+ Add item')[0]);
@@ -334,10 +334,25 @@ describe('GroceryListView - additional coverage', () => {
       input.blur();
       fireEvent.blur(input);
       await nextFrame();
-      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
 
+      // It used to close and keep the text for next time, which read as the
+      // item vanishing — the Add button was the only thing that worked.
+      await waitFor(() => expect(mockAddItem).toHaveBeenCalled());
+      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
+    });
+
+    it('just closes when nothing was typed', async () => {
+      mockSections = sectionsWithMultiple;
+      render(<GroceryListView />);
       fireEvent.click(screen.getAllByText('+ Add item')[0]);
-      expect(screen.getByPlaceholderText('Item name...')).toHaveValue('Grapes');
+      const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+
+      input.blur();
+      fireEvent.blur(input);
+      await nextFrame();
+
+      expect(mockAddItem).not.toHaveBeenCalled();
+      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
     });
 
     it('stays open when focus moves to another control inside the form', async () => {

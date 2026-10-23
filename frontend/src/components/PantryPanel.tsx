@@ -10,7 +10,7 @@ import { kbFocus, kbLog } from '../utils/kbdebug';
 import { getEditHighlight } from '../utils/editHighlightColors';
 
 export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightColor?: string } = {}) {
-  const { sections, loading, addSection, deleteSection, addItem, updateItem, adjustQuantity, removeItem, clearAll, reorderSections, reorderItems, renameSection, moveItem } = usePantry();
+  const { sections, loading, addSection, deleteSection, addItem, updateItem, renameItem, adjustQuantity, removeItem, clearAll, reorderSections, reorderItems, renameSection, moveItem } = usePantry();
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
   const [newItemName, setNewItemName] = useState('');
   const [newItemQty, setNewItemQty] = useState('1');
@@ -126,6 +126,17 @@ export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightC
       return next;
     });
   }, []);
+
+  // The edit row only ever sends a name; routing it through renameItem is
+  // what puts a pantry name edit on the undo stack (updateItem alone pushes
+  // nothing — see the note on renameItem).
+  const handleItemUpdate = useCallback((id: string, updates: { name?: string; quantity?: number }) => {
+    if (updates.name !== undefined && updates.quantity === undefined) {
+      renameItem(id, updates.name);
+      return;
+    }
+    updateItem(id, updates);
+  }, [renameItem, updateItem]);
 
   const handleAddItem = useCallback(async (sectionId: string) => {
     if (!newItemName.trim()) return;
@@ -286,7 +297,7 @@ export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightC
                 isSectionDragging={isSectionDragging}
                 isCollapsed={collapsedSections.has(section.name)}
                 onToggleCollapse={() => toggleCollapsed(section.name)}
-                onUpdateItem={updateItem}
+                onUpdateItem={handleItemUpdate}
                 onAdjustQuantity={adjustQuantity}
                 onDelete={removeItem}
                 onDeleteSection={deleteSection}
@@ -402,6 +413,20 @@ function PantrySectionCard({
   const closeAdd = useCallback(() => {
     exitEditAnchored(sectionRef.current, () => onStartAdd(null));
   }, [onStartAdd]);
+
+  // Dismissing the keyboard (or otherwise moving focus out of the form)
+  // ADDS what was typed, then closes. It used to just close and leave the
+  // text for next time, which read as "my item vanished" — the Add button
+  // was the only thing that worked. Closing matters as much as adding: a
+  // form left mounted with the keyboard gone is the one state whose scroll
+  // position cannot be held, and exitEditAnchored needs the unmount.
+  const commitAddAndClose = useCallback(() => {
+    if (!newItemName.trim()) {
+      closeAdd();
+      return;
+    }
+    Promise.resolve(onAddItem(section.id)).finally(closeAdd);
+  }, [newItemName, onAddItem, section.id, closeAdd]);
 
   useEffect(() => {
     if (isEditingName && headerInputRef.current) {
@@ -539,7 +564,7 @@ function PantrySectionCard({
                   if (e.key === 'Enter') handleAdd();
                   if (e.key === 'Escape') closeAdd();
                 }}
-                onBlur={() => closeOnBlurOutside(addFormRef, closeAdd)}
+                onBlur={() => closeOnBlurOutside(addFormRef, commitAddAndClose)}
                 placeholder="Item name..."
                 autoFocus
                 className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
@@ -553,7 +578,7 @@ function PantrySectionCard({
                 onKeyDown={e => {
                   if (e.key === 'Enter') handleAdd();
                 }}
-                onBlur={() => closeOnBlurOutside(addFormRef, closeAdd)}
+                onBlur={() => closeOnBlurOutside(addFormRef, commitAddAndClose)}
                 className="w-12 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:border-blue-500 text-sm py-1 text-center"
               />
               <button
@@ -645,7 +670,15 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
 
   if (isEditing) {
     return (
-      <div ref={editFormRef} className={`flex items-center gap-2 px-4 py-1.5 ${getEditHighlight(editHighlightColor).form}`}>
+      <div
+        ref={editFormRef}
+        // See the matching note on the grocery/Lists edit row.
+        onBlur={() => {
+          kbLog('editRow:form-blur', { editName, focus: kbFocus() });
+          closeOnBlurOutside(editFormRef, commitEdit);
+        }}
+        className={`flex items-center gap-2 px-4 py-1.5 ${getEditHighlight(editHighlightColor).form}`}
+      >
         <input
           ref={nameInputRef}
           type="text"
@@ -654,10 +687,6 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
           onKeyDown={e => {
             if (e.key === 'Enter') commitEdit();
             if (e.key === 'Escape') cancelEdit();
-          }}
-          onBlur={() => {
-            kbLog('editRow:input-blur', { editName, focus: kbFocus() });
-            closeOnBlurOutside(editFormRef, commitEdit);
           }}
           className="flex-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-sm text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
         />

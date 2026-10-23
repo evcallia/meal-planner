@@ -511,6 +511,29 @@ export function usePantry() {
     });
   }, [sections, updateItem, pushAction]);
 
+  // Rename helper. updateItem is the raw debounced writer and deliberately
+  // pushes no undo entry, because the quantity stepper calls it on every tap
+  // (adjustQuantity owns that undo) and because the undo/redo closures below
+  // call it themselves — pushing from inside it would stack an entry for
+  // every keystroke and for every undo. Name edits had no wrapper at all, so
+  // they were the one pantry mutation that could not be undone.
+  const renameItem = useCallback((id: string, name: string) => {
+    const item = sections.flatMap(s => s.items).find(i => i.id === id);
+    if (!item) return;
+    const prevName = item.name;
+    updateItem(id, { name });
+
+    pushAction({
+      type: 'rename-pantry-item',
+      undo: async () => {
+        updateItem(resolveId(id), { name: prevName });
+      },
+      redo: async () => {
+        updateItem(resolveId(id), { name });
+      },
+    });
+  }, [sections, updateItem, pushAction]);
+
   // Remove item
   const removeItem = useCallback(async (itemId: string) => {
     const item = sections.flatMap(s => s.items).find(i => i.id === itemId);
@@ -1206,6 +1229,7 @@ export function usePantry() {
     deleteSection,
     addItem,
     updateItem,
+    renameItem,
     adjustQuantity,
     removeItem,
     clearAll,

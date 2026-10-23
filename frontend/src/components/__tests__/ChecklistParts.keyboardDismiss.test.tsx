@@ -13,7 +13,10 @@ const baseItem: ChecklistItem = {
   id: 'i1', section_id: 's1', name: 'Lemon', quantity: '6', checked: false, position: 0,
 };
 
-function Harness({ onEdit }: { onEdit: (id: string, updates: Record<string, unknown>) => void }) {
+function Harness({ onEdit, onChangeSection = vi.fn() }: {
+  onEdit: (id: string, updates: Record<string, unknown>) => void;
+  onChangeSection?: (id: string, section: string) => void;
+}) {
   const commitEditingRef = useRef<(() => void) | null>(null);
   // Mounted straight into edit mode: the row focuses its name input on mount,
   // which is the state a user is in when they reach for the keyboard's key.
@@ -33,7 +36,7 @@ function Harness({ onEdit }: { onEdit: (id: string, updates: Record<string, unkn
       sectionName="Produce"
       allSections={[{ id: 's1', name: 'Produce' }]}
       editHighlightColor="emerald"
-      onChangeSection={vi.fn()}
+      onChangeSection={onChangeSection}
     />
   );
 }
@@ -135,6 +138,35 @@ describe('ChecklistItemRow — dismissing the keyboard while editing', () => {
 
     expect(onEdit).not.toHaveBeenCalled();
     expect(screen.getByDisplayValue('Meyer Lemon')).toBeInTheDocument();
+  });
+
+  // The commit lives on the FORM, not the name input. With it on the input,
+  // dismissing the keyboard from the section or chip field fired nothing —
+  // which on device looked like "only the title saves".
+  it('saves a category change made after the name field lost focus', async () => {
+    const onEdit = vi.fn();
+    const onChangeSection = vi.fn();
+    render(<Harness onEdit={onEdit} onChangeSection={onChangeSection} />);
+
+    const nameInput = screen.getByDisplayValue('Lemon');
+    openKeyboard();
+    fireEvent.change(nameInput, { target: { value: 'Meyer Lemon' } });
+
+    // Moving to the section field must NOT commit — it is the same edit.
+    const section = screen.getByPlaceholderText('Section');
+    section.focus();
+    fireEvent.blur(nameInput);
+    await nextFrame();
+    expect(onEdit).not.toHaveBeenCalled();
+
+    fireEvent.change(section, { target: { value: 'Citrus' } });
+
+    // Dismissing from the section field commits the whole form.
+    section.blur();
+    await nextFrame();
+
+    expect(onEdit).toHaveBeenCalledWith('i1', { name: 'Meyer Lemon' });
+    expect(onChangeSection).toHaveBeenCalledWith('i1', 'Citrus');
   });
 
   it('saves once when the blur and the viewport growth both arrive', async () => {
