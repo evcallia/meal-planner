@@ -185,6 +185,32 @@ describe('ChecklistItemRow — dismissing the keyboard while editing', () => {
     expect(store.form).toBe(name.form);
   });
 
+  // Works in Firefox mobile, not in the PWA: WebKit's keyboard previous/next
+  // walks raw focusable order and stops at the first element that isn't a
+  // text field, where Gecko skips non-field controls. The category box's
+  // clear ✕ sits between the category and store inputs, which is why the
+  // arrows reached category and went no further.
+  it('leaves nothing focusable between the three text fields', () => {
+    render(<Harness onEdit={vi.fn()} />);
+
+    const name = screen.getByDisplayValue('Lemon') as HTMLInputElement;
+    const section = screen.getByPlaceholderText('Section') as HTMLInputElement;
+    const store = screen.getByPlaceholderText('Assign store...') as HTMLInputElement;
+    // The section box has a value, so its clear ✕ is rendered — the case
+    // that broke.
+    expect(section.value).not.toBe('');
+
+    const form = name.form!;
+    const focusable = Array.from(
+      form.querySelectorAll<HTMLElement>('input, select, textarea, button, [tabindex]'),
+    ).filter(el => el.tabIndex >= 0);
+
+    const at = (el: HTMLElement) => focusable.indexOf(el);
+    expect(at(name)).toBeGreaterThanOrEqual(0);
+    expect(at(section)).toBe(at(name) + 1);
+    expect(at(store)).toBe(at(section) + 1);
+  });
+
   // Inside a <form> an untyped <button> defaults to type="submit", so a tap
   // on Save, Cancel or the stepper would navigate the page away.
   it('never lets a control submit the form', () => {

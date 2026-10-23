@@ -75,6 +75,13 @@ export function SectionCombobox({ sections, value, onChange }: {
     return () => document.removeEventListener('mousedown', close);
   }, [open]);
 
+  // Every button in here is tabIndex={-1} on purpose. WebKit's keyboard
+  // previous/next walks raw focusable order and stops at the first element
+  // that isn't a text field, so this component's own clear ✕ — rendered
+  // between the section input and whatever follows — made the store/tag
+  // field unreachable from the keyboard in the PWA, while Firefox (which
+  // skips non-field controls) walked all three fields fine. They stay
+  // clickable; only tab order changes.
   return (
     <div ref={containerRef} className="relative">
       <input
@@ -89,6 +96,7 @@ export function SectionCombobox({ sections, value, onChange }: {
       />
       {value.trim() && (
         <button
+          tabIndex={-1}
           type="button"
           onMouseDown={e => e.preventDefault()}
           onClick={() => { onChange(''); setOpen(true); sectionInputRef.current?.focus(); }}
@@ -104,6 +112,7 @@ export function SectionCombobox({ sections, value, onChange }: {
         <div className="absolute left-0 right-0 top-full mt-1 glass-menu rounded-lg shadow-lg z-20 max-h-40 overflow-y-auto">
           {matches.map(s => (
             <button
+              tabIndex={-1}
               key={s.id}
               type="button"
               onMouseDown={e => e.preventDefault()}
