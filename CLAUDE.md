@@ -3,7 +3,7 @@
 ## Where development happens
 Everything runs in **homelab-vm** (Debian arm64, 192.168.68.88): Orca connects over SSH, so sessions, worktrees, git, Go/Node and Docker all live there. The Mac mini has no Docker and no checkout to work in.
 
-- `~/projects/meal-planner` is the base checkout, kept on `main`; Orca worktrees (under `~/orca/workspaces/`) are for development.
+- `~/projects/meal-planner` is the base checkout; Orca worktrees (under `~/orca/workspaces/`) are for development. No checkout needs to be parked on `main` when you're done with it: nothing served from a checkout here is a production deploy (prod runs in the `local_docker` stack, from a published image, not from any checkout), so leaving one sitting on a dev branch is fine.
 - The same Docker host runs the whole home-lab stack (repo `local_docker`), including **prod** (`meal-planner` container, project `mealplanner`). Never touch it; the dev stack below is separate.
 - Toolchain: Go in `/usr/local/go/bin` (official tarball; update by reinstalling it), Node/npm from Debian apt.
 
