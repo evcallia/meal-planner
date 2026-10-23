@@ -17,6 +17,8 @@ A mobile-focused Progressive Web App for meal planning that integrates with Appl
 - Offline support - works without internet, syncs when back online
   - Background caching of 1 week past and 3 weeks future for seamless offline access
   - Queued changes sync automatically when back online
+- Recipe Keeper sync - optional two-way mirror of a Recipe Keeper shopping list, showing which recipe each grocery item came from (`docs/recipe-keeper-api.md`)
+- Prometheus metrics on their own port, for the sync loop and connected clients
 - SSO via any OIDC provider (Authelia, Authentik, Keycloak, …) and/or built-in username/password login
 - Optional frontend performance logging (console-gated)
 
@@ -415,7 +417,7 @@ Requires a `dockerhub` environment (Settings → Environments) holding the `DOCK
    docker buildx build --builder multiarch --platform linux/amd64,linux/arm64 -t evcallia/meal-planner:{TAG} --push .
    ```
 
-3. `docker-compose.yml` already runs the published image (`evcallia/meal-planner:${APP_VERSION:-v2.0.0}`) — bump the default tag (or set `APP_VERSION`) after pushing. `docker-compose-dev.yml` always builds fresh from source instead.
+3. `docker-compose.yml` already runs the published image (`evcallia/meal-planner:${APP_VERSION:-v2.5.0}`) — bump the default tag (or set `APP_VERSION`) after pushing. `docker-compose-dev.yml` always builds fresh from source instead.
 
 ## PWA Installation
 
