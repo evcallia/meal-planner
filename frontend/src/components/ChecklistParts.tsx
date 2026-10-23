@@ -338,7 +338,13 @@ export function ChecklistItemRow({
   const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const swipeModeRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const editFormRef = useRef<HTMLDivElement>(null);
+  // A <form>, not a <div>: iOS's keyboard shows previous/next arrows that
+  // walk the fields sharing a FORM OWNER. Without a form element the grouping
+  // is left to Safari's heuristics, which linked the name and category boxes
+  // but not the store/tag one, so there was no way to reach it from the
+  // keyboard. `input.form` is what the arrows key off, and only a <form>
+  // ancestor sets it.
+  const editFormRef = useRef<HTMLFormElement>(null);
   useScrollIntoViewOnEdit(editFormRef, isEditing);
 
   const chipName = chips?.find(s => s.id === chipId)?.name;
@@ -431,8 +437,12 @@ export function ChecklistItemRow({
   if (isEditing) {
     const qtyNum = parseInt(editQuantity) || 0;
     return (
-      <div
+      <form
         ref={editFormRef}
+        // Nothing here submits — the buttons below carry type="button" and
+        // this catches every other route (implicit submission on Enter, and
+        // any untyped button inside StoreAutocomplete/SectionCombobox).
+        onSubmit={e => e.preventDefault()}
         // On the FORM, not the name input: iOS's dismiss key fires focusout
         // from whichever field had focus, and the quantity, section and chip
         // fields are all part of the same edit. Blurring out of any of them
@@ -447,6 +457,7 @@ export function ChecklistItemRow({
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 shrink-0">
             <button
+              type="button"
               onClick={() => setEditQuantity(String(Math.max(0, qtyNum - 1) || ''))}
               className="w-7 h-7 flex items-center justify-center rounded-sm bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
             >
@@ -456,6 +467,7 @@ export function ChecklistItemRow({
               {qtyNum || '–'}
             </span>
             <button
+              type="button"
               onClick={() => setEditQuantity(String(qtyNum + 1))}
               className="w-7 h-7 flex items-center justify-center rounded-sm bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
             >
@@ -490,19 +502,21 @@ export function ChecklistItemRow({
         )}
         <div className="flex items-center justify-end gap-3">
           <button
+            type="button"
             onClick={cancelEdit}
             className="text-gray-400 hover:text-gray-600 text-sm"
           >
             Cancel
           </button>
           <button
+            type="button"
             onClick={commitEdit}
             className="text-blue-500 hover:text-blue-600 text-sm font-medium"
           >
             Save
           </button>
         </div>
-      </div>
+      </form>
     );
   }
 
@@ -758,7 +772,9 @@ export function ChecklistSectionCard({
   const [editNameValue, setEditNameValue] = useState(section.name);
   const headerInputRef = useRef<HTMLInputElement>(null);
   const addInputRef = useRef<HTMLInputElement>(null);
-  const addFormRef = useRef<HTMLDivElement>(null);
+  // See the note on the edit row's editFormRef: a <form> is what gives the
+  // keyboard's previous/next arrows a field set to walk.
+  const addFormRef = useRef<HTMLFormElement>(null);
   useScrollIntoViewOnEdit(addFormRef, addingToSection === section.id);
 
   const commitRename = useCallback(() => {
@@ -934,7 +950,12 @@ export function ChecklistSectionCard({
 
           {/* Add item inline */}
           {addingToSection === section.id ? (
-            <div ref={addFormRef} data-testid="inline-add-form" className="px-4 py-2 space-y-1.5">
+            <form
+              ref={addFormRef}
+              data-testid="inline-add-form"
+              onSubmit={e => e.preventDefault()}
+              className="px-4 py-2 space-y-1.5"
+            >
               <div className="flex items-center gap-2">
               <ItemAutocomplete
                 value={newItemName}
@@ -956,6 +977,7 @@ export function ChecklistSectionCard({
                 className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
               />
               <button
+                type="button"
                 onMouseDown={e => e.preventDefault()}
                 onClick={handleAdd}
                 className="text-blue-500 hover:text-blue-600 text-sm font-medium"
@@ -963,6 +985,7 @@ export function ChecklistSectionCard({
                 Add
               </button>
               <button
+                type="button"
                 onClick={closeAdd}
                 className="text-gray-400 hover:text-gray-600 text-sm"
               >
@@ -978,7 +1001,7 @@ export function ChecklistSectionCard({
                   placeholder={chipPlaceholder}
                 />
               )}
-            </div>
+            </form>
           ) : (
             <button
               onClick={() => onStartAdd(section.id)}

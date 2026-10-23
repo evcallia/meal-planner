@@ -169,6 +169,45 @@ describe('ChecklistItemRow — dismissing the keyboard while editing', () => {
     expect(onChangeSection).toHaveBeenCalledWith('i1', 'Citrus');
   });
 
+  // iOS's keyboard shows previous/next arrows that walk the fields sharing a
+  // FORM OWNER — `input.form`. Without a <form> ancestor that is null, Safari
+  // falls back to heuristics, and the store/tag box could not be reached from
+  // the keyboard at all while name and category could.
+  it('puts every field in one form so the keyboard can walk them', () => {
+    render(<Harness onEdit={vi.fn()} />);
+
+    const name = screen.getByDisplayValue('Lemon') as HTMLInputElement;
+    const section = screen.getByPlaceholderText('Section') as HTMLInputElement;
+    const store = screen.getByPlaceholderText('Assign store...') as HTMLInputElement;
+
+    expect(name.form).not.toBeNull();
+    expect(section.form).toBe(name.form);
+    expect(store.form).toBe(name.form);
+  });
+
+  // Inside a <form> an untyped <button> defaults to type="submit", so a tap
+  // on Save, Cancel or the stepper would navigate the page away.
+  it('never lets a control submit the form', () => {
+    const onSubmit = vi.fn();
+    render(<Harness onEdit={vi.fn()} />);
+    const form = (screen.getByDisplayValue('Lemon') as HTMLInputElement).form!;
+    form.addEventListener('submit', onSubmit);
+
+    // Clicking each one is not the test — Save unmounts the form — so assert
+    // the attribute that decides it.
+    for (const label of ['Save', 'Cancel', '+', '−']) {
+      expect((screen.getByText(label) as HTMLButtonElement).type).toBe('button');
+    }
+    fireEvent.click(screen.getByText('−'));
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    // And the catch-all: anything that does reach submit is prevented, so a
+    // nested control nobody typed can't navigate away either.
+    const submit = new Event('submit', { bubbles: true, cancelable: true });
+    form.dispatchEvent(submit);
+    expect(submit.defaultPrevented).toBe(true);
+  });
+
   it('saves once when the blur and the viewport growth both arrive', async () => {
     const onEdit = vi.fn();
     render(<Harness onEdit={onEdit} />);
