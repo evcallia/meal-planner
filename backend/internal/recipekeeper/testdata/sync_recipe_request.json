@@ -1,0 +1,69 @@
+{
+  "RecipeSyncEntityRequest": {
+    "MaxLastModified": "2026-09-13T15:33:11.8166488Z",
+    "SyncEntities": [
+      {
+        "Title": "Fig Cocktail - delete",
+        "Course": "",
+        "Courses": [
+          "Beverage"
+        ],
+        "Categories": [
+          "Mocktail"
+        ],
+        "Collections": [
+          "Headache Friendly"
+        ],
+        "Source": "Instagram - themindfulmocktail",
+        "ServingSize": "",
+        "PreparationTime": 0,
+        "CookingTime": 0,
+        "Ingredients": "Fig\nFig Jam\nLemon\nApple Cider\nGinger\nCinnamon\nMaple Syrup",
+        "Directions": "1 fresh fig, quartered\r\n1/2 tablespoon fig jam (optional but adds lovely flavor and mouthfeel)\r\n1 oz (30 ml) lemon juice\r\n2 oz (60 ml) apple cider\r\n1/2 tablespoon grated ginger\r\n1/2 oz (15 ml) cinnamon syrup (can use a pinch of cinnamon powder, add 1/2 oz maple syrup if you do this to make up the sweetness from the cinnamon syrup) \n\n\nPlace the fig in your shaker along with the cinnamon syrup, fig jam and lemon juice.\r\n\r\nMuddle until the fig is 'mashed'. Around 15-20 presses should be plenty!\r\n\r\nAdd the ginger and apple cider, along with some ice. Replace the lid and shake well.\r\n\r\nStrain into your glass and garnish with a piece of fig (optional).",
+        "Notes": "",
+        "Rating": 0,
+        "IsFavourite": false,
+        "Photo": "<photo stripped>",
+        "Photo1": "<photo stripped>",
+        "Photo2": "<photo stripped>",
+        "Photo3": null,
+        "Photo4": null,
+        "Photo5": null,
+        "Photo6": null,
+        "Photo7": null,
+        "Photo8": null,
+        "Photo9": null,
+        "ShareId": null,
+        "NutServingSize": "",
+        "NutCalories": null,
+        "NutTotalFat": null,
+        "NutSaturatedFat": null,
+        "NutCholesterol": null,
+        "NutSodium": null,
+        "NutTotalCarbohydrate": null,
+        "NutDietaryFiber": null,
+        "NutSugars": null,
+        "NutProtein": null,
+        "LinkedRecipeIds": [],
+        "AddedDate": "2026-09-13T15:31:35.403395",
+        "LastModified": "2026-09-13T15:33:11.8166488",
+        "Id": "59b86e5d-4126-48bb-9d15-b3cd82d8df08",
+        "IsDeleted": false
+      }
+    ],
+    "LocalChangesIds": [
+      "59b86e5d-4126-48bb-9d15-b3cd82d8df08"
+    ]
+  },
+  "ShoppingListCategorySyncEntityRequest": null,
+  "ShoppingListCategoryItemSyncEntityRequest": null,
+  "ShoppingListSyncEntityRequest": null,
+  "ShoppingListItemSyncEntityRequest": null,
+  "MealSyncEntityRequest": null,
+  "CourseSyncEntityRequest": null,
+  "CategorySyncEntityRequest": null,
+  "CollectionSyncEntityRequest": null,
+  "MealTypeSyncEntityRequest": null,
+  "MealPlannerSyncEntityRequest": null,
+  "CookbookSyncEntityRequest": null
+}

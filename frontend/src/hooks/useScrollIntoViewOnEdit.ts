@@ -1,10 +1,13 @@
 import { useEffect, type RefObject } from 'react';
 
-// Keeps an inline edit form visible on mobile: when the iOS keyboard opens it
+// Keeps an inline form visible on mobile: when the iOS keyboard opens it
 // shrinks the visual viewport and the browser may scroll the row off-screen.
-export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, isEditing: boolean) {
+// Named `active` rather than `isEditing`: this covers both inline edit forms
+// and inline add forms (any form whose focused input can trigger the iOS
+// keyboard-open/close viewport dance).
+export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, active: boolean) {
   useEffect(() => {
-    if (!isEditing) return;
+    if (!active) return;
 
     let lastHeight = window.visualViewport?.height ?? window.innerHeight;
 
@@ -30,15 +33,16 @@ export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, isEd
       const growing = viewport.height > lastHeight;
       lastHeight = viewport.height;
       if (touchActive) return;
-      if (growing) {
-        // Keyboard CLOSING. A smooth scroll here would race the edit form's
-        // unmount when Save was tapped (the in-flight animation lands
-        // arbitrarily), but doing nothing lets iOS's scroll restoration carry
-        // a still-open form off-screen. Instant + 'nearest' is safe: it can't
-        // race (no animation) and it's a no-op when the row is already visible.
-        ref.current?.scrollIntoView({ block: 'nearest' });
-        return;
-      }
+      // Keyboard CLOSING (viewport growing): leave this alone. Correcting
+      // here is futile — a scroll cannot counter what iOS does on close,
+      // because the movement is a visual-viewport change and this code can
+      // only see and act on layout coordinates (two attempts at it,
+      // `scrollIntoView({ block: 'nearest' })` and an anchored scroll pin,
+      // both measured as no-ops on device). Forms that stay mounted across
+      // the close instead unmount themselves via `closeOnBlurOutside` +
+      // `exitEditAnchored`, which works because the unmount IS a layout
+      // change.
+      if (growing) return;
       scrollIntoView();
     };
 
@@ -58,5 +62,5 @@ export function useScrollIntoViewOnEdit(ref: RefObject<HTMLElement | null>, isEd
       document.removeEventListener('touchend', onTouchEnd);
       document.removeEventListener('touchcancel', onTouchEnd);
     };
-  }, [isEditing, ref]);
+  }, [active, ref]);
 }

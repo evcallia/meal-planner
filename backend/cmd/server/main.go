@@ -20,9 +20,14 @@ import (
 
 	"mealplanner/internal/app"
 	"mealplanner/internal/config"
-	"mealplanner/internal/ical"
 	"mealplanner/internal/db"
+	"mealplanner/internal/ical"
+	"mealplanner/internal/metrics"
+	"mealplanner/internal/recipekeeper"
 )
+
+// recipeKeeperBaseURL is the fixed Recipe Keeper API host (docs/recipe-keeper-api.md).
+const recipeKeeperBaseURL = "https://recipekeeper.azurewebsites.net"
 
 func main() {
 	setPassword := flag.String("set-password", "",
@@ -89,6 +94,111 @@ func main() {
 	}
 	go application.Push.RunDueLoop(application.Broadcaster.Done)
 
+	// Recipe Keeper: pulls the shopping list (and, in the background, recipe
+	// titles for attribution) from the Recipe Keeper app. Entirely
+	// best-effort — the loop backs off and records LastError on failure,
+	// never anything that could break the rest of Meal Planner.
+	var cancelRecipeKeeper context.CancelFunc
+	if settings.RecipeKeeperEnabled {
+		var missingCreds []string
+		if settings.RecipeKeeperUsername == "" {
+			missingCreds = append(missingCreds, "RECIPE_KEEPER_USERNAME")
+		}
+		if settings.RecipeKeeperPassword == "" {
+			missingCreds = append(missingCreds, "RECIPE_KEEPER_PASSWORD")
+		}
+		rkHeaders := recipekeeper.DefaultHeaders(recipekeeper.DeviceID(gormDB), settings.RecipeKeeperReceiptID)
+		// One dedicated transport, shared by the token client and the sync
+		// client — see recipekeeper.NewTransport for why a shared
+		// http.DefaultTransport caused sync to wedge on stale pooled
+		// connections.
+		rkTransport := recipekeeper.NewTransport()
+		rkAuth := &recipekeeper.Authenticator{
+			BaseURL:  recipeKeeperBaseURL,
+			Username: settings.RecipeKeeperUsername,
+			Password: settings.RecipeKeeperPassword,
+			HTTP:     &http.Client{Timeout: 30 * time.Second, Transport: rkTransport},
+			Hdr:      rkHeaders,
+		}
+		rkService := &recipekeeper.Service{
+			Client: recipekeeper.NewClient(recipeKeeperBaseURL, rkAuth, rkHeaders, rkTransport),
+			// No list id here: it's a GUID that lives only inside Recipe
+			// Keeper's own API, so nobody can supply it ahead of time. The
+			// Reconciler starts unselected; SyncOnce refreshes it from
+			// recipe_keeper_state (see state.go) on every cycle, and skips
+			// the cycle entirely until PUT /api/recipe-keeper/list sets one.
+			Rec: &recipekeeper.Reconciler{DB: gormDB},
+			DB:  gormDB,
+			OnChange: func(recipekeeper.Changes) {
+				// The sync loop has no *http.Request to hang a broadcast off
+				// of (unlike application.broadcast), so it publishes directly
+				// with a synthetic, stable source id. The payload deliberately
+				// carries NO "action" key: building real item-added/updated/
+				// deleted deltas needs the app package's serializers, and
+				// importing app from recipekeeper would be a circular import.
+				// Every frontend hook (and the cache warmer) already falls
+				// back to a full API refetch when action is undefined — the
+				// documented "legacy event" path — which is exactly what
+				// should happen here. A later task can upgrade this to
+				// per-item deltas once serialization is reachable from this
+				// package.
+				application.Broadcaster.BroadcastEvent("grocery.updated",
+					map[string]any{"source": "recipe-keeper"},
+					"recipe-keeper")
+			},
+		}
+		rkService.PollInterval = recipekeeper.ResolvePollInterval(settings.RecipeKeeperPollSeconds)
+		rkService.IdlePollInterval = recipekeeper.ResolveIdlePollInterval(settings.RecipeKeeperIdlePollSeconds)
+		// Adaptive polling needs to know about SSE subscriber presence —
+		// realtime.Broadcaster owns that, and stays ignorant of recipekeeper
+		// in return (see Broadcaster.Connected's doc comment): these are a
+		// plain func value and a plain channel, not an import either way.
+		rkService.SubscriberCount = application.Broadcaster.Count
+		rkService.Connected = application.Broadcaster.Connected
+		// Prometheus, wired the same way: recipekeeper reports a plain struct
+		// of primitives and never imports the metrics package (nor, through
+		// it, Prometheus). This adapter is the only place the two vocabularies
+		// meet, and it is a field-for-field pass-through on purpose — any
+		// judgement about what a reason or result MEANS belongs in
+		// recipekeeper, which produces them.
+		rkService.ObserveSync = func(out recipekeeper.SyncOutcome) {
+			metrics.RecordSync(metrics.Sync{
+				Kind:     out.Kind,
+				Reason:   out.Reason,
+				Result:   out.Result,
+				Ran:      out.Ran,
+				OK:       out.OK,
+				Duration: out.Duration,
+				Added:    out.Added,
+				Updated:  out.Updated,
+				Deleted:  out.Deleted,
+			})
+		}
+		// Exposed on App so /api/recipe-keeper/status and /sync can reach it;
+		// nil (the zero value) on App when the integration isn't configured.
+		application.RecipeKeeper = rkService
+		if len(missingCreds) > 0 {
+			log.Printf("recipe keeper: %s not set — sync loop not started", strings.Join(missingCreds, " and "))
+		} else {
+			if recipekeeper.SelectedListID(gormDB) == "" {
+				log.Printf("recipe keeper: no shopping list selected yet — call GET /api/recipe-keeper/lists to see available lists, then PUT /api/recipe-keeper/list to choose one; the sync loop is starting now and will pick it up automatically once you do, no restart needed")
+			}
+			if recipekeeper.IsPaused(gormDB) {
+				// Loud and explicit — a paused-but-running loop that never
+				// syncs must not read like a silent failure. Nothing else
+				// needs doing here: every sync entry point already checks
+				// IsPaused itself, and PUT /api/recipe-keeper/paused kicks an
+				// immediate sync the moment someone resumes.
+				log.Printf("recipe keeper: starting PAUSED — no syncing in either direction until resumed via PUT /api/recipe-keeper/paused or the Settings toggle")
+			}
+			log.Printf("recipe keeper: polling every %s while connected, every %s while idle",
+				rkService.PollInterval, rkService.IdlePollInterval)
+			var rkCtx context.Context
+			rkCtx, cancelRecipeKeeper = context.WithCancel(context.Background())
+			go rkService.Run(rkCtx)
+		}
+	}
+
 	addr := ":8000"
 	if v := os.Getenv("PORT"); v != "" {
 		addr = ":" + v
@@ -102,6 +212,30 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 
+	// Metrics live on their own listener, NOT on the API port. Traefik routes
+	// only the API port, so this is reachable from the Docker network — where
+	// Prometheus runs — and from nowhere else; that is what lets it serve
+	// unauthenticated. Putting /metrics on the API mux would publish it on the
+	// public hostname, where the only thing standing in front of it would be a
+	// shared secret somebody has to rotate.
+	var metricsServer *http.Server
+	if settings.MetricsPort != "" {
+		metricsServer = &http.Server{
+			Addr:              ":" + settings.MetricsPort,
+			Handler:           metrics.Handler(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			log.Printf("metrics listening on %s/metrics", metricsServer.Addr)
+			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				// Never fatal: losing metrics must not take the app down.
+				log.Printf("metrics server error: %v", err)
+			}
+		}()
+	} else {
+		log.Printf("metrics disabled (METRICS_PORT is empty)")
+	}
+
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 
@@ -111,8 +245,14 @@ func main() {
 		// Unblock SSE streams first so Shutdown doesn't wait on them.
 		application.Broadcaster.Close()
 		application.Calendar.Shutdown()
+		if cancelRecipeKeeper != nil {
+			cancelRecipeKeeper()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		if metricsServer != nil {
+			_ = metricsServer.Shutdown(ctx)
+		}
 		_ = server.Shutdown(ctx)
 	}()
 

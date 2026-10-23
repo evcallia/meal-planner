@@ -13,6 +13,7 @@ interface ItemAutocompleteProps {
   inputRef?: React.RefObject<HTMLInputElement | null>;
   className?: string;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void;
   autoFocus?: boolean;
   testId?: string;
   // The Lists tab derives its suggestions from existing lists rather than a
@@ -31,6 +32,7 @@ export function ItemAutocomplete({
   inputRef: externalRef,
   className,
   onKeyDown: externalOnKeyDown,
+  onBlur,
   autoFocus,
   testId,
   allowDelete = true,
@@ -138,6 +140,7 @@ export function ItemAutocomplete({
         onChange={e => { onChange(e.target.value); e.target.value.trim() ? open() : close(); }}
         onFocus={() => { if (value.trim()) open(); }}
         onKeyDown={handleKeyDown}
+        onBlur={onBlur}
         placeholder={placeholder}
         autoFocus={autoFocus}
         data-testid={testId}
@@ -154,6 +157,8 @@ export function ItemAutocomplete({
                 className="flex items-center hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               >
                 <button
+                  tabIndex={-1}
+                  onMouseDown={e => e.preventDefault()}
                   onClick={() => handleSelect(name)}
                   className="flex-1 text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300"
                 >
@@ -161,6 +166,8 @@ export function ItemAutocomplete({
                 </button>
                 {allowDelete && !isOnList && (
                   <button
+                    tabIndex={-1}
+                    onMouseDown={e => e.preventDefault()}
                     onClick={(e) => handleDelete(e, name)}
                     className="px-2 py-1 mr-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400"
                     aria-label={`Delete ${displayName}`}

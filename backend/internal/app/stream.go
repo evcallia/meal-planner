@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"mealplanner/internal/metrics"
 	"mealplanner/internal/session"
 )
 
@@ -17,6 +18,12 @@ func (a *App) handleStream(w http.ResponseWriter, r *http.Request, user *session
 	}
 	sub := a.Broadcaster.Subscribe(user.Sub)
 	defer a.Broadcaster.Unsubscribe(sub)
+	// Gauged here rather than inside Broadcaster.Subscribe so it counts real
+	// clients, not the in-process subscribers test harnesses create. This is
+	// the number that explains the Recipe Keeper sync rate: the loop polls
+	// every minute while it is above zero and every half hour while it is not.
+	metrics.SSEConnected()
+	defer metrics.SSEDisconnected()
 
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")

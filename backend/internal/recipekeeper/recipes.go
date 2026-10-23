@@ -1,0 +1,133 @@
+// backend/internal/recipekeeper/recipes.go
+package recipekeeper
+
+import (
+	"encoding/json"
+	"log"
+
+	"github.com/google/uuid"
+
+	"mealplanner/internal/models"
+)
+
+type RecipeRef struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// Count is how many of the grocery row's links point at this recipe.
+	// Recipe Keeper stores one link per recipe-ingredient occurrence, so an
+	// item added to the same recipe several times collapses to a single
+	// ref here with Count > 1 — quantity minus the SUM of every ref's Count
+	// (not the number of distinct refs) is how many units are MP-only.
+	Count int `json:"count"`
+}
+
+// StoreRecipes caches id -> title from Recipe entities, discarding everything
+// else. Recipe payloads embed base64 photos (~100-300 KB each), so nothing but
+// the title is retained.
+func (r *Reconciler) StoreRecipes(raw []json.RawMessage) error {
+	skipped := 0
+	for _, blob := range raw {
+		var rec struct {
+			ID           string `json:"Id"`
+			Title        string `json:"Title"`
+			IsDeleted    bool   `json:"IsDeleted"`
+			LastModified string `json:"LastModified"`
+		}
+		if err := json.Unmarshal(blob, &rec); err != nil || rec.ID == "" {
+			skipped++
+			continue
+		}
+		if rec.IsDeleted {
+			r.DB.Delete(&models.RecipeKeeperRecipe{}, "rk_recipe_id = ?", rec.ID)
+			continue
+		}
+		if rec.Title == "" {
+			skipped++
+			continue
+		}
+		row := models.RecipeKeeperRecipe{
+			RKRecipeID: rec.ID, Title: rec.Title, RKLastModified: rec.LastModified,
+		}
+		if err := r.DB.Save(&row).Error; err != nil {
+			return err
+		}
+	}
+	if skipped > 0 {
+		log.Printf("recipekeeper: StoreRecipes skipped %d/%d entities (unparseable or missing id/title)", skipped, len(raw))
+	}
+	return nil
+}
+
+// rkCategoryForItem maps an item name to RK's category name via the
+// ShoppingListCategoryItem bucket, which joins by NAME, not by id.
+func (r *Reconciler) rkCategoryForItem(name string) (string, bool) {
+	var state models.RecipeKeeperState
+	if err := r.DB.First(&state, "key = ?", "category:"+normalizeName(name)).Error; err != nil {
+		return "", false
+	}
+	return state.Value, true
+}
+
+// StoreCategories caches the name -> category-name mapping used for the initial
+// placement of newly imported items.
+func (r *Reconciler) StoreCategories(cats, catItems []json.RawMessage) error {
+	byID := map[string]string{}
+	for _, blob := range cats {
+		var c struct {
+			ID        string `json:"Id"`
+			Name      string `json:"Name"`
+			IsDeleted bool   `json:"IsDeleted"`
+		}
+		if err := json.Unmarshal(blob, &c); err != nil || c.IsDeleted {
+			continue
+		}
+		byID[c.ID] = c.Name
+	}
+	for _, blob := range catItems {
+		var ci struct {
+			Name       string `json:"Name"`
+			CategoryID string `json:"ShoppingListCategoryId"`
+			IsDeleted  bool   `json:"IsDeleted"`
+		}
+		if err := json.Unmarshal(blob, &ci); err != nil || ci.IsDeleted || ci.Name == "" {
+			continue
+		}
+		catName, ok := byID[ci.CategoryID]
+		if !ok {
+			continue
+		}
+		row := models.RecipeKeeperState{Key: "category:" + normalizeName(ci.Name), Value: catName}
+		if err := r.DB.Save(&row).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sectionFromRKCategory resolves RK's category to an MP section, creating
+// one — appended at the end, MAX(position)+1 — when MP doesn't already have
+// a section by that name. Dumping every import into Uncategorized just
+// because MP hadn't seen the category name yet moved the user's sorting
+// problem from Recipe Keeper into Meal Planner instead of solving it; MP
+// stays authoritative in every other sense (this still runs only once, on
+// arrival — see createRow — and item_defaults still takes precedence, see
+// placeSection).
+func (r *Reconciler) sectionFromRKCategory(name string) (uuid.UUID, bool) {
+	catName, ok := r.rkCategoryForItem(name)
+	if !ok {
+		return uuid.Nil, false
+	}
+	var sec models.GrocerySection
+	if err := r.DB.First(&sec, "LOWER(name) = LOWER(?)", catName).Error; err == nil {
+		return sec.ID, true
+	}
+	var maxPos struct{ P int }
+	r.DB.Model(&models.GrocerySection{}).
+		Select("COALESCE(MAX(position), -1) AS p").Scan(&maxPos)
+	sec = models.GrocerySection{ID: models.NewID(), Name: catName, Position: maxPos.P + 1, CreatedAt: r.now()}
+	if err := r.DB.Create(&sec).Error; err != nil {
+		log.Printf("recipekeeper: failed to create section %q from RK category: %v", catName, err)
+		return uuid.Nil, false
+	}
+	return sec.ID, true
+}

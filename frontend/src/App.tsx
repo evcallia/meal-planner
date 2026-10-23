@@ -19,6 +19,7 @@ import { useRealtime } from './hooks/useRealtime';
 import { useKeyboardOpen } from './hooks/useKeyboardOpen';
 import { useVisualViewportPin } from './hooks/useVisualViewportPin';
 import { useActivity } from './hooks/useActivity';
+import { useRecipeKeeperStatus } from './hooks/useRecipeKeeperStatus';
 import { ensurePushSubscription } from './utils/push';
 import { claimStaleUpdate } from './utils/appUpdate';
 import { getCurrentUser, logout, getDays, getEvents, updateNotes, getGroceryList, getItemDefaults, getStores as getStoresAPI, getPantryList, getMealIdeas, getHiddenCalendarEvents, refreshCalendarCache, getTrackerLists, getPackingLists } from './api/client';
@@ -467,12 +468,20 @@ function GroceryPage({
             ...(updates.selected !== undefined ? { grocerySelectedStoreIds: updates.selected } : {}),
             ...(updates.excluded !== undefined ? { groceryExcludedStoreIds: updates.excluded } : {}),
           })}
+          selectedRecipes={settings.grocerySelectedRecipeIds}
+          excludedRecipes={settings.groceryExcludedRecipeIds}
+          onRecipeFilterChange={(updates) => onUpdateSettings({
+            ...(updates.selected !== undefined ? { grocerySelectedRecipeIds: updates.selected } : {}),
+            ...(updates.excluded !== undefined ? { groceryExcludedRecipeIds: updates.excluded } : {}),
+          })}
           groupBy={settings.groceryGroupBy}
           hideStores={settings.groceryHideStores}
+          hideRecipes={settings.groceryHideRecipes}
           sortBy={settings.grocerySortBy}
           onUpdateDisplayPrefs={(updates) => onUpdateSettings({
             ...(updates.groupBy !== undefined ? { groceryGroupBy: updates.groupBy } : {}),
             ...(updates.hideStores !== undefined ? { groceryHideStores: updates.hideStores } : {}),
+            ...(updates.hideRecipes !== undefined ? { groceryHideRecipes: updates.hideRecipes } : {}),
             ...(updates.sortBy !== undefined ? { grocerySortBy: updates.sortBy } : {}),
           })}
         />
@@ -681,9 +690,16 @@ function AppContent() {
     }
   }, [visiblePages, currentPage, handlePageChange]);
   const activity = useActivity(!!user, user?.sub, settings);
+  const recipeKeeper = useRecipeKeeperStatus(!!user);
+  // Contributes +1 to the bell badge alongside unseen activity/update-
+  // available — see ActivityPanel's pinned row. Auth failures and outages
+  // both surface here; the backend gates which reach last_error at all
+  // (immediate for auth, after 3 failed attempts for transient blips).
+  const recipeKeeperErrorActive = !!(recipeKeeper.status?.enabled && recipeKeeper.status.last_error);
   const isOnline = useOnlineStatus();
   useRealtime();
   const keyboardOpen = useKeyboardOpen();
+  // TEMPORARY: raw focus/viewport signals for the keyboard-dismiss bug.
 
   // PWA update detection (SW lifecycle)
   // A service worker parked in `waiting` re-announces itself on EVERY
@@ -816,6 +832,33 @@ function AppContent() {
 
   // Fetch all data and write to local cache so tab switches never need API calls.
   // Called on initial load, focus-return, and online-reconnect.
+  // Refreshes JUST the grocery cache from the API. The warmer normally
+  // applies SSE deltas without any network call, but the Recipe Keeper sync
+  // broadcasts a grocery.updated with NO action (building per-item deltas
+  // would need serializers it can't import), so there is nothing to apply
+  // and a fetch is the only way to learn what it imported. Writes the same
+  // cache the warmer's delta cases write, so the nav badge updates and the
+  // next tab switch — which mounts the hook cache-only — sees the import.
+  const refreshGroceryCache = useCallback(async () => {
+    try {
+      const data = await getGroceryList();
+      try { localStorage.setItem('meal-planner-grocery', JSON.stringify(data)); } catch { /* full */ }
+      setGroceryCount(data.reduce((sum, s) => sum + s.items.filter(i => !i.checked).length, 0));
+      await saveLocalGrocerySections(data.map(s => ({ id: s.id, name: s.name, position: s.position })));
+      await saveLocalGroceryItems(data.flatMap(s => s.items.map(i => ({
+        id: i.id, section_id: i.section_id, name: i.name,
+        quantity: i.quantity, checked: i.checked, position: i.position,
+        global_position: i.global_position, store_id: i.store_id,
+        updated_at: i.updated_at, recipes: i.recipes ?? [],
+      }))));
+      markGrocerySessionLoaded();
+    } catch {
+      // Offline or the fetch failed: leave the cache alone but make the next
+      // mount go to the API rather than trusting a list we know is stale.
+      resetGrocerySessionLoaded();
+    }
+  }, []);
+
   const fetchAllData = useCallback(() => {
     // Skip cache-warming for entities with pending offline changes to avoid
     // overwriting optimistic state before sync processes the queued changes.
@@ -1105,6 +1148,18 @@ function AppContent() {
 
         if (detail.type === 'grocery.updated' && currentPageRef.current !== 'grocery') {
           if (pending.some(c => c.type.startsWith('grocery-'))) return;
+          // No action means no deltas to apply — the Recipe Keeper sync's
+          // bare grocery.updated. Every mounted hook answers that with a
+          // full refetch (useGroceryList's applyRealtimeEvent); the warmer
+          // used to fall through its switch and silently keep the
+          // pre-import cache, so an import that landed while the user was
+          // on any other tab stayed invisible until a page reload: a tab
+          // switch mounts the hook with skipApi once the session has loaded
+          // once, so it reads that stale cache rather than the server.
+          if (!(detail.payload as { action?: string })?.action) {
+            void refreshGroceryCache();
+            return;
+          }
           const gPayload = detail.payload as { action?: string; sections?: GrocerySection[]; section?: GrocerySection; sectionId?: string; item?: GroceryItem; itemId?: string; fromSectionId?: string; toSectionId?: string; items?: { id: string; position?: number; global_position?: number }[]; name?: string };
           try {
             const raw = localStorage.getItem('meal-planner-grocery');
@@ -1197,6 +1252,7 @@ function AppContent() {
             await saveLocalGroceryItems(data.flatMap(s => s.items.map(i => ({
               id: i.id, section_id: i.section_id, name: i.name,
               quantity: i.quantity, checked: i.checked, position: i.position, global_position: i.global_position, store_id: i.store_id, updated_at: i.updated_at,
+              recipes: i.recipes ?? [],
             }))));
           } catch {}
         }
@@ -1429,7 +1485,7 @@ function AppContent() {
     };
     window.addEventListener('meal-planner-realtime', handler);
     return () => window.removeEventListener('meal-planner-realtime', handler);
-  }, [user]);
+  }, [user, refreshGroceryCache]);
 
   // Re-fetch all data (focus-return, online-reconnect).
   // Resets session flags so inactive tabs re-read from cache on next mount,
@@ -1576,7 +1632,7 @@ function AppContent() {
             pendingCount={pendingCount}
             settings={settings}
             onShowSettings={() => setShowSettings(true)}
-            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            unseenActivity={showActivity ? 0 : activity.unseenCount + (recipeKeeperErrorActive ? 1 : 0)}
             onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
@@ -1590,7 +1646,7 @@ function AppContent() {
             pendingCount={pendingCount}
             settings={settings}
             onShowSettings={() => setShowSettings(true)}
-            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            unseenActivity={showActivity ? 0 : activity.unseenCount + (recipeKeeperErrorActive ? 1 : 0)}
             onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
@@ -1605,7 +1661,7 @@ function AppContent() {
             settings={settings}
             onUpdateSettings={updateSettings}
             onShowSettings={() => setShowSettings(true)}
-            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            unseenActivity={showActivity ? 0 : activity.unseenCount + (recipeKeeperErrorActive ? 1 : 0)}
             onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
@@ -1620,7 +1676,7 @@ function AppContent() {
             settings={settings}
             onUpdateSettings={updateSettings}
             onShowSettings={() => setShowSettings(true)}
-            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            unseenActivity={showActivity ? 0 : activity.unseenCount + (recipeKeeperErrorActive ? 1 : 0)}
             onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
@@ -1635,7 +1691,7 @@ function AppContent() {
             settings={settings}
             onUpdateSettings={updateSettings}
             onShowSettings={() => setShowSettings(true)}
-            unseenActivity={showActivity ? 0 : activity.unseenCount}
+            unseenActivity={showActivity ? 0 : activity.unseenCount + (recipeKeeperErrorActive ? 1 : 0)}
             onShowActivity={() => { activity.load(); setShowActivity(true); }}
             updateAvailable={updateAvailable}
           />
@@ -1653,6 +1709,7 @@ function AppContent() {
           updateAvailable={updateAvailable}
           onApplyUpdate={applyUpdate}
           updating={updating}
+          recipeKeeperStatus={recipeKeeper.status}
         />
       )}
       {showSettings && (
@@ -1669,6 +1726,9 @@ function AppContent() {
           onFetchPendingChanges={fetchPendingChanges}
           onGetSyncErrors={getSyncErrors}
           onSkipPendingChange={skipPendingChange}
+          recipeKeeperStatus={recipeKeeper.status}
+          onRecipeKeeperStatusChange={recipeKeeper.applyStatus}
+          onRefreshRecipeKeeperStatus={recipeKeeper.refresh}
         />
       )}
 
@@ -1677,6 +1737,7 @@ function AppContent() {
 
       {/* Bottom Navigation */}
       <BottomNav currentPage={currentPage} onChange={handlePageChange} groceryCount={groceryCount} hidden={keyboardOpen} pages={visiblePages} />
+
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { restoreCarriedScroll } from '../utils/scrollPin';
 
 /**
  * Detects whether the mobile virtual keyboard is open.
@@ -44,6 +45,8 @@ export function useKeyboardOpen(): boolean {
       const vvSmaller = window.innerHeight - vv.height > THRESHOLD;
       const viewportShrank = initialHeightRef.current - vv.height > THRESHOLD;
       const open = (vvSmaller || viewportShrank) && hasEditableFocus();
+      if (open !== wasOpenRef.current) {
+      }
 
       // Size the app shell to the visible area (above the keyboard) so the
       // <main> scroll container can bring the bottom of the list into view.
@@ -69,6 +72,10 @@ export function useKeyboardOpen(): boolean {
               break;
             }
           }
+          // Read what main was carrying BEFORE the switch discards it — the
+          // fallback below needs both of these.
+          const carried = mainEl.scrollTop;
+          const boxTopBefore = mainEl.getBoundingClientRect().top;
           // Remove the class to switch layout, then restore position
           document.documentElement.classList.remove('keyboard-open');
           if (anchor) {
@@ -76,6 +83,17 @@ export function useKeyboardOpen(): boolean {
               const newRect = anchor!.getBoundingClientRect();
               window.scrollBy(0, newRect.top - anchorOffset);
             });
+          } else if (carried > 0) {
+            // Every tab except Meals: the day-card anchor above is the only
+            // restore there has ever been, and `[data-day-date]` exists
+            // nowhere else, so on Grocery, Pantry, Lists and Tasks the
+            // position was simply dropped and the page landed at the top.
+            // Measured on device: `anchorFound=false cards=0`. Carry the
+            // offset across arithmetically instead — no selector to keep in
+            // step with five views. (Meals keeps the anchor path: it works,
+            // and it measures real layout rather than assuming the switch
+            // preserves main's box position.)
+            restoreCarriedScroll(mainEl, carried, boxTopBefore);
           }
         } else {
           document.documentElement.classList.remove('keyboard-open');

@@ -1,0 +1,62 @@
+{
+  "RecipeSyncEntityRequest": {
+    "MaxLastModified": "2026-09-13T15:33:11.8166488Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "ShoppingListCategorySyncEntityRequest": {
+    "MaxLastModified": "2026-04-06T16:18:17.170585Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "ShoppingListCategoryItemSyncEntityRequest": {
+    "MaxLastModified": "2026-09-13T19:13:53.632177Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "ShoppingListSyncEntityRequest": {
+    "MaxLastModified": "2024-10-28T01:28:34.5699988Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "ShoppingListItemSyncEntityRequest": {
+    "MaxLastModified": "2026-09-13T19:24:14.2403093Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "MealSyncEntityRequest": {
+    "MaxLastModified": "2026-04-03T17:55:33.3824754Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "CourseSyncEntityRequest": {
+    "MaxLastModified": "2023-01-08T21:14:23.1671227Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "CategorySyncEntityRequest": {
+    "MaxLastModified": "2026-09-01T10:39:25.2062909Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "CollectionSyncEntityRequest": {
+    "MaxLastModified": "2022-11-09T23:48:33.9251237Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "MealTypeSyncEntityRequest": {
+    "MaxLastModified": "2023-02-12T16:15:31.0494248Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "MealPlannerSyncEntityRequest": {
+    "MaxLastModified": "2026-02-02T14:40:30.0670824Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  },
+  "CookbookSyncEntityRequest": {
+    "MaxLastModified": "2026-02-02T14:40:30.0670824Z",
+    "SyncEntities": [],
+    "LocalChangesIds": []
+  }
+}

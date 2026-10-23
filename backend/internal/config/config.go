@@ -63,6 +63,29 @@ type Settings struct {
 	// StaticDir is where the built React app lives (not part of the Python
 	// Settings class; the Python app derived it from __file__).
 	StaticDir string
+
+	// Recipe Keeper sync (see docs/recipe-keeper-api.md). Disabled unless
+	// RECIPE_KEEPER_ENABLED is true. Which shopping list to mirror is NOT
+	// configured here — that id is a GUID that exists only inside the
+	// vendor's API, so it is discovered and selected at runtime via
+	// GET/PUT /api/recipe-keeper/list(s) and persisted in recipe_keeper_state.
+	RecipeKeeperEnabled   bool
+	RecipeKeeperUsername  string
+	RecipeKeeperPassword  string
+	RecipeKeeperReceiptID string
+	// RecipeKeeperPollSeconds is how often the background loop polls Recipe
+	// Keeper for changes while at least one SSE client is connected — sync
+	// is entirely poll-driven (see recipekeeper.ResolvePollInterval, which
+	// clamps this to a 30s floor).
+	RecipeKeeperPollSeconds int
+	// RecipeKeeperIdlePollSeconds is the polling cadence while no SSE client
+	// is connected (see recipekeeper.ResolveIdlePollInterval).
+	RecipeKeeperIdlePollSeconds int
+
+	// MetricsPort is the port the Prometheus endpoint listens on, SEPARATE
+	// from the API port so it is never routed by the reverse proxy and so
+	// needs no auth of its own (see cmd/server). Empty disables it entirely.
+	MetricsPort string
 }
 
 // loadDotEnv parses a .env file of KEY=VALUE lines. Missing file is fine.
@@ -178,6 +201,14 @@ func Load(envPath string) *Settings {
 		PushEditWindowMinutes:    l.integer("PUSH_EDIT_WINDOW_MINUTES", 30),
 
 		StaticDir: l.str("STATIC_DIR", "static"),
+
+		RecipeKeeperEnabled:         l.boolean("RECIPE_KEEPER_ENABLED", false),
+		RecipeKeeperUsername:        l.str("RECIPE_KEEPER_USERNAME", ""),
+		RecipeKeeperPassword:        l.str("RECIPE_KEEPER_PASSWORD", ""),
+		RecipeKeeperReceiptID:       l.str("RECIPE_KEEPER_RECEIPT_ID", ""),
+		RecipeKeeperPollSeconds:     l.integer("RECIPE_KEEPER_POLL_SECONDS", 60),
+		RecipeKeeperIdlePollSeconds: l.integer("RECIPE_KEEPER_IDLE_POLL_SECONDS", 30*60),
+		MetricsPort:                 l.str("METRICS_PORT", "9100"),
 	}
 }
 

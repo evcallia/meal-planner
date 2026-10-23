@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityEntry } from '../api/client';
+import { ActivityEntry, RecipeKeeperStatus } from '../api/client';
 import { parseServerDate, formatAgo } from '../utils/recency';
 
 interface ActivityPanelProps {
@@ -13,6 +13,10 @@ interface ActivityPanelProps {
   updateAvailable?: boolean;
   onApplyUpdate?: () => void;
   updating?: boolean;
+  // Recipe Keeper sync failure — pinned like the update row, live off
+  // recipe_keeper_state.last_error rather than a feed entry (a connection
+  // failure is current state, not an event) and self-clears on recovery.
+  recipeKeeperStatus?: RecipeKeeperStatus | null;
 }
 
 // Keys are the server-side categories; values are the tab names they map to
@@ -43,7 +47,7 @@ function firstName(actorName: string): string {
  * Opening the panel marks everything seen (the divider stays for this
  * viewing so the user can still tell what was new).
  */
-export function ActivityPanel({ entries, lastSeen, loading, onClose, onSeen, updateAvailable, onApplyUpdate, updating }: ActivityPanelProps) {
+export function ActivityPanel({ entries, lastSeen, loading, onClose, onSeen, updateAvailable, onApplyUpdate, updating, recipeKeeperStatus }: ActivityPanelProps) {
   // The "earlier" divider anchors to the marker as it was when the panel
   // OPENED — marking seen moves the live marker immediately, and anchoring to
   // the prop would make the "new" grouping vanish mid-viewing.
@@ -84,6 +88,17 @@ export function ActivityPanel({ entries, lastSeen, loading, onClose, onSeen, upd
 
         {/* Entries */}
         <div className="p-4">
+          {recipeKeeperStatus?.enabled && recipeKeeperStatus.last_error && (
+            <div className="flex items-center justify-between gap-3 mb-4 p-3 rounded-xl bg-red-50 dark:bg-red-900/30">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-2.5 h-2.5 bg-red-500 rounded-full shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Recipe Keeper sync error</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 wrap-break-word">{recipeKeeperStatus.last_error}</p>
+                </div>
+              </div>
+            </div>
+          )}
           {updateAvailable && onApplyUpdate && (
             <div className="flex items-center justify-between gap-3 mb-4 p-3 rounded-xl bg-blue-50 dark:bg-blue-900/30">
               <div className="flex items-center gap-2 min-w-0">

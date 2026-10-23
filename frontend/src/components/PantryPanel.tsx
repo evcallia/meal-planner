@@ -3,11 +3,13 @@ import { usePantry } from '../hooks/usePantry';
 import { PantrySection } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
+import { useCommitOnKeyboardDismiss } from '../hooks/useCommitOnKeyboardDismiss';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
+import { closeOnBlurOutside } from '../utils/closeOnBlurOutside';
 import { getEditHighlight } from '../utils/editHighlightColors';
 
 export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightColor?: string } = {}) {
-  const { sections, loading, addSection, deleteSection, addItem, updateItem, adjustQuantity, removeItem, clearAll, reorderSections, reorderItems, renameSection, moveItem } = usePantry();
+  const { sections, loading, addSection, deleteSection, addItem, updateItem, renameItem, adjustQuantity, removeItem, clearAll, reorderSections, reorderItems, renameSection, moveItem } = usePantry();
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
   const [newItemName, setNewItemName] = useState('');
   const [newItemQty, setNewItemQty] = useState('1');
@@ -124,13 +126,25 @@ export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightC
     });
   }, []);
 
+  // The edit row only ever sends a name; routing it through renameItem is
+  // what puts a pantry name edit on the undo stack (updateItem alone pushes
+  // nothing — see the note on renameItem).
+  const handleItemUpdate = useCallback((id: string, updates: { name?: string; quantity?: number }) => {
+    if (updates.name !== undefined && updates.quantity === undefined) {
+      renameItem(id, updates.name);
+      return;
+    }
+    updateItem(id, updates);
+  }, [renameItem, updateItem]);
+
   const handleAddItem = useCallback(async (sectionId: string) => {
     if (!newItemName.trim()) return;
     const qty = parseInt(newItemQty) || 1;
     await addItem(sectionId, newItemName.trim(), qty);
+    // Keep the form open for rapid entry — PantrySectionCard refocuses the
+    // (still-mounted) input itself. Closing only happens via Cancel/Escape.
     setNewItemName('');
     setNewItemQty('1');
-    setAddingToSection(null);
   }, [newItemName, newItemQty, addItem]);
 
   const handleClearAll = useCallback(async () => {
@@ -282,7 +296,7 @@ export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightC
                 isSectionDragging={isSectionDragging}
                 isCollapsed={collapsedSections.has(section.name)}
                 onToggleCollapse={() => toggleCollapsed(section.name)}
-                onUpdateItem={updateItem}
+                onUpdateItem={handleItemUpdate}
                 onAdjustQuantity={adjustQuantity}
                 onDelete={removeItem}
                 onDeleteSection={deleteSection}
@@ -361,10 +375,14 @@ function PantrySectionCard({
   onNewItemQtyChange,
   onAddItem,
 }: PantrySectionCardProps) {
+  const sectionRef = useRef<HTMLDivElement>(null);
   const itemContainerRef = useRef<HTMLDivElement>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState(section.name);
   const headerInputRef = useRef<HTMLInputElement>(null);
+  const addInputRef = useRef<HTMLInputElement>(null);
+  const addFormRef = useRef<HTMLDivElement>(null);
+  useScrollIntoViewOnEdit(addFormRef, addingToSection === section.id);
 
   const commitRename = useCallback(() => {
     const trimmed = editNameValue.trim();
@@ -373,6 +391,41 @@ function PantrySectionCard({
     }
     setIsEditingName(false);
   }, [editNameValue, section.id, section.name, onRenameSection]);
+
+  // Add stays open after a successful add (rapid entry) instead of unmounting
+  // the still-focused input — that unmount is what triggers iOS's visual-
+  // viewport "jump to top" bug. The Add button's onMouseDown below prevents
+  // the default focus-shift so the input (and the iOS keyboard) never loses
+  // focus in the first place — the real fix, since a `.focus()` call after
+  // an await can't reopen a keyboard iOS already closed outside a user-
+  // gesture context. This `.focus()` is now just belt-and-braces (e.g. in
+  // case something else ever steals focus during the add) — harmless since
+  // the input never unmounts here, so it's a no-op the rest of the time.
+  const handleAdd = useCallback(() => {
+    Promise.resolve(onAddItem(section.id)).then(() => {
+      addInputRef.current?.focus();
+    });
+  }, [onAddItem, section.id]);
+
+  // Cancel / Escape still unmount the form, so anchor the scroll position on
+  // the section itself across that change (see exitEditAnchored).
+  const closeAdd = useCallback(() => {
+    exitEditAnchored(sectionRef.current, () => onStartAdd(null));
+  }, [onStartAdd]);
+
+  // Dismissing the keyboard (or otherwise moving focus out of the form)
+  // ADDS what was typed, then closes. It used to just close and leave the
+  // text for next time, which read as "my item vanished" — the Add button
+  // was the only thing that worked. Closing matters as much as adding: a
+  // form left mounted with the keyboard gone is the one state whose scroll
+  // position cannot be held, and exitEditAnchored needs the unmount.
+  const commitAddAndClose = useCallback(() => {
+    if (!newItemName.trim()) {
+      closeAdd();
+      return;
+    }
+    Promise.resolve(onAddItem(section.id)).finally(closeAdd);
+  }, [newItemName, onAddItem, section.id, closeAdd]);
 
   useEffect(() => {
     if (isEditingName && headerInputRef.current) {
@@ -391,7 +444,7 @@ function PantrySectionCard({
   });
 
   return (
-    <div className="glass rounded-lg overflow-hidden">
+    <div ref={sectionRef} className="glass rounded-lg overflow-hidden">
       {/* Section Header */}
       <div
         className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2"
@@ -500,15 +553,17 @@ function PantrySectionCard({
 
           {/* Add item inline */}
           {addingToSection === section.id ? (
-            <div className="flex items-center gap-2 px-4 py-2">
+            <div ref={addFormRef} className="flex items-center gap-2 px-4 py-2">
               <input
+                ref={addInputRef}
                 type="text"
                 value={newItemName}
                 onChange={e => onNewItemNameChange(e.target.value)}
                 onKeyDown={e => {
-                  if (e.key === 'Enter') onAddItem(section.id);
-                  if (e.key === 'Escape') onStartAdd(null);
+                  if (e.key === 'Enter') handleAdd();
+                  if (e.key === 'Escape') closeAdd();
                 }}
+                onBlur={() => closeOnBlurOutside(addFormRef, commitAddAndClose)}
                 placeholder="Item name..."
                 autoFocus
                 className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
@@ -520,18 +575,20 @@ function PantrySectionCard({
                 value={newItemQty}
                 onChange={e => onNewItemQtyChange(e.target.value)}
                 onKeyDown={e => {
-                  if (e.key === 'Enter') onAddItem(section.id);
+                  if (e.key === 'Enter') handleAdd();
                 }}
+                onBlur={() => closeOnBlurOutside(addFormRef, commitAddAndClose)}
                 className="w-12 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:border-blue-500 text-sm py-1 text-center"
               />
               <button
-                onClick={() => onAddItem(section.id)}
+                onMouseDown={e => e.preventDefault()}
+                onClick={handleAdd}
                 className="text-blue-500 hover:text-blue-600 text-sm font-medium"
               >
                 Add
               </button>
               <button
-                onClick={() => onStartAdd(null)}
+                onClick={closeAdd}
                 className="text-gray-400 hover:text-gray-600 text-sm"
               >
                 Cancel
@@ -594,6 +651,9 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
     exitEditMode();
   }, [editName, item.id, item.name, onUpdate, exitEditMode]);
 
+  // Dismissing the keyboard with its own key saves, like tapping Save.
+  useCommitOnKeyboardDismiss(editFormRef, isEditing, commitEdit);
+
   const cancelEdit = useCallback(() => {
     exitEditMode();
     setEditName(item.name);
@@ -608,7 +668,12 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
 
   if (isEditing) {
     return (
-      <div ref={editFormRef} className={`flex items-center gap-2 px-4 py-1.5 ${getEditHighlight(editHighlightColor).form}`}>
+      <div
+        ref={editFormRef}
+        // See the matching note on the grocery/Lists edit row.
+        onBlur={() => closeOnBlurOutside(editFormRef, commitEdit)}
+        className={`flex items-center gap-2 px-4 py-1.5 ${getEditHighlight(editHighlightColor).form}`}
+      >
         <input
           ref={nameInputRef}
           type="text"

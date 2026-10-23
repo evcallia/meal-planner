@@ -266,6 +266,18 @@ body {
 .task-flash-done { animation: taskFlashDone 1.3s ease-out forwards; }
 .task-flash-skip { animation: taskFlashSkip 1.3s ease-out forwards; }
 
+/* Grocery / Lists: highlight a row that just changed, then fade out. Used
+   for an add (which may merge into an existing row), for saving an inline
+   edit, and for undo/redo — the case that needs it most, since an undo can
+   land on any row in the list, including one off screen.
+   The tint follows the user's edit-highlight setting through --edit-accent,
+   which the Grocery and Lists views already set on their containers. */
+@keyframes rowFlashEdit {
+  from { background-color: color-mix(in srgb, var(--edit-accent, rgb(16, 185, 129)) 35%, transparent); }
+  to   { background-color: transparent; }
+}
+.row-flash-edit { animation: rowFlashEdit 1.3s ease-out forwards; }
+
 /* Connection-status toast: slide down from the top edge */
 @keyframes status-toast-in {
   from { opacity: 0; transform: translate(-50%, -12px); }

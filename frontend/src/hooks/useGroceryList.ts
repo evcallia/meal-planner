@@ -150,6 +150,7 @@ export function useGroceryList() {
       void Promise.resolve(saveLocalGroceryItems(sections.flatMap(s => s.items.map(i => ({
         id: i.id, section_id: i.section_id, name: i.name,
         quantity: i.quantity, checked: i.checked, position: i.position, global_position: i.global_position, store_id: i.store_id, updated_at: i.updated_at,
+        recipes: i.recipes ?? [],
       }))))).catch(() => {});
     }
   }, [sections]);
@@ -200,7 +201,7 @@ export function useGroceryList() {
   // between two awaits in the same async function. Any mutation that calls
   // setSections and needs that new state visible to code later in the same
   // async chain MUST also assign sectionsRef.current immediately after
-  // setSections (currently only createSection and moveItem do this).
+  // setSections (createSection, moveItem and editItem do this).
   const sectionsRef = useRef(sections);
   sectionsRef.current = sections;
 
@@ -239,6 +240,7 @@ export function useGroceryList() {
           global_position: i.global_position,
           store_id: i.store_id,
           updated_at: i.updated_at,
+          recipes: i.recipes ?? [],
         })));
         grocerySessionLoaded = true;
       } catch { /* API failed — keep cached data */ }
@@ -637,6 +639,7 @@ export function useGroceryList() {
 
     pushAction({
       type: 'check-grocery-item',
+      highlight: () => [resolveId(itemId)],
       undo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
@@ -688,9 +691,9 @@ export function useGroceryList() {
   }, [sections, isOnline, pushAction]);
 
   // Add item to a section (merges with existing duplicate if found)
-  const addItem = useCallback(async (sectionId: string, name: string, quantity: string | null = null, storeId?: string | null) => {
+  const addItem = useCallback(async (sectionId: string, name: string, quantity: string | null = null, storeId?: string | null): Promise<string | null> => {
     const section = sections.find(s => s.id === sectionId);
-    if (!section) return;
+    if (!section) return null;
 
     const trimmedName = toTitleCase(name.trim());
 
@@ -730,6 +733,7 @@ export function useGroceryList() {
 
       pushAction({
         type: 'merge-grocery-item',
+        highlight: () => [resolveId(existingItem.id)],
         undo: async () => {
           optimisticVersionRef.current++;
           pendingMutationsRef.current++;
@@ -768,7 +772,7 @@ export function useGroceryList() {
           settleMutation();
         },
       });
-      return;
+      return existingItem.id;
     }
 
     const tempId = generateTempId();
@@ -852,6 +856,7 @@ export function useGroceryList() {
 
     pushAction({
       type: 'add-grocery-item',
+      highlight: () => [resolveId(newItem.id)],
       undo: async () => {
         // Resolve through ID remap chain — the item may have been recreated
         // with a new server ID (e.g., add → delete → undo delete → undo add)
@@ -912,6 +917,8 @@ export function useGroceryList() {
         settleMutation();
       },
     });
+    // The real id once the server has answered; the temp one offline.
+    return newItem.id;
   }, [sections, isOnline, pushAction]);
 
   // Delete an item — uses targeted POST/DELETE for undo/redo (not PUT)
@@ -929,6 +936,7 @@ export function useGroceryList() {
     // Push undo action BEFORE API call so undo is available immediately
     pushAction({
       type: 'delete-grocery-item',
+      highlight: () => [resolveId(deletedItemRef.id)],
       undo: async () => {
         // Re-add the specific item via POST (not PUT) — doesn't affect other users' items
         const prevId = deletedItemRef.id;
@@ -1094,6 +1102,7 @@ export function useGroceryList() {
 
         pushAction({
           type: 'edit-merge-grocery-item',
+          highlight: () => [resolveId(dupId), resolveId(deletedItemRef.id)],
           undo: async () => {
             // Targeted undo: restore duplicate's qty + re-add the deleted item
             const currentDupId = resolveId(dupId);
@@ -1173,7 +1182,14 @@ export function useGroceryList() {
     const prevStoreId = item.store_id;
 
     optimisticVersionRef.current++;
-    setSections(prev => prev.map(s => ({
+    // Assigning sectionsRef here is the rule documented where it's declared,
+    // not belt-and-braces: the edit row commits a rename and a category
+    // change back-to-back, and moveItem builds its whole next state from
+    // sectionsRef.current and sets it absolutely. Without this the move read
+    // the pre-rename list and wrote the OLD name back — the edit looked lost,
+    // while undo (restoring the pre-move state, which also carried the old
+    // name) looked like a no-op and redo appeared to "fix" it.
+    const edited = (prev: GrocerySection[]) => prev.map(s => ({
       ...s,
       items: s.items.map(i => i.id === itemId ? {
         ...i,
@@ -1181,7 +1197,9 @@ export function useGroceryList() {
         ...(updates.quantity !== undefined ? { quantity: updates.quantity } : {}),
         ...(updates.store_id !== undefined ? { store_id: updates.store_id } : {}),
       } : i),
-    })));
+    }));
+    sectionsRef.current = edited(sectionsRef.current);
+    setSections(edited);
 
     // Update local
     await saveLocalGroceryItem({
@@ -1198,20 +1216,50 @@ export function useGroceryList() {
       try {
         const realItemId = await resolveIdAsync(itemId);
         const serverItem = await editGroceryItemAPI(realItemId, updates);
-        // If server returned a different store_id (e.g. from item_defaults), apply it
-        const optimisticStoreId = updates.store_id !== undefined ? updates.store_id : item.store_id;
-        if (serverItem.store_id !== optimisticStoreId) {
-          optimisticVersionRef.current++;
-          setSections(prev => prev.map(s => ({
-            ...s,
-            items: s.items.map(i => i.id === itemId ? { ...i, store_id: serverItem.store_id } : i),
-          })));
-          await saveLocalGroceryItem({
-            id: item.id, section_id: item.section_id,
-            name: serverItem.name, quantity: serverItem.quantity,
-            checked: serverItem.checked, position: item.position,
-            store_id: serverItem.store_id, updated_at: serverItem.updated_at,
-          });
+        // serverItem is undefined when the server treated this PATCH as
+        // already-applied (the row is gone server-side, e.g. deleted by
+        // Recipe Keeper) — nothing to reconcile against, and our optimistic
+        // local state already reflects the edit.
+        if (serverItem) {
+          // The server response is authoritative for more than store_id: a
+          // quantity decrease with Recipe Keeper enabled routes through
+          // ConsumeUnits, which can rewrite the row's own quantity AND its
+          // linked recipes (fewer units left means fewer/lighter links) —
+          // apply whatever it returns rather than trusting our optimistic
+          // guess, which only reflects the plain PATCH we sent.
+          const optimisticStoreId = updates.store_id !== undefined ? updates.store_id : item.store_id;
+          const optimisticQuantity = updates.quantity !== undefined ? updates.quantity : item.quantity;
+          const recipesChanged = JSON.stringify(serverItem.recipes ?? []) !== JSON.stringify(item.recipes ?? []);
+          if (serverItem.store_id !== optimisticStoreId || serverItem.quantity !== optimisticQuantity || recipesChanged) {
+            optimisticVersionRef.current++;
+            setSections(prev => prev.map(s => ({
+              ...s,
+              items: s.items.map(i => i.id === itemId ? {
+                ...i,
+                store_id: serverItem.store_id,
+                quantity: serverItem.quantity,
+                recipes: serverItem.recipes,
+              } : i),
+            })));
+            await saveLocalGroceryItem({
+              id: item.id, section_id: item.section_id,
+              name: serverItem.name, quantity: serverItem.quantity,
+              checked: serverItem.checked, position: item.position,
+              store_id: serverItem.store_id, updated_at: serverItem.updated_at,
+              recipes: serverItem.recipes ?? [],
+            });
+          }
+          // ConsumeUnits may have moved links onto a checked sibling row
+          // this response says nothing about (creating it, even) — that
+          // row now exists server-side but no client has been told about
+          // it. Every OTHER client learns this from the actionless
+          // grocery.updated broadcast's documented full-refetch fallback,
+          // but the acting client's own SSE event is self-filtered by
+          // source_id (see useRealtime.ts) and never reaches that handler.
+          // Refetch directly instead of waiting for a manual refresh.
+          if (serverItem.second_row_changed) {
+            loadGroceryListRef.current();
+          }
         }
         // Update local item default when store changes
         if (updates.store_id !== undefined) {
@@ -1232,6 +1280,7 @@ export function useGroceryList() {
 
     pushAction({
       type: 'edit-grocery-item',
+      highlight: () => [resolveId(itemId)],
       undo: async () => {
         const currentId = resolveId(itemId);
         const undoUpdates: { name?: string; quantity?: string | null; store_id?: string | null } = {};
@@ -1865,6 +1914,7 @@ export function useGroceryList() {
 
     pushAction({
       type: 'move-grocery-item',
+      highlight: () => [resolveId(item.id)],
       undo: async () => {
         const currentItemId = resolveId(item.id);
         optimisticVersionRef.current++;

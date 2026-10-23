@@ -1,15 +1,32 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { flashItems } from '../utils/recentFlash';
 
 interface UndoAction {
   type: string;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
+  /**
+   * The rows this action touches, highlighted briefly once it has been
+   * undone or redone. Unlike an edit the user just made, an undo can land
+   * on a row anywhere in the list — including one off screen — so there is
+   * otherwise nothing to say what moved.
+   *
+   * A function, not a list, because it is evaluated AFTER the work runs:
+   * an item that was deleted and restored comes back with a new server id,
+   * and the closures follow that through the remap chain. Ids that have
+   * since gone are returned as null and dropped.
+   *
+   * Left off bulk actions (clear, replace) on purpose — flashing thirty
+   * rows at once is noise, not a signal.
+   */
+  highlight?: () => (string | null | undefined)[];
 }
 
 interface UndoContextValue {
   canUndo: boolean;
   canRedo: boolean;
   pushAction: (action: UndoAction) => void;
+  runAsUndoGroup: (type: string, fn: () => void | Promise<void>) => Promise<void>;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
 }
@@ -64,12 +81,63 @@ export function UndoProvider({ id, children }: { id: string; children: ReactNode
   useEffect(() => { stack.past = past; }, [past, stack]);
   useEffect(() => { stack.future = future; }, [future, stack]);
 
+  // While a group is open, pushes land here instead of on the stack.
+  const groupRef = useRef<UndoAction[] | null>(null);
+
   const pushAction = useCallback((action: UndoAction) => {
     if (isUndoRedoInProgress.current) return;
+    if (groupRef.current) {
+      groupRef.current.push(action);
+      return;
+    }
     setPast(prev => [...prev.slice(-(MAX_HISTORY - 1)), action]);
     setFuture([]);
     resetInactivityTimer(id);
   }, [id]);
+
+  /**
+   * Collapses everything pushed while `fn` runs into ONE history entry, so a
+   * single user action costs a single undo.
+   *
+   * Committing an inline edit can be two mutations — the field edit and a
+   * category move — each of which pushes its own entry, leaving the user to
+   * press undo twice to reverse one edit (and seeing a half-reverted item in
+   * between). `fn` is awaited because these mutations push AFTER their API
+   * call, not synchronously.
+   *
+   * Undo runs the collected actions in reverse, redo in order, which is what
+   * keeps a move-then-edit pair reversible in either direction.
+   */
+  const runAsUndoGroup = useCallback(async (type: string, fn: () => void | Promise<void>) => {
+    // Already inside a group: let the outer one collect, so nesting stays one
+    // entry rather than becoming a group of groups.
+    if (groupRef.current) {
+      await fn();
+      return;
+    }
+    const collected: UndoAction[] = [];
+    groupRef.current = collected;
+    try {
+      await fn();
+    } finally {
+      groupRef.current = null;
+    }
+    if (collected.length === 0) return;
+    if (collected.length === 1) {
+      pushAction(collected[0]);
+      return;
+    }
+    pushAction({
+      type,
+      undo: async () => {
+        for (const action of [...collected].reverse()) await action.undo();
+      },
+      redo: async () => {
+        for (const action of collected) await action.redo();
+      },
+      highlight: () => collected.flatMap(action => action.highlight?.() ?? []),
+    });
+  }, [pushAction]);
 
   const undo = useCallback(async () => {
     if (isUndoRedoInProgress.current) return;
@@ -83,6 +151,9 @@ export function UndoProvider({ id, children }: { id: string; children: ReactNode
     } finally {
       isUndoRedoInProgress.current = false;
     }
+    // After the work, so the ids are the ones that now exist. Skipped when
+    // the action threw, since nothing changed to point at.
+    flashItems(action.highlight?.() ?? []);
     window.dispatchEvent(new Event('undo-redo-applied'));
     resetInactivityTimer(id);
   }, [id]);
@@ -99,6 +170,9 @@ export function UndoProvider({ id, children }: { id: string; children: ReactNode
     } finally {
       isUndoRedoInProgress.current = false;
     }
+    // After the work, so the ids are the ones that now exist. Skipped when
+    // the action threw, since nothing changed to point at.
+    flashItems(action.highlight?.() ?? []);
     window.dispatchEvent(new Event('undo-redo-applied'));
     resetInactivityTimer(id);
   }, [id]);
@@ -125,10 +199,21 @@ export function UndoProvider({ id, children }: { id: string; children: ReactNode
   }, [undo, redo]);
 
   return (
-    <UndoContext.Provider value={{ canUndo: past.length > 0, canRedo: future.length > 0, pushAction, undo, redo }}>
+    <UndoContext.Provider value={{ canUndo: past.length > 0, canRedo: future.length > 0, pushAction, runAsUndoGroup, undo, redo }}>
       {children}
     </UndoContext.Provider>
   );
+}
+
+/**
+ * For components that want undo grouping when it is available but must not
+ * depend on it. The shared checklist row is presentational and is rendered
+ * bare in tests and in isolation; making it throw without a provider would
+ * trade a real coupling for a cosmetic nicety. Callers fall back to running
+ * their work ungrouped, which is simply the behaviour from before grouping.
+ */
+export function useOptionalUndo(): UndoContextValue | null {
+  return useContext(UndoContext);
 }
 
 export function useUndo() {

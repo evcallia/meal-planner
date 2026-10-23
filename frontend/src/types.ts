@@ -63,6 +63,22 @@ export interface MealIdea {
   updated_at: string;
 }
 
+// Which recipe a Recipe Keeper-linked item came from. A collapsed grocery
+// row can carry several — Recipe Keeper stores one row per
+// recipe-ingredient occurrence, so e.g. "Lemon" may list six recipes.
+export interface RecipeRef {
+  id: string;
+  title: string;
+  // How many of the row's links point at this recipe (Recipe Keeper stores
+  // one link per recipe-ingredient occurrence, so e.g. an item added to a
+  // recipe six times collapses to one ref with count 6). MP-only units are
+  // quantity minus the SUM of every ref's count, never the number of refs.
+  // Optional for the same reason `recipes` itself is optional: the server
+  // always sends it, but rows cached (IndexedDB/localStorage) before this
+  // field existed omit it — treat a missing count as 1 everywhere.
+  count?: number;
+}
+
 export interface GroceryItem {
   id: string;
   section_id: string;
@@ -74,6 +90,22 @@ export interface GroceryItem {
   global_position: number;
   store_id: string | null;
   updated_at: string;
+  // Optional because it's absent on locally-created (not-yet-synced) items;
+  // the server always sends an array, never omits it or sends null. Treat
+  // undefined as [] everywhere.
+  recipes?: RecipeRef[];
+}
+
+// The PATCH /grocery/items/{id} response is a GroceryItem plus one
+// transient, response-only flag: `second_row_changed` is set when Recipe
+// Keeper's ConsumeUnits (server-side, on a quantity decrease) moved links
+// onto a checked sibling row this response says nothing about — that row
+// exists in the database now but no client has been told about it. It is
+// never part of persisted item state (not stored in IndexedDB, not spread
+// into GrocerySection items) — callers read it once, off the raw response,
+// to decide whether to refetch.
+export interface GroceryItemUpdateResult extends GroceryItem {
+  second_row_changed?: boolean;
 }
 
 export interface GrocerySection {

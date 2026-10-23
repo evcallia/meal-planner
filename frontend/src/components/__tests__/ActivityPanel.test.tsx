@@ -127,3 +127,49 @@ describe('ActivityPanel live-viewing behavior', () => {
     expect(screen.getByText('earlier')).toBeInTheDocument();
   });
 });
+
+describe('ActivityPanel recipe keeper error row', () => {
+  it('shows a pinned error row when enabled with a last_error', () => {
+    render(
+      <ActivityPanel entries={[]} lastSeen={null} loading={false} onClose={() => {}} onSeen={() => {}}
+        recipeKeeperStatus={{
+          enabled: true, last_sync: null, last_error: 'auth failed: bad password',
+          auth_failed: true, selected_list_id: 'l1', selected_list_name: 'Groceries',
+        }}
+      />
+    );
+    expect(screen.getByText('Recipe Keeper sync error')).toBeInTheDocument();
+    expect(screen.getByText('auth failed: bad password')).toBeInTheDocument();
+  });
+
+  it('hides the row when there is no error', () => {
+    render(
+      <ActivityPanel entries={[]} lastSeen={null} loading={false} onClose={() => {}} onSeen={() => {}}
+        recipeKeeperStatus={{
+          enabled: true, last_sync: null, last_error: '',
+          auth_failed: false, selected_list_id: 'l1', selected_list_name: 'Groceries',
+        }}
+      />
+    );
+    expect(screen.queryByText('Recipe Keeper sync error')).not.toBeInTheDocument();
+  });
+
+  it('hides the row when the integration is not enabled, even with a stale last_error', () => {
+    render(
+      <ActivityPanel entries={[]} lastSeen={null} loading={false} onClose={() => {}} onSeen={() => {}}
+        recipeKeeperStatus={{
+          enabled: false, last_sync: null, last_error: 'stale error',
+          auth_failed: false, selected_list_id: '', selected_list_name: '',
+        }}
+      />
+    );
+    expect(screen.queryByText('Recipe Keeper sync error')).not.toBeInTheDocument();
+  });
+
+  it('hides the row when no status is passed', () => {
+    render(
+      <ActivityPanel entries={[]} lastSeen={null} loading={false} onClose={() => {}} onSeen={() => {}} />
+    );
+    expect(screen.queryByText('Recipe Keeper sync error')).not.toBeInTheDocument();
+  });
+});

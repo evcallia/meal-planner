@@ -134,6 +134,7 @@ export function StoreAutocomplete({
           />
           {displayValue && (
             <button
+              tabIndex={-1}
               onMouseDown={e => e.preventDefault()}
               onClick={handleClear}
               aria-label="Remove store"
@@ -150,6 +151,7 @@ export function StoreAutocomplete({
         <div className={`absolute z-50 w-full glass-menu rounded-sm max-h-40 overflow-y-auto ${openUpward ? 'bottom-full mb-1' : 'mt-1'}`}>
           {filtered.map(store => (
             <button
+              tabIndex={-1}
               key={store.id}
               onMouseDown={e => e.preventDefault()}
               onClick={() => handleSelect(store)}
@@ -160,6 +162,7 @@ export function StoreAutocomplete({
           ))}
           {query.trim() && !exactMatch && (
             <button
+              tabIndex={-1}
               onMouseDown={e => e.preventDefault()}
               onClick={handleCreate}
               className="w-full text-left px-3 py-2 text-sm text-blue-500 hover:bg-gray-100 dark:hover:bg-gray-700"

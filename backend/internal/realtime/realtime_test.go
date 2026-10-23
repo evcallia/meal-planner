@@ -280,3 +280,38 @@ func TestBroadcastEventHelper(t *testing.T) {
 		t.Fatalf("user event = %v", msg)
 	}
 }
+
+// TestConnectedFiresForEverySubscribe proves the Connected signal fires on
+// EVERY subscribe, not only on the 0→1 transition. The Recipe Keeper sync
+// service uses it to pull in changes made in the Recipe Keeper app the
+// moment someone opens Meal Planner; while it fired only on 0→1, a second
+// device opening the app (or the same device's SSE stream reconnecting after
+// iOS suspended it) took the count 1→2 and refreshed nothing, leaving the
+// user waiting out the poll interval for a list that was already stale.
+func TestConnectedFiresForEverySubscribe(t *testing.T) {
+	b := NewBroadcaster()
+
+	first := b.Subscribe("user-a")
+	select {
+	case <-b.Connected:
+	default:
+		t.Fatal("the first subscribe did not signal Connected")
+	}
+
+	// A second subscriber arriving while the first is still connected.
+	b.Subscribe("user-b")
+	select {
+	case <-b.Connected:
+	default:
+		t.Fatal("a subscribe that took the count from 1 to 2 did not signal Connected; a second device opening the app must still trigger a sync")
+	}
+
+	// And again after a disconnect leaves one behind.
+	b.Unsubscribe(first)
+	b.Subscribe("user-a")
+	select {
+	case <-b.Connected:
+	default:
+		t.Fatal("a later subscribe did not signal Connected")
+	}
+}

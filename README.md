@@ -126,6 +126,21 @@ npm run dev
 
 The frontend will be available at http://localhost:5173 (proxies API requests to backend)
 
+### Dev Deployment (persistent stack over real TLS)
+
+For a longer-lived dev stack — including running from a git worktree — bring it up with:
+
+```bash
+docker compose up -d --build
+```
+
+`.env` sets `COMPOSE_FILE=docker-compose-dev.yml:docker-compose-dev.override.yml`, so plain `docker compose` chains both files automatically; no `-f` flags needed.
+
+- **Set `COMPOSE_PROJECT_NAME=meal-planner` in `.env`.** Docker Compose otherwise derives its project name from the current directory, and a git worktree has a different directory name than the main checkout — so without this it silently creates its own brand-new, empty database volume instead of attaching the existing one. Symptom if it's missing: the app comes up healthy, but all your data appears to be gone — an empty database is indistinguishable from a legitimate first-run import.
+- `docker-compose-dev.override.yml` is gitignored and deployment-specific (Traefik labels plus the external `proxy`/`external` networks). It must be copied into a new worktree for the dev stack to route there — it isn't checked into git by design.
+- This stack is served over real TLS at its own hostname (e.g. `meal-planner-dev.yourdomain.com`), so normal OIDC login works unchanged — it's how the app actually gets tested on mobile devices.
+- **Rebuild after any frontend change.** The Docker image bakes in the already-built frontend, so `docker compose up -d --build` is required to pick up UI changes — without `--build` you're testing whatever frontend was baked in last.
+
 ### Testing with ngrok/tunnels
 
 To test on mobile devices or share your local dev server via ngrok:
@@ -295,6 +310,44 @@ jobs:
       - uses: actions/checkout@v3
       - run: ./run-tests.sh --skip-deps
 ```
+
+### Debugging on a real phone (the on-device trace overlay)
+
+Some bugs only exist on an iPhone — anything involving the virtual keyboard,
+the visual viewport, or Safari's focus behaviour has no desktop equivalent,
+and the PWA has no console you can open. The technique that cracked the
+"page jumps when the keyboard closes" family of bugs, after two blind fixes
+had missed, was **a temporary in-app log overlay**, and it is worth
+rebuilding the next time a device-only bug appears:
+
+- A tiny ring-buffer module (`kbLog(what, detail)`) plus a fixed-position
+  overlay component with **copy** and **clear** buttons, so a trace can be
+  pasted straight out of the phone and into a chat or an issue.
+- Gate it on a query parameter remembered for the session
+  (`?kbdebug=1` → `sessionStorage`), so in-app navigation keeps it on and
+  nothing ships to ordinary users.
+- Log the **raw browser signals** first (`focusin`/`focusout` with
+  `document.activeElement`, `visualViewport` resize/scroll, `innerHeight`
+  vs `visualViewport.height`), then your own handlers' decisions beside
+  them. The gap between "what the browser did" and "what our code decided"
+  is where the answer is.
+- Dump structure as the browser sees it, not as the JSX reads — e.g.
+  `Array.from(form.elements)` with each control's `disabled`/`readOnly`/
+  `tabIndex`/`offsetParent === null` flags.
+
+It paid for itself immediately. Three measured facts, none of which was
+guessable from the desktop, each overturning an assumption a fix had been
+built on: iOS's keyboard-dismiss key fires an **ordinary `focusout` with
+focus landing on `<body>`** (it does not keep focus); `window.innerHeight`
+**shrinks with the keyboard** in a standalone PWA (`inner=451 vv=451`), so
+live gap detection reads zero with the keyboard plainly up; and the scroll
+restore was looking for a `[data-day-date]` anchor that exists only on the
+Meals tab (`anchorFound=false cards=0`), which was the whole of "the page
+scrolls to the top".
+
+Delete the instrumentation with the fix — it is a diagnostic, not a
+feature. See the iOS keyboard notes in `CLAUDE.md` for what the traces
+established.
 
 ### Test Development Guidelines
 

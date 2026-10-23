@@ -174,4 +174,62 @@ func CleanupOldData(db *gorm.DB, retentionDays int) {
 		notes.RowsAffected, notesCutoff.Format("2006-01-02"),
 		events.RowsAffected, eventsCutoff.Format("2006-01-02"),
 		activity.RowsAffected, activityCutoff.Format("2006-01-02"))
+
+	pruneRecipeKeeperTombstones(db)
+}
+
+// pruneRecipeKeeperTombstones deletes settled Recipe Keeper tombstones, plus
+// their paired links (Task 5 keeps the link alive after an acked delete
+// purely so a late undo can rebuild the entity — once the tombstone is gone
+// that's no longer possible, so the two are pruned as a pair).
+//
+// A tombstone stops a deleted item from being re-imported before the delete
+// has propagated. It stops being necessary once BOTH are true: the delete
+// was acknowledged by the server (PushedAt/AckLastModified set), AND our
+// sync watermark has advanced past that acknowledgement — after which the
+// row can never reappear in UpdatedServerItems.
+//
+// The watermark comparison below is a STRING comparison against a .NET
+// round-trip timestamp ("2026-09-14T12:00:00.0000000Z"). That's safe only
+// because the format is fixed-width and lexically ordered, and it behaves
+// identically on SQLite and Postgres — don't be tempted to parse it into a
+// time.Time for the comparison.
+func pruneRecipeKeeperTombstones(db *gorm.DB) {
+	var wm models.RecipeKeeperState
+	if err := db.First(&wm, "key = ?", "watermark:ShoppingListItem").Error; err == nil {
+		var settled []string
+		db.Model(&models.RecipeKeeperTombstone{}).
+			Where("pushed_at IS NOT NULL AND ack_last_modified IS NOT NULL AND ack_last_modified <= ?", wm.Value).
+			Pluck("rk_item_id", &settled)
+		if len(settled) > 0 {
+			db.Where("rk_item_id IN ?", settled).Delete(&models.RecipeKeeperLink{})
+			db.Where("rk_item_id IN ?", settled).Delete(&models.RecipeKeeperTombstone{})
+		}
+	}
+
+	// Backstops: settled tombstones older than 30 days go regardless of
+	// watermark bookkeeping (in case that bookkeeping is ever wrong), and an
+	// unpushed tombstone — a delete that still needs to reach the server —
+	// is kept until 90 days, then dropped rather than retried against an
+	// endpoint that is evidently never coming back.
+	oldCutoff := models.NowUTC().AddDate(0, 0, -30)
+	var oldSettled []string
+	db.Model(&models.RecipeKeeperTombstone{}).
+		Where("pushed_at IS NOT NULL AND deleted_at < ?", oldCutoff).
+		Pluck("rk_item_id", &oldSettled)
+	if len(oldSettled) > 0 {
+		db.Where("rk_item_id IN ?", oldSettled).Delete(&models.RecipeKeeperLink{})
+		db.Where("rk_item_id IN ?", oldSettled).Delete(&models.RecipeKeeperTombstone{})
+	}
+
+	staleCutoff := models.NowUTC().AddDate(0, 0, -90)
+	var abandonedIDs []string
+	db.Model(&models.RecipeKeeperTombstone{}).
+		Where("pushed_at IS NULL AND deleted_at < ?", staleCutoff).
+		Pluck("rk_item_id", &abandonedIDs)
+	if len(abandonedIDs) > 0 {
+		log.Printf("recipekeeper: abandoning %d undeliverable deletes older than 90 days", len(abandonedIDs))
+		db.Where("rk_item_id IN ?", abandonedIDs).Delete(&models.RecipeKeeperLink{})
+		db.Where("rk_item_id IN ?", abandonedIDs).Delete(&models.RecipeKeeperTombstone{})
+	}
 }

@@ -334,7 +334,7 @@ export async function unhideCalendarEvent(hiddenId: string): Promise<{ status: s
 }
 
 // Grocery API
-import type { GrocerySection, GroceryItem } from '../types';
+import type { GrocerySection, GroceryItem, GroceryItemUpdateResult } from '../types';
 
 export async function getGroceryList(): Promise<GrocerySection[]> {
   return fetchAPI<GrocerySection[]>('/grocery');
@@ -378,8 +378,8 @@ export async function replaceGroceryList(sections: { name: string; items: { name
   });
 }
 
-export async function toggleGroceryItem(itemId: string, checked: boolean): Promise<GroceryItem> {
-  return fetchAPI<GroceryItem>(`/grocery/items/${itemId}`, {
+export async function toggleGroceryItem(itemId: string, checked: boolean): Promise<GroceryItem | undefined> {
+  return fetchAPI<GroceryItem | undefined>(`/grocery/items/${itemId}`, {
     method: 'PATCH',
     body: JSON.stringify({ checked }),
   });
@@ -440,8 +440,13 @@ export async function deleteGrocerySection(sectionId: string): Promise<void> {
   await fetchAPI(`/grocery/sections/${sectionId}`, { method: 'DELETE' });
 }
 
-export async function editGroceryItem(itemId: string, updates: { name?: string; quantity?: string | null; store_id?: string | null }): Promise<GroceryItem> {
-  return fetchAPI<GroceryItem>(`/grocery/items/${itemId}`, {
+// Returns undefined on a 204: the server treats a PATCH to an item it can no
+// longer find as already-applied rather than a 404 (e.g. Recipe Keeper
+// deleted the row behind Meal Planner's back before a queued offline change
+// landed) — see handleUpdateGroceryItem. Callers must check before reading
+// any property.
+export async function editGroceryItem(itemId: string, updates: { name?: string; quantity?: string | null; store_id?: string | null }): Promise<GroceryItemUpdateResult | undefined> {
+  return fetchAPI<GroceryItemUpdateResult | undefined>(`/grocery/items/${itemId}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
   });
@@ -834,4 +839,65 @@ export async function getActivity(): Promise<{ entries: ActivityEntry[]; last_se
 
 export async function markActivitySeen(): Promise<{ status: string; seen_at: string }> {
   return fetchAPI<{ status: string; seen_at: string }>('/activity/seen', { method: 'POST' });
+}
+
+// Recipe Keeper sync API. The household connection (server config, not
+// per-user) mirrors one Recipe Keeper shopping list into the grocery list —
+// see CLAUDE.md "Recipe Keeper Sync". `enabled: false` means the backend has
+// no credentials configured; every endpoint still responds (status 200 /
+// errors), so the UI can render a clean "not configured" state.
+
+export interface RecipeKeeperListOption {
+  id: string;
+  name: string;
+}
+
+export interface RecipeKeeperStatus {
+  enabled: boolean;
+  last_sync: string | null;
+  last_error: string;
+  auth_failed: boolean;
+  selected_list_id: string;
+  selected_list_name: string;
+  // Household-global pause switch: while true, nothing syncs in either
+  // direction (no polling, no reconcile kicks, no manual sync) — a safety
+  // valve so shopping can continue through a misbehaving sync. See
+  // CLAUDE.md "Recipe Keeper Sync".
+  paused: boolean;
+  // True while a grocery drain is in flight. POST /recipe-keeper/sync
+  // returns 202 as soon as it has kicked one — a full drain outlives
+  // API_TIMEOUT — so a caller that wants the outcome polls the status
+  // endpoint until this clears.
+  syncing: boolean;
+}
+
+export async function getRecipeKeeperStatus(): Promise<RecipeKeeperStatus> {
+  return fetchAPI<RecipeKeeperStatus>('/recipe-keeper/status');
+}
+
+export async function getRecipeKeeperLists(): Promise<RecipeKeeperListOption[]> {
+  return fetchAPI<RecipeKeeperListOption[]>('/recipe-keeper/lists');
+}
+
+// Selecting an already-selected-before list resets its links/tombstones/
+// watermark server-side for a clean re-import — the caller should warn
+// before switching away from a list that's already set.
+export async function selectRecipeKeeperList(listId: string): Promise<RecipeKeeperStatus> {
+  return fetchAPI<RecipeKeeperStatus>('/recipe-keeper/list', {
+    method: 'PUT',
+    body: JSON.stringify({ list_id: listId }),
+  });
+}
+
+export async function syncRecipeKeeperNow(): Promise<RecipeKeeperStatus> {
+  return fetchAPI<RecipeKeeperStatus>('/recipe-keeper/sync', { method: 'POST' });
+}
+
+// Resuming (paused: false) kicks an immediate sync server-side — nothing
+// further to do here once the promise resolves.
+export async function setRecipeKeeperPaused(paused: boolean): Promise<RecipeKeeperStatus> {
+  return fetchAPI<RecipeKeeperStatus>('/recipe-keeper/paused', {
+    method: 'PUT',
+    body: JSON.stringify({ paused }),
+  });
 }

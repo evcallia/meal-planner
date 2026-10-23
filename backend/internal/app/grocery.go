@@ -2,7 +2,9 @@ package app
 
 import (
 	"errors"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -11,6 +13,7 @@ import (
 	"mealplanner/internal/httpx"
 	"mealplanner/internal/models"
 	"mealplanner/internal/push"
+	"mealplanner/internal/recipekeeper"
 	"mealplanner/internal/session"
 )
 
@@ -36,6 +39,36 @@ func (a *App) broadcast(eventType string, payload J, r *http.Request) {
 			a.logActivity(category, detail, actor, nil)
 		}
 	}
+}
+
+// recipeKeeperTombstone records that a grocery row (addressed by its
+// collapse key) was deleted locally, so any Recipe Keeper rows linked to it
+// get a delete pushed on the next reconcile and are not re-imported in the
+// meantime. A no-op — and safe to call unconditionally from call sites that
+// already guard on a.RecipeKeeper themselves — when the integration is off.
+// Failures are logged, not surfaced: the grocery mutation itself must
+// succeed even if Recipe Keeper bookkeeping fails.
+func (a *App) recipeKeeperTombstone(name string, checked bool) {
+	if a.RecipeKeeper == nil {
+		return
+	}
+	if err := a.RecipeKeeper.Rec.TombstoneLinks(name, checked); err != nil {
+		log.Printf("recipekeeper: tombstone: %v", err)
+	}
+}
+
+// recipeKeeperKick fires an out-of-band reconcile after a mutation touched
+// Recipe Keeper links, so the resulting push goes out within seconds instead
+// of waiting for the 15-minute safety timer. Delegates to
+// Service.TriggerGrocerySync, which single-flights (a burst of mutations
+// must collapse into one in-flight sync, not N concurrent ones racing on
+// PendingPushes/the watermark) and refuses to even start once the
+// auth-failure latch has tripped. Never blocks the HTTP response.
+func (a *App) recipeKeeperKick() {
+	if a.RecipeKeeper == nil {
+		return
+	}
+	a.RecipeKeeper.TriggerGrocerySync(recipekeeper.ReasonMutation)
 }
 
 // upsertSectionDefault mirrors grocery._upsert_section_default: remember the
@@ -70,12 +103,40 @@ func (a *App) loadGrocerySections() ([]models.GrocerySection, error) {
 	return sections, err
 }
 
-func grocerySectionsJSON(sections []models.GrocerySection) []J {
+// grocerySectionsJSON serializes a full response. It loads the recipe
+// attribution map once (recipeRefsByKey) rather than per item, since a
+// response can carry ~200 items.
+func grocerySectionsJSON(db *gorm.DB, sections []models.GrocerySection) []J {
+	refsByKey := recipeRefsByKey(db)
 	out := make([]J, 0, len(sections))
 	for i := range sections {
-		out = append(out, grocerySectionJSON(&sections[i]))
+		out = append(out, grocerySectionJSON(&sections[i], refsByKey))
 	}
 	return out
+}
+
+// groceryItemJSON and grocerySectionJSON (App methods, below) are
+// single-item/single-section convenience wrappers for the mutation
+// endpoints. They use recipeRefsForKey (targeted per-row queries) rather
+// than the bulk recipeRefsByKey — these are the hottest endpoints in the
+// app (add/update/move item, rename/create section), and a full-table scan
+// of every Recipe Keeper link and recipe on each of them would grow with
+// the size of the whole Recipe Keeper cache instead of with what's actually
+// being returned.
+func (a *App) groceryItemJSON(item *models.GroceryItem) J {
+	return groceryItemJSON(item, recipeRefsForKey(a.DB, item.Name, item.Checked))
+}
+
+func (a *App) grocerySectionJSON(section *models.GrocerySection) J {
+	// A section's items are few (a handful, not the ~200-item whole list),
+	// so one targeted query per item still scales with the response, not
+	// with total Recipe Keeper data.
+	refsByKey := make(map[string][]recipekeeper.RecipeRef, len(section.Items))
+	for i := range section.Items {
+		it := &section.Items[i]
+		refsByKey[recipekeeper.RowKey(it.Name, it.Checked)] = recipeRefsForKey(a.DB, it.Name, it.Checked)
+	}
+	return grocerySectionJSON(section, refsByKey)
 }
 
 func (a *App) handleListGrocery(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -84,7 +145,7 @@ func (a *App) handleListGrocery(w http.ResponseWriter, r *http.Request, _ *sessi
 		httpx.WriteError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, 200, grocerySectionsJSON(sections))
+	httpx.WriteJSON(w, 200, grocerySectionsJSON(a.DB, sections))
 }
 
 func (a *App) handleListItemDefaults(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -189,6 +250,12 @@ func (a *App) handleReplaceGrocery(w http.ResponseWriter, r *http.Request, _ *se
 	}
 
 	err := a.DB.Transaction(func(tx *gorm.DB) error {
+		// Deliberately NOT a RecipeKeeper tombstone site, even though every
+		// section (and its items) is wiped and recreated with fresh ids
+		// right here. This is an id churn, not a user delete: merge/paste,
+		// and undo/redo of delete and clear-checked/clear-all, all route
+		// through this endpoint. Tombstoning here would push a delete of the
+		// user's entire Recipe Keeper list the first time they hit undo.
 		if err := tx.Where("1 = 1").Delete(&models.GrocerySection{}).Error; err != nil {
 			return err
 		}
@@ -240,7 +307,7 @@ func (a *App) handleReplaceGrocery(w http.ResponseWriter, r *http.Request, _ *se
 		httpx.WriteError(w, err)
 		return
 	}
-	result := grocerySectionsJSON(sections)
+	result := grocerySectionsJSON(a.DB, sections)
 	replacedItems := 0
 	for _, sec := range payload.Sections {
 		replacedItems += len(sec.Items)
@@ -249,6 +316,12 @@ func (a *App) handleReplaceGrocery(w http.ResponseWriter, r *http.Request, _ *se
 		"action": "replaced", "sections": result,
 		"pushDetail": "replaced the grocery list (" + countNoun(len(payload.Sections), "section") + ", " + countNoun(replacedItems, "item") + ")",
 	}, r)
+	// No tombstones (see the comment above) — but items that survived the
+	// replace under a new id may still have RK links pointing at a
+	// resurrected row (e.g. undo-of-delete), which PendingPushes should
+	// push (IsDeleted: false) promptly rather than waiting for the safety
+	// timer.
+	a.recipeKeeperKick()
 	httpx.WriteJSON(w, 200, result)
 }
 
@@ -281,7 +354,7 @@ func (a *App) handleUpdateGrocerySection(w http.ResponseWriter, r *http.Request,
 	a.broadcast("grocery.updated", J{
 		"action": "section-renamed", "sectionId": section.ID.String(), "name": section.Name,
 	}, r)
-	httpx.WriteJSON(w, 200, grocerySectionJSON(&section))
+	httpx.WriteJSON(w, 200, a.grocerySectionJSON(&section))
 }
 
 func (a *App) handleDeleteGrocerySection(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -299,6 +372,15 @@ func (a *App) handleDeleteGrocerySection(w http.ResponseWriter, r *http.Request,
 		httpx.Detail(w, http.StatusBadRequest, "Cannot delete section with items")
 		return
 	}
+	// section.Items is guaranteed empty by the check above — this endpoint
+	// requires an empty section, unlike Travel/packing's cascade delete — so
+	// this loop is a no-op today. It stays as defense-in-depth: if that
+	// invariant is ever relaxed, items cascading away with the section would
+	// otherwise orphan their links and leave the rows stuck in Recipe Keeper
+	// forever with nothing left locally to delete them from.
+	for _, item := range section.Items {
+		a.recipeKeeperTombstone(item.Name, item.Checked)
+	}
 	if err := a.DB.Delete(&section).Error; err != nil {
 		httpx.WriteError(w, err)
 		return
@@ -307,6 +389,7 @@ func (a *App) handleDeleteGrocerySection(w http.ResponseWriter, r *http.Request,
 		"action": "section-deleted", "sectionId": section.ID.String(),
 		"pushDetail": "removed the “" + section.Name + "” section",
 	}, r)
+	a.recipeKeeperKick()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -337,7 +420,7 @@ func (a *App) handleCreateGrocerySection(w http.ResponseWriter, r *http.Request,
 		"section": J{"id": section.ID.String(), "name": section.Name, "position": section.Position, "items": []J{}},
 	}, r)
 	section.Items = []models.GroceryItem{}
-	httpx.WriteJSON(w, http.StatusCreated, grocerySectionJSON(&section))
+	httpx.WriteJSON(w, http.StatusCreated, a.grocerySectionJSON(&section))
 }
 
 func (a *App) handleReorderGrocerySections(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -465,10 +548,22 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 	}
 	var item models.GroceryItem
 	if a.DB.Where("id = ?", itemID).First(&item).Error != nil {
-		httpx.Detail(w, http.StatusNotFound, "Item not found")
+		// Recipe Keeper is a writer the client can't see: a change queued
+		// while a device was offline may land on a row RK has since deleted
+		// or split. Treat "not found" as "already applied" rather than 404 —
+		// a 404 here would burn all MAX_SYNC_ATTEMPTS client retries before
+		// the queued change is discarded, turning a benign race into a stuck
+		// sync queue. 204 (not 200 + a body) because every other success path
+		// on this handler returns a full GroceryItem and the frontend types
+		// the call as Promise<GroceryItem> — a 200 with an unrelated shape
+		// would get spread into React state and IndexedDB as undefined
+		// fields. fetchAPI already turns 204 into `undefined` with no parse.
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	oldName := item.Name
+	oldChecked := item.Checked
+	oldQty := recipekeeper.QuantityOf(&item)
 	// Write only the columns this PATCH actually changes — full-row writes
 	// let concurrent PATCHes of disjoint fields clobber each other, and a
 	// no-op must not bump updated_at (drives checked-item ordering).
@@ -490,6 +585,10 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 			}
 		}
 	}
+	// pendingConsume, when > 0, means the quantity write below was withheld
+	// because ConsumeUnits (after the batched update lands) must own it — see
+	// the comment at that call.
+	pendingConsume := 0
 	if present["quantity"] {
 		var newQuantity *string
 		if payload.Quantity != nil && *payload.Quantity != "" {
@@ -497,8 +596,32 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 		}
 		if (newQuantity == nil) != (item.Quantity == nil) ||
 			(newQuantity != nil && *newQuantity != *item.Quantity) {
-			item.Quantity = newQuantity
-			updates["quantity"] = newQuantity
+			newQty := recipekeeper.QuantityOf(&models.GroceryItem{Quantity: newQuantity})
+			// QuantityOf treats anything that isn't a clean positive integer
+			// (nil/empty included) as "1" — so a freeform value like "2 lbs"
+			// or "2.0" would otherwise look like a decrease from any oldQty
+			// > 1 and get routed to ConsumeUnits, which persists a bare
+			// integer and silently discards the user's literal text. Only
+			// delegate when the new value really is a trackable unit count.
+			isPlainQty := newQuantity == nil || *newQuantity == ""
+			if !isPlainQty {
+				if _, err := strconv.Atoi(*newQuantity); err == nil {
+					isPlainQty = true
+				}
+			}
+			if a.RecipeKeeper != nil && isPlainQty && newQty < oldQty {
+				// A decrease with Recipe Keeper enabled is not a plain
+				// column write: ConsumeUnits spends MP-only units first and
+				// only then checks off linked rows, and it persists the
+				// row's own final quantity as part of that. Writing
+				// "quantity" here too would double-decrement — this PATCH
+				// would set it to newQty, then ConsumeUnits would subtract
+				// the same delta again from that already-reduced value.
+				pendingConsume = oldQty - newQty
+			} else {
+				item.Quantity = newQuantity
+				updates["quantity"] = newQuantity
+			}
 		}
 	}
 	if present["store_id"] {
@@ -545,10 +668,52 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 		}
 	}
 	a.DB.Where("id = ?", itemID).First(&item)
+
+	// consumeTouchedSecondRow is set when ConsumeUnits created or modified a
+	// checked sibling row as a side effect (the common case — see its own
+	// doc comment). That row exists in the database now but no client has
+	// been told about it; the broadcast below must not claim otherwise.
+	consumeTouchedSecondRow := false
+	if a.RecipeKeeper != nil {
+		// Links are keyed by (name, checked) — Meal Planner mutates the row
+		// in place, so renaming or checking must retarget any link to follow
+		// it. Retarget BEFORE consuming: ConsumeUnits looks up links under
+		// the item's CURRENT (name, checked), and a PATCH can rename and
+		// decrease quantity in the same request.
+		if item.Name != oldName || item.Checked != oldChecked {
+			if err := a.RecipeKeeper.Rec.RetargetLinks(oldName, oldChecked, item.Name, item.Checked); err != nil {
+				log.Printf("recipekeeper: retarget links: %v", err)
+			}
+		}
+		if pendingConsume > 0 {
+			touched, err := a.RecipeKeeper.Rec.ConsumeUnits(item.ID, pendingConsume)
+			if err != nil {
+				log.Printf("recipekeeper: consume units: %v", err)
+			}
+			consumeTouchedSecondRow = touched
+			// ConsumeUnits persists the row's reduced quantity itself (and
+			// may have deleted it once fully consumed, or created its
+			// checked sibling) — reload so the broadcast and response
+			// reflect the post-consume state.
+			a.DB.Where("id = ?", itemID).First(&item)
+		}
+	}
+
 	// Check/uncheck and renames get precise phrasing; the generic derivation
 	// ("updated X") covers quantity/store tweaks.
 	updatePayload := J{
-		"action": "item-updated", "sectionId": item.SectionID.String(), "item": groceryItemJSON(&item),
+		"sectionId": item.SectionID.String(), "item": a.groceryItemJSON(&item),
+	}
+	if consumeTouchedSecondRow {
+		// ConsumeUnits touched a checked sibling row this event says nothing
+		// about — "4 needed, got 1" must not leave the new "(1) Lemon"
+		// checked row invisible until an unrelated refetch. Omitting
+		// "action" triggers the documented fallback: every hook (and the
+		// cache warmer) does a full refetch when the action is missing,
+		// which is the simplest way to guarantee the client ends up correct
+		// without teaching this handler to build a second item-added delta.
+	} else {
+		updatePayload["action"] = "item-updated"
 	}
 	if _, ok := updates["checked"]; ok {
 		verb := "unchecked"
@@ -560,7 +725,17 @@ func (a *App) handleUpdateGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 		updatePayload["pushDetail"] = "renamed “" + oldName + "” to “" + item.Name + "”"
 	}
 	a.broadcast("grocery.updated", updatePayload, r)
-	httpx.WriteJSON(w, 200, groceryItemJSON(&item))
+	a.recipeKeeperKick()
+	response := a.groceryItemJSON(&item)
+	if consumeTouchedSecondRow {
+		// The acting client's own SSE event is self-filtered by source_id
+		// (see useRealtime.ts), so it never receives the actionless-event
+		// "something beyond this row changed, refetch" signal every OTHER
+		// client gets from the broadcast above. Surface the same fact
+		// directly on the response so the acting client can refetch itself.
+		response["second_row_changed"] = true
+	}
+	httpx.WriteJSON(w, 200, response)
 }
 
 func (a *App) handleAddGroceryItem(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -628,9 +803,9 @@ func (a *App) handleAddGroceryItem(w http.ResponseWriter, r *http.Request, _ *se
 		return
 	}
 	a.broadcast("grocery.updated", J{
-		"action": "item-added", "sectionId": item.SectionID.String(), "item": groceryItemJSON(&item),
+		"action": "item-added", "sectionId": item.SectionID.String(), "item": a.groceryItemJSON(&item),
 	}, r)
-	httpx.WriteJSON(w, 200, groceryItemJSON(&item))
+	httpx.WriteJSON(w, 200, a.groceryItemJSON(&item))
 }
 
 func (a *App) handleMoveGroceryItem(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -697,9 +872,9 @@ func (a *App) handleMoveGroceryItem(w http.ResponseWriter, r *http.Request, _ *s
 		"action":        "item-moved",
 		"fromSectionId": oldSectionID.String(),
 		"toSectionId":   item.SectionID.String(),
-		"item":          groceryItemJSON(&item),
+		"item":          a.groceryItemJSON(&item),
 	}, r)
-	httpx.WriteJSON(w, 200, groceryItemJSON(&item))
+	httpx.WriteJSON(w, 200, a.groceryItemJSON(&item))
 }
 
 func (a *App) handleDeleteGroceryItem(w http.ResponseWriter, r *http.Request, _ *session.UserInfo) {
@@ -714,6 +889,10 @@ func (a *App) handleDeleteGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 		return
 	}
 	sectionID := item.SectionID
+	// Tombstone before the row is deleted — the link rows are addressed by
+	// collapse key, not a DB foreign key, so they would silently orphan once
+	// the item is gone.
+	a.recipeKeeperTombstone(item.Name, item.Checked)
 	if err := a.DB.Delete(&item).Error; err != nil {
 		httpx.WriteError(w, err)
 		return
@@ -722,6 +901,7 @@ func (a *App) handleDeleteGroceryItem(w http.ResponseWriter, r *http.Request, _ 
 		"action": "item-deleted", "sectionId": sectionID.String(), "itemId": itemID.String(),
 		"pushDetail": "removed “" + item.Name + "”",
 	}, r)
+	a.recipeKeeperKick()
 	httpx.WriteJSON(w, 200, J{"status": "deleted"})
 }
 
@@ -732,11 +912,28 @@ func (a *App) handleClearGroceryItems(w http.ResponseWriter, r *http.Request, _ 
 		return
 	}
 	if mode == "all" {
+		// Every item in the list is about to go — tombstone them all before
+		// the cascading section delete. A local-only clear would otherwise
+		// resurrect on the next Recipe Keeper pull.
+		if a.RecipeKeeper != nil {
+			var items []models.GroceryItem
+			a.DB.Find(&items)
+			for _, item := range items {
+				a.recipeKeeperTombstone(item.Name, item.Checked)
+			}
+		}
 		if err := a.DB.Where("1 = 1").Delete(&models.GrocerySection{}).Error; err != nil {
 			httpx.WriteError(w, err)
 			return
 		}
 	} else {
+		if a.RecipeKeeper != nil {
+			var items []models.GroceryItem
+			a.DB.Where("checked = ?", true).Find(&items)
+			for _, item := range items {
+				a.recipeKeeperTombstone(item.Name, item.Checked)
+			}
+		}
 		if err := a.DB.Where("checked = ?", true).Delete(&models.GroceryItem{}).Error; err != nil {
 			httpx.WriteError(w, err)
 			return
@@ -759,5 +956,6 @@ func (a *App) handleClearGroceryItems(w http.ResponseWriter, r *http.Request, _ 
 		action = "cleared-all"
 	}
 	a.broadcast("grocery.updated", J{"action": action}, r)
-	httpx.WriteJSON(w, 200, grocerySectionsJSON(sections))
+	a.recipeKeeperKick()
+	httpx.WriteJSON(w, 200, grocerySectionsJSON(a.DB, sections))
 }

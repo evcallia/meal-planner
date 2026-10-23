@@ -302,6 +302,108 @@ describe('useGroceryList', () => {
     expect(item.quantity).toBe('5');
   });
 
+  // Recipe Keeper: a quantity decrease routes through server-side
+  // ConsumeUnits, which recomputes both the row's quantity AND its linked
+  // recipes' unit counts — the response can legitimately differ from the
+  // plain PATCH we optimistically applied. This is the "one recipe accounts
+  // for the whole item" case: no sibling row is involved, so applying the
+  // response must not trigger a refetch.
+  it('editItem applies a decrement response\'s recipes without a refetch', async () => {
+    mockGetGroceryList.mockResolvedValue([
+      {
+        id: 's1', name: 'Produce', position: 0,
+        items: [
+          {
+            id: 'i1', section_id: 's1', name: 'Lemon', quantity: '4', checked: false,
+            position: 0, store_id: null, updated_at: '2026-01-01T00:00:00Z',
+            recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 4 }],
+          },
+        ],
+      },
+    ]);
+    const { result } = renderHook(() => useGroceryList());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(mockGetGroceryList).toHaveBeenCalledTimes(1);
+
+    mockEditAPI.mockResolvedValue({
+      id: 'i1', section_id: 's1', name: 'Lemon', quantity: '1',
+      checked: false, position: 0, store_id: null, updated_at: '2026-01-02T00:00:00Z',
+      recipes: [{ id: 'r1', title: 'Fig Cocktail', count: 1 }],
+    });
+
+    await act(async () => {
+      await result.current.editItem('i1', { quantity: '1' });
+    });
+
+    const item = result.current.sections[0].items.find(i => i.id === 'i1')!;
+    expect(item.quantity).toBe('1');
+    expect(item.recipes).toEqual([{ id: 'r1', title: 'Fig Cocktail', count: 1 }]);
+    expect(mockGetGroceryList).toHaveBeenCalledTimes(1);
+  });
+
+  // The "4 needed, got 1" case: ConsumeUnits created/modified a checked
+  // sibling row the PATCH response says nothing about. The server flags this
+  // with second_row_changed so the acting client — whose own SSE event is
+  // self-filtered by source_id and would otherwise never learn about it —
+  // can refetch directly instead of leaving the sibling row invisible until
+  // a manual refresh.
+  it('editItem refetches exactly once when the server signals a touched sibling row', async () => {
+    const { result } = renderHook(() => useGroceryList());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(mockGetGroceryList).toHaveBeenCalledTimes(1);
+
+    mockEditAPI.mockResolvedValue({
+      id: 'i1', section_id: 's1', name: 'Bananas', quantity: '1',
+      checked: false, position: 0, store_id: null, updated_at: '2026-01-02T00:00:00Z',
+      recipes: [], second_row_changed: true,
+    });
+
+    await act(async () => {
+      await result.current.editItem('i1', { quantity: '1' });
+    });
+
+    await waitFor(() => expect(mockGetGroceryList).toHaveBeenCalledTimes(2));
+  });
+
+  // An edit whose response carries nothing beyond what the responded row
+  // already reflects (no store/quantity/recipes change, no second_row_changed)
+  // must NOT trigger a refetch — the common case of renaming an item or
+  // nudging quantity on an item with no Recipe Keeper links.
+  it('editItem does not refetch when nothing beyond the responded row changed', async () => {
+    const { result } = renderHook(() => useGroceryList());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(mockGetGroceryList).toHaveBeenCalledTimes(1);
+
+    mockEditAPI.mockResolvedValue({
+      id: 'i1', section_id: 's1', name: 'Green Bananas', quantity: '2',
+      checked: false, position: 0, store_id: null, updated_at: '2026-01-02T00:00:00Z',
+    });
+
+    await act(async () => {
+      await result.current.editItem('i1', { name: 'green bananas' });
+    });
+
+    expect(mockGetGroceryList).toHaveBeenCalledTimes(1);
+  });
+
+  // A PATCH to a row Recipe Keeper deleted behind Meal Planner's back
+  // returns 204 (undefined) — must not crash, and must not refetch since
+  // there is nothing to key a "second row" signal off of.
+  it('editItem tolerates a 204 (item already gone) response without crashing', async () => {
+    const { result } = renderHook(() => useGroceryList());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    mockEditAPI.mockResolvedValue(undefined);
+
+    await act(async () => {
+      await result.current.editItem('i1', { quantity: '5' });
+    });
+
+    const item = result.current.sections[0].items.find(i => i.id === 'i1')!;
+    expect(item.quantity).toBe('5');
+    expect(mockGetGroceryList).toHaveBeenCalledTimes(1);
+  });
+
   it('clearChecked removes checked items and empty sections', async () => {
     // Set up with a checked item
     mockGetGroceryList.mockResolvedValue([

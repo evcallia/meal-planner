@@ -699,5 +699,6 @@ func AllModels() []any {
 		&PackingList{}, &PackingShare{}, &PackingListPosition{}, &PackingBag{}, &PackingSection{}, &PackingItem{},
 		&PushSubscription{}, &VapidKeyPair{},
 		&ActivityLog{}, &ActivitySeen{}, &DueDigest{},
+		&RecipeKeeperLink{}, &RecipeKeeperRecipe{}, &RecipeKeeperTombstone{}, &RecipeKeeperState{},
 	}
 }

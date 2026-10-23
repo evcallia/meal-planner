@@ -1,11 +1,18 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import { Store, ItemDefaultEntry } from '../types';
+import { createPortal } from 'react-dom';
+import { Store, ItemDefaultEntry, RecipeRef } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { StoreAutocomplete } from './StoreAutocomplete';
 import { ItemAutocomplete } from './ItemAutocomplete';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
+import { useCommitOnKeyboardDismiss } from '../hooks/useCommitOnKeyboardDismiss';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
+import { closeOnBlurOutside } from '../utils/closeOnBlurOutside';
 import { getEditHighlight } from '../utils/editHighlightColors';
+import { parseQuantity } from '../utils/quantity';
+import { useOptionalUndo } from '../contexts/UndoContext';
+import { useItemFlash } from '../hooks/useItemFlash';
+import { flashItems } from '../utils/recentFlash';
 
 // Presentational building blocks shared by the Grocery tab and the Lists
 // (packing) tab. Both are "sectioned checklist with a chip per item", so the
@@ -26,6 +33,9 @@ export interface ChecklistItem {
   quantity: string | null;
   checked: boolean;
   position: number;
+  // Grocery-only (Recipe Keeper attribution); Lists/Travel items never set
+  // this, so it's always absent there and the recipe line never renders.
+  recipes?: RecipeRef[];
 }
 
 export interface ChecklistSectionLike {
@@ -66,6 +76,13 @@ export function SectionCombobox({ sections, value, onChange }: {
     return () => document.removeEventListener('mousedown', close);
   }, [open]);
 
+  // Every button in here is tabIndex={-1} on purpose. WebKit's keyboard
+  // previous/next walks raw focusable order and stops at the first element
+  // that isn't a text field, so this component's own clear ✕ — rendered
+  // between the section input and whatever follows — made the store/tag
+  // field unreachable from the keyboard in the PWA, while Firefox (which
+  // skips non-field controls) walked all three fields fine. They stay
+  // clickable; only tab order changes.
   return (
     <div ref={containerRef} className="relative">
       <input
@@ -80,6 +97,7 @@ export function SectionCombobox({ sections, value, onChange }: {
       />
       {value.trim() && (
         <button
+          tabIndex={-1}
           type="button"
           onMouseDown={e => e.preventDefault()}
           onClick={() => { onChange(''); setOpen(true); sectionInputRef.current?.focus(); }}
@@ -95,6 +113,7 @@ export function SectionCombobox({ sections, value, onChange }: {
         <div className="absolute left-0 right-0 top-full mt-1 glass-menu rounded-lg shadow-lg z-20 max-h-40 overflow-y-auto">
           {matches.map(s => (
             <button
+              tabIndex={-1}
               key={s.id}
               type="button"
               onMouseDown={e => e.preventDefault()}
@@ -128,6 +147,145 @@ export function MenuRadioOption({ label, active, onClick }: { label: string; act
   );
 }
 
+// ----- recipe vs. store visual language -----
+//
+// Stores/bags are solid-filled chips (StoreFilterBar's default styling);
+// recipes are outlined chips led by this icon, both in the filter bar and on
+// the item row's recipe line. The pairing (icon + outline vs. solid fill) is
+// the whole point — it must not depend on color alone, so it survives
+// greyscale and colorblind viewing. Purely decorative (aria-hidden): the
+// surrounding button/label already carries the accessible name.
+export function RecipeIcon({ className = 'w-3 h-3' }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      data-testid="recipe-icon"
+      className={`${className} shrink-0 pointer-events-none`}
+      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M8 3v6M12 3v6M16 3v6M8 9h8M12 9v12" />
+    </svg>
+  );
+}
+
+// ----- recipe attribution line + all-recipes popover -----
+
+// Units on the item that aren't linked to any recipe (see CLAUDE.md "Recipe
+// Keeper Sync" — quantity is authoritative, links are a subset of it).
+// Rendered as a final unlabelled "No recipe (N)" row in the popover so the
+// count still adds up to the item's full quantity.
+//
+// Must subtract the SUM of each ref's `count`, not `recipes.length` —
+// Recipe Keeper stores one link per recipe-ingredient occurrence, so an item
+// added to the same recipe six times collapses to ONE ref with count 6.
+// Using the ref count there produced a phantom "No recipe" row for an item
+// that was fully accounted for (e.g. quantity 6, one recipe, `6 - 1 = 5`).
+function mpOnlyUnits(quantity: string | null, recipes: RecipeRef[]): number {
+  const linked = recipes.reduce((sum, r) => sum + (r.count ?? 1), 0);
+  return Math.max(0, parseQuantity(quantity) - linked);
+}
+
+/**
+ * Secondary text under an item's name naming which recipe(s) it came from,
+ * truncated to two names plus "+N". Tapping opens a popover listing every
+ * recipe — required, not decorative, since truncation with no way to see the
+ * rest defeats the point of attribution.
+ *
+ * Portals to <body> with fixed coordinates rather than rendering inline:
+ * `.glass` gives every card its own stacking context (backdrop-filter does
+ * that), so a nested popover would paint under later sibling cards and the
+ * fixed bottom nav where it can't be tapped. Same pattern as the Lists-tab
+ * per-section menu (PackingListsView's SectionMenu).
+ */
+function RecipeLine({ recipes, quantity, hidden }: { recipes: RecipeRef[]; quantity: string | null; hidden?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+
+  const place = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const POPOVER_WIDTH = 240;
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - POPOVER_WIDTH - 8));
+    const POPOVER_MAX = 280;
+    if (window.innerHeight - rect.bottom < POPOVER_MAX) {
+      setPos({ bottom: window.innerHeight - rect.top + 6, left });
+    } else {
+      setPos({ top: rect.bottom + 6, left });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    place();
+    const onPointerDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (popRef.current?.contains(t) || buttonRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const reposition = () => place();
+    document.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [open, place]);
+
+  if (hidden || recipes.length === 0) return null;
+
+  const shown = recipes.slice(0, 2).map(r => r.title);
+  const extra = recipes.length - shown.length;
+  const label = shown.join(', ') + (extra > 0 ? ` +${extra}` : '');
+  const noRecipeCount = mpOnlyUnits(quantity, recipes);
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        data-testid="recipe-chip"
+        aria-label={`Recipe: ${label}`}
+        // The row's onClick starts rename editing — this must not bubble.
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        className="flex items-center gap-1 max-w-full text-left text-xs text-gray-400 dark:text-gray-500 leading-tight hover:text-gray-600 dark:hover:text-gray-300"
+      >
+        <RecipeIcon className="w-2.5 h-2.5" />
+        <span className="truncate min-w-0">{label}</span>
+      </button>
+      {open && pos && createPortal(
+        <div
+          ref={popRef}
+          data-testid="recipe-popover"
+          role="dialog"
+          style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left }}
+          className="z-60 glass-menu rounded-lg py-1 min-w-[180px] max-w-[240px] max-h-[60vh] overflow-y-auto shadow-lg"
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+            Recipes
+          </div>
+          {recipes.map(r => (
+            <div key={r.id} className="px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 truncate">
+              {r.title}{(r.count ?? 1) > 1 ? ` ×${r.count}` : ''}
+            </div>
+          ))}
+          {noRecipeCount > 0 && (
+            <div className="px-3 py-1.5 text-sm text-gray-400 dark:text-gray-500 border-t border-gray-200 dark:border-gray-700 mt-1 pt-1.5">
+              No recipe ({noRecipeCount})
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 // ----- item row -----
 
 export interface ChecklistItemRowProps {
@@ -154,6 +312,22 @@ export interface ChecklistItemRowProps {
   hideChips?: boolean;
   /** Lists let you fix a typo on an already-completed item; grocery doesn't. */
   allowEditWhenChecked?: boolean;
+  /** Grocery only: "Hide recipes" drops the per-item recipe line (and the
+   *  filter chips) without touching what's filtered. */
+  hideRecipes?: boolean;
+  /** Identity used to match against `editingItemId` for THIS rendered copy
+   *  of the row. Defaults to `item.id`, which is correct whenever an item
+   *  renders exactly once (grocery sections, flat/"none" view, Lists/
+   *  packing). Grocery's group-by-recipe view renders a collapsed item once
+   *  per recipe it belongs to, so it passes a composite key (e.g.
+   *  `${group.id}-${item.id}`) per copy — only the tapped copy then matches
+   *  editingItemId and mounts an edit form, so two copies can never both
+   *  satisfy the comparison and stomp the shared commitEditingRef. It also
+   *  means editingItemId left over from a different view (a bare item id,
+   *  or a different view's composite key) never coincidentally matches
+   *  here, so a stale edit never appears mounted after switching views
+   *  without committing. */
+  editId?: string;
 }
 
 export function ChecklistItemRow({
@@ -161,11 +335,12 @@ export function ChecklistItemRow({
   chips, chipId, onCreateChip, chipPlaceholder,
   editingItemId, onEditingItemChange, commitEditingRef,
   sectionName, allSections, onChangeSection, editHighlightColor,
-  hideChips = false, allowEditWhenChecked = false,
+  hideChips = false, allowEditWhenChecked = false, hideRecipes = false, editId,
 }: ChecklistItemRowProps) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwipeRevealed, setIsSwipeRevealed] = useState(false);
-  const isEditing = editingItemId === item.id;
+  const rowEditId = editId ?? item.id;
+  const isEditing = editingItemId === rowEditId;
   const [editName, setEditName] = useState(item.name);
   const [editQuantity, setEditQuantity] = useState(item.quantity ?? '');
   const [editChipId, setEditChipId] = useState<string | null>(chipId);
@@ -173,8 +348,19 @@ export function ChecklistItemRow({
   const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const swipeModeRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const editFormRef = useRef<HTMLDivElement>(null);
+  // A <form>, not a <div>: iOS's keyboard shows previous/next arrows that
+  // walk the fields sharing a FORM OWNER. Without a form element the grouping
+  // is left to Safari's heuristics, which linked the name and category boxes
+  // but not the store/tag one, so there was no way to reach it from the
+  // keyboard. `input.form` is what the arrows key off, and only a <form>
+  // ancestor sets it.
+  const editFormRef = useRef<HTMLFormElement>(null);
   useScrollIntoViewOnEdit(editFormRef, isEditing);
+
+  // Nonzero while this row is the one that just changed. Read from the store
+  // rather than a prop: an undo can land on any row, including one the user
+  // is not looking at, and nothing in the tree above knows which.
+  const flashKey = useItemFlash(item.id);
 
   const chipName = chips?.find(s => s.id === chipId)?.name;
 
@@ -182,6 +368,10 @@ export function ChecklistItemRow({
   const SWIPE_MAX = 80;
 
   const commitEditRef = useRef<(() => void) | null>(null) as React.MutableRefObject<(() => void) | null>;
+  // Grouped when an UndoProvider is in scope (always, in the app); run
+  // straight through when there isn't one (bare renders in tests).
+  const undoCtx = useOptionalUndo();
+  const runAsUndoGroup = undoCtx?.runAsUndoGroup ?? (async (_type: string, fn: () => void | Promise<void>) => { await fn(); });
 
   const exitEditMode = useCallback(() => {
     const anchor = (editFormRef.current?.closest('[data-drag-index]') ?? editFormRef.current) as HTMLElement | null;
@@ -194,8 +384,8 @@ export function ChecklistItemRow({
     setEditQuantity(item.quantity ?? '');
     setEditChipId(chipId);
     setEditSectionName(sectionName);
-    onEditingItemChange(item.id);
-  }, [item.id, item.name, item.quantity, item.checked, chipId, sectionName, onEditingItemChange, allowEditWhenChecked]);
+    onEditingItemChange(rowEditId);
+  }, [rowEditId, item.name, item.quantity, item.checked, chipId, sectionName, onEditingItemChange, allowEditWhenChecked]);
 
   const commitEdit = useCallback(() => {
     const trimmedName = editName.trim();
@@ -211,16 +401,31 @@ export function ChecklistItemRow({
     if (newQty !== item.quantity) updates.quantity = newQty;
     if (editChipId !== chipId) updates.store_id = editChipId;
 
-    if (Object.keys(updates).length > 0) {
-      onEdit(item.id, updates);
-    }
     // Empty section box falls back to the same default category quick-add uses
     const targetSection = editSectionName.trim() || 'Default';
-    if (targetSection.toLowerCase() !== sectionName.toLowerCase()) {
-      onChangeSection(item.id, targetSection);
-    }
+    const movingSection = targetSection.toLowerCase() !== sectionName.toLowerCase();
+    // ONE undo entry for one commit. These are two mutations and each pushes
+    // its own entry, so changing a name and a category together used to take
+    // two undos and show a half-reverted item in between. Awaited in order:
+    // the edit has to land before the move, because moveItem rebuilds the
+    // whole list from its own snapshot.
+    void runAsUndoGroup('edit-grocery-item-fields', async () => {
+      if (Object.keys(updates).length > 0) {
+        await onEdit(item.id, updates);
+      }
+      if (movingSection) {
+        await onChangeSection(item.id, targetSection);
+      }
+    });
+    // Point at what changed — the row may be about to move to another
+    // category, where it is easy to lose. A save that changed nothing gets
+    // no flash: highlighting a non-change trains the eye to ignore it.
+    if (Object.keys(updates).length > 0 || movingSection) flashItems([item.id]);
     exitEditMode();
-  }, [editName, editQuantity, editChipId, editSectionName, sectionName, item.id, item.name, item.quantity, chipId, onEdit, onChangeSection, exitEditMode]);
+  }, [editName, editQuantity, editChipId, editSectionName, sectionName, item.id, item.name, item.quantity, chipId, onEdit, onChangeSection, exitEditMode, runAsUndoGroup]);
+
+  // Dismissing the keyboard with its own key saves, like tapping Save.
+  useCommitOnKeyboardDismiss(editFormRef, isEditing, commitEdit);
 
   const cancelEdit = useCallback(() => {
     exitEditMode();
@@ -248,10 +453,24 @@ export function ChecklistItemRow({
   if (isEditing) {
     const qtyNum = parseInt(editQuantity) || 0;
     return (
-      <div ref={editFormRef} className={`px-4 py-1.5 space-y-1.5 ${getEditHighlight(editHighlightColor).form}`}>
+      <form
+        ref={editFormRef}
+        // Nothing here submits — the buttons below carry type="button" and
+        // this catches every other route (implicit submission on Enter, and
+        // any untyped button inside StoreAutocomplete/SectionCombobox).
+        onSubmit={e => e.preventDefault()}
+        // On the FORM, not the name input: iOS's dismiss key fires focusout
+        // from whichever field had focus, and the quantity, section and chip
+        // fields are all part of the same edit. Blurring out of any of them
+        // commits the whole form; moving between them does not (focusout
+        // bubbles, and closeOnBlurOutside re-checks where focus landed).
+        onBlur={() => closeOnBlurOutside(editFormRef, commitEdit)}
+        className={`px-4 py-1.5 space-y-1.5 ${getEditHighlight(editHighlightColor).form}`}
+      >
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 shrink-0">
             <button
+              type="button"
               onClick={() => setEditQuantity(String(Math.max(0, qtyNum - 1) || ''))}
               className="w-7 h-7 flex items-center justify-center rounded-sm bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
             >
@@ -261,6 +480,7 @@ export function ChecklistItemRow({
               {qtyNum || '–'}
             </span>
             <button
+              type="button"
               onClick={() => setEditQuantity(String(qtyNum + 1))}
               className="w-7 h-7 flex items-center justify-center rounded-sm bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500 text-sm font-bold"
             >
@@ -295,24 +515,36 @@ export function ChecklistItemRow({
         )}
         <div className="flex items-center justify-end gap-3">
           <button
+            type="button"
             onClick={cancelEdit}
             className="text-gray-400 hover:text-gray-600 text-sm"
           >
             Cancel
           </button>
           <button
+            type="button"
             onClick={commitEdit}
             className="text-blue-500 hover:text-blue-600 text-sm font-medium"
           >
             Save
           </button>
         </div>
-      </div>
+      </form>
     );
   }
 
   return (
     <div className="relative overflow-hidden">
+      {/* Keyed on the flash number so flashing the same row again mounts a
+          fresh element: the animation ends `forwards`, so replaying it on
+          the existing one would show nothing. */}
+      {flashKey > 0 && (
+        <div
+          key={flashKey}
+          data-testid="row-flash"
+          className="absolute inset-0 pointer-events-none row-flash-edit"
+        />
+      )}
       {swipeOffset > 0 && (
         <div className="absolute inset-y-0 right-0 flex items-center" style={{ width: SWIPE_MAX }}>
           <button
@@ -439,6 +671,7 @@ export function ChecklistItemRow({
               {chipName}
             </div>
           )}
+          <RecipeLine recipes={item.recipes ?? []} quantity={item.quantity} hidden={hideRecipes} />
         </div>
 
         {/* Desktop delete button */}
@@ -482,6 +715,11 @@ export interface ChecklistSectionCardProps {
   onStartAdd: (sectionId: string | null) => void;
   newItemName: string;
   onNewItemNameChange: (name: string) => void;
+  /** Store (grocery) / tag (Lists) for the inline add form. Shown as a second
+   *  line so the auto-populated value is visible and can be overridden before
+   *  adding — it used to be applied invisibly from the item defaults. */
+  newItemChipId: string | null;
+  onNewItemChipChange: (chipId: string | null) => void;
   onAddItem: (sectionId: string) => void;
   chips: Store[];
   chipIdFor: (item: ChecklistItem) => string | null;
@@ -499,6 +737,7 @@ export interface ChecklistSectionCardProps {
   hideChips?: boolean;
   itemDragEnabled?: boolean;
   allowEditWhenChecked?: boolean;
+  hideRecipes?: boolean;
   /** Replaces the default "N items" header label (Lists shows "3/7 completed"). */
   headerMeta?: React.ReactNode;
   /** Optional controls in the header, left of the count (Lists puts its
@@ -527,6 +766,8 @@ export function ChecklistSectionCard({
   onStartAdd,
   newItemName,
   onNewItemNameChange,
+  newItemChipId,
+  onNewItemChipChange,
   onAddItem,
   chips,
   chipIdFor,
@@ -544,13 +785,20 @@ export function ChecklistSectionCard({
   hideChips = false,
   itemDragEnabled = true,
   allowEditWhenChecked = false,
+  hideRecipes = false,
   headerMeta,
   headerActions,
 }: ChecklistSectionCardProps) {
+  const sectionRef = useRef<HTMLDivElement>(null);
   const itemContainerRef = useRef<HTMLDivElement>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameValue, setEditNameValue] = useState(section.name);
   const headerInputRef = useRef<HTMLInputElement>(null);
+  const addInputRef = useRef<HTMLInputElement>(null);
+  // See the note on the edit row's editFormRef: a <form> is what gives the
+  // keyboard's previous/next arrows a field set to walk.
+  const addFormRef = useRef<HTMLFormElement>(null);
+  useScrollIntoViewOnEdit(addFormRef, addingToSection === section.id);
 
   const commitRename = useCallback(() => {
     const trimmed = editNameValue.trim();
@@ -559,6 +807,45 @@ export function ChecklistSectionCard({
     }
     setIsEditingName(false);
   }, [editNameValue, section.id, section.name, onRenameSection]);
+
+  // Add stays open after a successful add (rapid entry) instead of unmounting
+  // the still-focused input — that unmount is what triggers iOS's visual-
+  // viewport "jump to top" bug. The Add button's onMouseDown below prevents
+  // the default focus-shift so the input (and the iOS keyboard) never loses
+  // focus in the first place — the real fix, since a `.focus()` call after
+  // an await can't reopen a keyboard iOS already closed outside a user-
+  // gesture context. This `.focus()` is now just belt-and-braces (e.g. in
+  // case something else ever steals focus during the add) — harmless since
+  // the input never unmounts here, so it's a no-op the rest of the time.
+  const handleAdd = useCallback(() => {
+    Promise.resolve(onAddItem(section.id)).then(() => {
+      addInputRef.current?.focus();
+    });
+  }, [onAddItem, section.id]);
+
+  // Cancel / Escape still unmount the form, so anchor the scroll position on
+  // the section itself across that change (see exitEditAnchored).
+  const closeAdd = useCallback(() => {
+    exitEditAnchored(sectionRef.current, () => onStartAdd(null));
+  }, [onStartAdd]);
+
+  // Dismissing the keyboard (or otherwise moving focus out of the form)
+  // ADDS what was typed, then closes. It used to just close and leave the
+  // text for next time, which read as "my item vanished" — the Add button
+  // was the only thing that worked. Closing matters as much as adding: a
+  // form left mounted with the keyboard gone is the one state whose scroll
+  // position cannot be held, and exitEditAnchored needs the unmount.
+  const commitAddAndClose = useCallback(() => {
+    if (!newItemName.trim()) {
+      closeAdd();
+      return;
+    }
+    Promise.resolve(onAddItem(section.id)).finally(closeAdd);
+  }, [newItemName, onAddItem, section.id, closeAdd]);
+
+  // The other half of the dismiss key, for a device that keeps focus and only
+  // grows the viewport back (see the edit row).
+  useCommitOnKeyboardDismiss(addFormRef, addingToSection === section.id, commitAddAndClose);
 
   useEffect(() => {
     if (isEditingName && headerInputRef.current) {
@@ -577,7 +864,7 @@ export function ChecklistSectionCard({
   });
 
   return (
-    <div className="glass rounded-lg">
+    <div ref={sectionRef} className="glass rounded-lg">
       {/* Section Header -- long-press to drag section */}
       <div
         className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between px-4 py-2 rounded-t-lg"
@@ -676,6 +963,7 @@ export function ChecklistSectionCard({
                   onChangeSection={onChangeSection}
                   hideChips={hideChips}
                   allowEditWhenChecked={allowEditWhenChecked}
+                  hideRecipes={hideRecipes}
                 />
               </div>
             );
@@ -689,7 +977,17 @@ export function ChecklistSectionCard({
 
           {/* Add item inline */}
           {addingToSection === section.id ? (
-            <div className="flex items-center gap-2 px-4 py-2">
+            <form
+              ref={addFormRef}
+              data-testid="inline-add-form"
+              onSubmit={e => e.preventDefault()}
+              // On the FORM, not the name input: the store/tag line is part
+              // of the same add, and with the handler on the input a
+              // dismissal from that field fired nothing and dropped the item.
+              onBlur={() => closeOnBlurOutside(addFormRef, commitAddAndClose)}
+              className="px-4 py-2 space-y-1.5"
+            >
+              <div className="flex items-center gap-2">
               <ItemAutocomplete
                 value={newItemName}
                 onChange={name => onNewItemNameChange(name)}
@@ -701,25 +999,39 @@ export function ChecklistSectionCard({
                 onDelete={onDeleteItemDefault}
                 placeholder="Item name..."
                 autoFocus
+                inputRef={addInputRef}
                 onKeyDown={e => {
-                  if (e.key === 'Enter') onAddItem(section.id);
-                  if (e.key === 'Escape') onStartAdd(null);
+                  if (e.key === 'Enter') handleAdd();
+                  if (e.key === 'Escape') closeAdd();
                 }}
                 className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
               />
               <button
-                onClick={() => onAddItem(section.id)}
+                type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={handleAdd}
                 className="text-blue-500 hover:text-blue-600 text-sm font-medium"
               >
                 Add
               </button>
               <button
-                onClick={() => onStartAdd(null)}
+                type="button"
+                onClick={closeAdd}
                 className="text-gray-400 hover:text-gray-600 text-sm"
               >
                 Cancel
               </button>
-            </div>
+              </div>
+              {!hideChips && (
+                <StoreAutocomplete
+                  stores={chips}
+                  selectedStoreId={newItemChipId}
+                  onSelect={onNewItemChipChange}
+                  onCreate={onCreateChip}
+                  placeholder={chipPlaceholder}
+                />
+              )}
+            </form>
           ) : (
             <button
               onClick={() => onStartAdd(section.id)}

@@ -10,13 +10,16 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"mealplanner/internal/config"
 	"mealplanner/internal/db"
 	"mealplanner/internal/ical"
+	"mealplanner/internal/models"
 	"mealplanner/internal/realtime"
+	"mealplanner/internal/recipekeeper"
 )
 
 // Mock user matching conftest.mock_user.
@@ -188,6 +191,80 @@ func (c *Collector) Events() []map[string]any {
 			c.b.Unsubscribe(c.sub)
 			return out
 		}
+	}
+}
+
+// seedRecipeKeeperLink writes a RecipeKeeperLink + RecipeKeeperRecipe pair
+// directly, mirroring what the sync loop's Reconciler would persist. Links
+// address grocery rows by collapse key (MPName/MPChecked), never by grocery
+// item id — see models.RecipeKeeperLink.
+func seedRecipeKeeperLink(t *testing.T, ta *testApp, itemName string, checked bool, rkItemID, recipeID, title string) {
+	t.Helper()
+	seedRecipeKeeperLinkAt(t, ta, itemName, checked, rkItemID, recipeID, title, 0)
+}
+
+// seedRecipeKeeperLinkAt is seedRecipeKeeperLink with an explicit rk_position,
+// for tests that need to control ordering across multiple links on the same
+// collapse key (recipeRefsByKey/recipeRefsForKey both order by rk_position
+// asc, not insertion order).
+func seedRecipeKeeperLinkAt(t *testing.T, ta *testApp, itemName string, checked bool, rkItemID, recipeID, title string, rkPosition int) {
+	t.Helper()
+	rid := recipeID
+	link := models.RecipeKeeperLink{
+		RKItemID:       rkItemID,
+		MPName:         strings.ToLower(strings.TrimSpace(itemName)),
+		MPChecked:      checked,
+		RKRecipeID:     &rid,
+		RKName:         itemName,
+		RKChecked:      checked,
+		RKPosition:     rkPosition,
+		RKLastModified: "2026-09-14T00:00:00.0000001Z",
+	}
+	if err := ta.App.DB.Create(&link).Error; err != nil {
+		t.Fatalf("seed recipe keeper link: %v", err)
+	}
+	// RKRecipeID may repeat across links (same recipe, different ingredient
+	// rows) — Save() upserts by primary key so a second call for the same
+	// recipe id is a no-op rather than a duplicate-key error.
+	recipe := models.RecipeKeeperRecipe{RKRecipeID: recipeID, Title: title}
+	if err := ta.App.DB.Save(&recipe).Error; err != nil {
+		t.Fatalf("seed recipe keeper recipe: %v", err)
+	}
+}
+
+// enableRecipeKeeper wires ta.App.RecipeKeeper to a real Reconciler backed by
+// the test DB, so handler code guarded on `a.RecipeKeeper != nil` actually
+// runs. Client/Auth point at a local server that always answers 401 rather
+// than being left nil or pointed at a dead address: every RecipeKeeper-facing
+// handler fires a detached recipeKeeperKick() goroutine that calls
+// SyncOnce -> Client.Sync -> Auth.Token, and a nil Client/Auth would
+// nil-pointer-panic that goroutine — which crashes the whole test binary,
+// not just the test. A fast, deterministic 401 keeps that goroutine harmless
+// without needing a fully-functional fake API.
+func enableRecipeKeeper(t *testing.T, ta *testApp) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	authr := &recipekeeper.Authenticator{
+		BaseURL: srv.URL, Username: "test", Password: "test", HTTP: &http.Client{},
+	}
+	rec := &recipekeeper.Reconciler{DB: ta.App.DB}
+	rec.SetListID("test-list")
+	ta.App.RecipeKeeper = &recipekeeper.Service{
+		DB:     ta.App.DB,
+		Rec:    rec,
+		Client: recipekeeper.NewClient(srv.URL, authr, recipekeeper.Headers{}, nil),
+	}
+	// Service.SyncOnce refreshes Rec's list id from recipe_keeper_state at the
+	// start of every cycle and skips the whole cycle when none is selected
+	// (see loop.go) — persist the same "test-list" selection so the
+	// background recipeKeeperKick() goroutines these handler tests trigger
+	// still reach the fake server above, exactly as before this state lived
+	// only on the Reconciler struct.
+	if err := ta.App.DB.Save(&models.RecipeKeeperState{Key: "selected_list_id", Value: "test-list"}).Error; err != nil {
+		t.Fatalf("seed recipe keeper selected list state: %v", err)
 	}
 }
 

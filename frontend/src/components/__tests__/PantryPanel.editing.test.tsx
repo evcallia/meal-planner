@@ -1,6 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { PantryPanel } from '../PantryPanel';
+import { exitEditAnchored } from '../../utils/exitEditAnchored';
+
+vi.mock('../../utils/exitEditAnchored', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/exitEditAnchored')>();
+  return { exitEditAnchored: vi.fn(actual.exitEditAnchored) };
+});
 
 const mockAddSection = vi.fn();
 const mockDeleteSection = vi.fn();
@@ -13,6 +20,7 @@ const mockReorderSections = vi.fn();
 const mockReorderItems = vi.fn();
 const mockRenameSection = vi.fn();
 const mockMoveItem = vi.fn();
+const mockRenameItem = vi.fn();
 
 let mockSections: any[] = [];
 let mockLoading = false;
@@ -25,6 +33,7 @@ vi.mock('../../hooks/usePantry', () => ({
     deleteSection: mockDeleteSection,
     addItem: mockAddItem,
     updateItem: mockUpdateItem,
+    renameItem: mockRenameItem,
     adjustQuantity: mockAdjustQuantity,
     removeItem: mockRemoveItem,
     clearAll: mockClearAll,
@@ -68,7 +77,10 @@ describe('PantryPanel - editing flows', () => {
     expect(screen.getByText('Save')).toBeInTheDocument();
   });
 
-  it('editing name and saving calls updateItem', () => {
+  // Name edits route through renameItem, not the raw updateItem: that is
+  // what puts them on the undo stack (updateItem is the debounced writer and
+  // pushes nothing, so pantry name edits were previously not undoable).
+  it('editing name and saving calls the undoable rename', () => {
     render(<PantryPanel />);
     fireEvent.click(screen.getByText('Milk'));
 
@@ -76,7 +88,8 @@ describe('PantryPanel - editing flows', () => {
     fireEvent.change(input, { target: { value: 'Oat Milk' } });
     fireEvent.click(screen.getByText('Save'));
 
-    expect(mockUpdateItem).toHaveBeenCalledWith('1', { name: 'Oat Milk' });
+    expect(mockRenameItem).toHaveBeenCalledWith('1', 'Oat Milk');
+    expect(mockUpdateItem).not.toHaveBeenCalled();
   });
 
   it('pressing Enter in edit saves', () => {
@@ -87,7 +100,7 @@ describe('PantryPanel - editing flows', () => {
     fireEvent.change(input, { target: { value: 'Oat Milk' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    expect(mockUpdateItem).toHaveBeenCalled();
+    expect(mockRenameItem).toHaveBeenCalled();
   });
 
   it('pressing Escape in edit cancels', () => {
@@ -153,6 +166,159 @@ describe('PantryPanel - editing flows', () => {
     // Should have a number input for quantity
     const qtyInput = screen.getByDisplayValue('1');
     expect(qtyInput).toBeInTheDocument();
+  });
+
+  it('keeps the inline add form open, clears the name, and refocuses the input after a successful add', async () => {
+    render(<PantryPanel />);
+    const addButtons = screen.getAllByText('+ Add item');
+    fireEvent.click(addButtons[0]);
+
+    const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Rice' } });
+    const addBtn = screen.getAllByText('Add').find(el => el.tagName === 'BUTTON')!;
+    fireEvent.click(addBtn);
+
+    await waitFor(() => expect(mockAddItem).toHaveBeenCalled());
+    // Form stays open (input still present) and is cleared + refocused,
+    // rather than unmounting (which is what triggers iOS's scroll-jump bug).
+    await waitFor(() => expect(screen.getByPlaceholderText('Item name...')).toHaveValue(''));
+    expect(screen.getByPlaceholderText('Item name...')).toBe(document.activeElement);
+  });
+
+  it('does not call addItem, clear the input, or close the form for an empty name', () => {
+    render(<PantryPanel />);
+    const addButtons = screen.getAllByText('+ Add item');
+    fireEvent.click(addButtons[0]);
+
+    const addBtn = screen.getAllByText('Add').find(el => el.tagName === 'BUTTON')!;
+    fireEvent.click(addBtn);
+
+    expect(mockAddItem).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText('Item name...')).toBeInTheDocument();
+  });
+
+  it('pressing Escape in the inline add form closes it via the anchored-exit helper', () => {
+    render(<PantryPanel />);
+    const addButtons = screen.getAllByText('+ Add item');
+    fireEvent.click(addButtons[0]);
+
+    const input = screen.getByPlaceholderText('Item name...');
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    expect(exitEditAnchored).toHaveBeenCalled();
+    expect(screen.queryByPlaceholderText('Item name...')).not.toBeInTheDocument();
+  });
+
+  it('clicking Cancel in the inline add form closes it via the anchored-exit helper', () => {
+    render(<PantryPanel />);
+    const addButtons = screen.getAllByText('+ Add item');
+    fireEvent.click(addButtons[0]);
+
+    fireEvent.click(screen.getByText('Cancel'));
+
+    expect(exitEditAnchored).toHaveBeenCalled();
+    expect(screen.queryByPlaceholderText('Item name...')).not.toBeInTheDocument();
+  });
+
+  it('clicking Add does not move focus off the item-name input (keeps the iOS keyboard open)', async () => {
+    const user = userEvent.setup();
+    render(<PantryPanel />);
+    const addButtons = screen.getAllByText('+ Add item');
+    fireEvent.click(addButtons[0]);
+
+    const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+    await user.type(input, 'Rice');
+    expect(document.activeElement).toBe(input);
+
+    const addBtn = screen.getAllByText('Add').find(el => el.tagName === 'BUTTON')!;
+    // The actual mechanism under test: the button suppresses the browser's
+    // default focus-shift on mousedown, so the input — and with it the iOS
+    // keyboard — never loses focus. Asserting `activeElement` alone cannot
+    // see this: the post-add `.focus()` fallback restores focus in
+    // happy-dom whether or not the guard exists, whereas on real iOS a
+    // `.focus()` outside a user-gesture context cannot reopen a keyboard
+    // that has already been dismissed. Verified by deletion — removing the
+    // `onMouseDown` guard fails this assertion and nothing else.
+    const mousedown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    addBtn.dispatchEvent(mousedown);
+    expect(mousedown.defaultPrevented).toBe(true);
+
+    await user.click(addBtn);
+
+    expect(document.activeElement).toBe(input);
+    await waitFor(() => expect(mockAddItem).toHaveBeenCalled());
+  });
+
+  // The blur-close defers one frame so focus can land on its real target.
+  const nextFrame = () => act(async () => {
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+  });
+
+  // Dismissing the keyboard with the add form open used to leave the form
+  // mounted, and that is the one state in the app where position cannot be
+  // held: with no layout change there is nothing for exitEditAnchored's pin
+  // to measure, and iOS's movement is a visual-viewport change that is
+  // invisible to getBoundingClientRect/window.scrollBy. Blur now routes the
+  // form down the same anchored-unmount path the Meals tab and the inline
+  // edit rows already use. Typed text lives in the parent, so it survives.
+  describe('dismissing the keyboard with the inline add form open', () => {
+    it('closes the form through the anchored path when focus leaves it', async () => {
+      render(<PantryPanel />);
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+      const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'Grapes' } });
+      vi.mocked(exitEditAnchored).mockClear();
+
+      input.blur();
+      fireEvent.blur(input);
+      await nextFrame();
+
+      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
+      expect(exitEditAnchored).toHaveBeenCalled();
+    });
+
+    it('adds what was typed rather than discarding it', async () => {
+      render(<PantryPanel />);
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+      const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'Grapes' } });
+
+      input.blur();
+      fireEvent.blur(input);
+      await nextFrame();
+
+      // It used to close and keep the text for next time, which read as the
+      // item vanishing — the Add button was the only thing that worked.
+      expect(mockAddItem).toHaveBeenCalledWith('s1', 'Grapes', 1);
+      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
+    });
+
+    it('just closes when nothing was typed', async () => {
+      render(<PantryPanel />);
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+      const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+
+      input.blur();
+      fireEvent.blur(input);
+      await nextFrame();
+
+      expect(mockAddItem).not.toHaveBeenCalled();
+      expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
+    });
+
+    it('stays open when focus moves to another control inside the form', async () => {
+      render(<PantryPanel />);
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+      const input = screen.getByPlaceholderText('Item name...') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'Grapes' } });
+
+      const qty = document.querySelector('input[type="number"]') as HTMLInputElement;
+      qty.focus();
+      fireEvent.blur(input);
+      await nextFrame();
+
+      expect(screen.getByPlaceholderText('Item name...')).toBeInTheDocument();
+    });
   });
 
   it('section add form submits on Enter keypress in section name input', async () => {

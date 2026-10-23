@@ -887,22 +887,24 @@ export function usePacking() {
     await deleteSectionCore(listId, sectionId);
   }, [deleteSectionCore, restoreSection, pushAction, resolveId]);
 
+  // Returns the row the add landed on — not always a new one, since a name
+  // already on the list merges into the existing row (see below).
   const addItem = useCallback(async (
     listId: string, sectionId: string, name: string,
     quantity: string | null = null, bagId: string | null = null,
-  ) => {
+  ): Promise<string | null> => {
     const list = findList(listId);
     const section = list?.sections.find(s => s.id === sectionId);
-    if (!section) return;
+    if (!section) return null;
     const trimmed = toTitleCase(name.trim());
-    if (!trimmed) return;
+    if (!trimmed) return null;
 
     // Same name already on the list (unchecked)? Merge the quantities, like grocery.
     const existing = section.items.find(i => !i.checked && i.name.toLowerCase() === trimmed.toLowerCase());
     if (existing) {
       const merged = String((parseInt(existing.quantity || '1') || 1) + (parseInt(quantity || '1') || 1));
       await editItem(listId, existing.id, { quantity: merged });
-      return;
+      return existing.id;
     }
 
     const position = section.items.length > 0 ? Math.max(...section.items.map(i => i.position)) + 1 : 0;
@@ -910,9 +912,11 @@ export function usePacking() {
     await addItemCore(listId, sectionId, trimmed, quantity, bagId, position, false, ref);
     pushAction({
       type: 'packing-add-item',
+      highlight: () => [resolveId(ref.id)],
       undo: () => deleteItemCore(listId, resolveId(ref.id)),
       redo: () => addItemCore(listId, resolveId(sectionId), trimmed, quantity, bagId, position, false, ref),
     });
+    return ref.id;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addItemCore, deleteItemCore, pushAction, resolveId]);
 
@@ -951,6 +955,7 @@ export function usePacking() {
     await editItemCore(listId, itemId, applied);
     pushAction({
       type: 'packing-edit-item',
+      highlight: () => [resolveId(itemId)],
       undo: () => editItemCore(listId, resolveId(itemId), before),
       redo: () => editItemCore(listId, resolveId(itemId), applied),
     });
@@ -960,6 +965,7 @@ export function usePacking() {
     await editItemCore(listId, itemId, { checked });
     pushAction({
       type: 'packing-toggle-item',
+      highlight: () => [resolveId(itemId)],
       undo: () => editItemCore(listId, resolveId(itemId), { checked: !checked }),
       redo: () => editItemCore(listId, resolveId(itemId), { checked }),
     });
@@ -979,6 +985,7 @@ export function usePacking() {
 
     pushAction({
       type: 'packing-delete-item',
+      highlight: () => [resolveId(ref.id)],
       undo: async () => {
         if (emptiesSection) {
           const refs = [ref];
@@ -1078,6 +1085,7 @@ export function usePacking() {
 
     pushAction({
       type: 'packing-move-item',
+      highlight: () => [resolveId(itemId)],
       undo: async () => {
         // The source is gone — recreate it before moving the item home.
         if (emptiesSource) await restoreSection(listId, sourceSnapshot, sourceRef, []);

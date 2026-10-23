@@ -17,6 +17,7 @@ import {
 import { bagProgress, visibleSectionItems } from '../utils/packing';
 import { muteState, MutedIcon } from '../utils/notifyMute';
 import { getEditHighlight } from '../utils/editHighlightColors';
+import { flashItems } from '../utils/recentFlash';
 import { toTitleCase } from '../utils/titleCase';
 
 // The Lists tab: multiple shareable checklists, each a sectioned list with a
@@ -114,6 +115,7 @@ export function PackingListsView({
   const [sectionDropdownOpen, setSectionDropdownOpen] = useState(false);
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
   const [newItemName, setNewItemName] = useState('');
+  const [newItemBagId, setNewItemBagId] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [isSectionDragging, setIsSectionDragging] = useState(false);
   const [flash, setFlash] = useState<{ message: string; action?: { label: string; onClick: () => void } } | null>(null);
@@ -401,7 +403,8 @@ export function PackingListsView({
     const sectionName = toTitleCase(quickSection.trim() || 'General');
     const section = await packing.createSection(activeList.id, sectionName);
     if (!section) return;
-    await packing.addItem(activeList.id, section.id, name, quickQty > 0 ? String(quickQty) : null, quickBagId);
+    // Point at the row it landed on (an existing row, if the name merged).
+    flashItems([await packing.addItem(activeList.id, section.id, name, quickQty > 0 ? String(quickQty) : null, quickBagId)]);
     setQuickName('');
     setQuickQty(0);
     requestAnimationFrame(() => quickNameRef.current?.focus());
@@ -420,11 +423,22 @@ export function PackingListsView({
     const name = newItemName.trim();
     if (!name || !activeList) return;
     const m = name.match(/^\((\d+)\)\s+(.+)$/);
-    const bagId = itemDefaultsMap.get((m ? m[2] : name).toLowerCase())?.storeId ?? null;
-    await packing.addItem(activeList.id, sectionId, m ? m[2] : name, m ? m[1] : null, bagId);
+    // The form's own tag field wins; it is pre-filled from the remembered
+    // tag as the name is typed (see handleNewItemNameChange).
+    const bagId = newItemBagId ?? itemDefaultsMap.get((m ? m[2] : name).toLowerCase())?.storeId ?? null;
+    flashItems([await packing.addItem(activeList.id, sectionId, m ? m[2] : name, m ? m[1] : null, bagId)]);
+    // Keep the form open for rapid entry — ChecklistSectionCard refocuses the
+    // (still-mounted) input itself. Closing only happens via Cancel/Escape.
     setNewItemName('');
-    setAddingToSection(null);
-  }, [newItemName, activeList, packing, itemDefaultsMap]);
+    setNewItemBagId(null);
+  }, [newItemName, newItemBagId, activeList, packing, itemDefaultsMap]);
+
+  // An exact name match fills the tag; an unmatched name clears it.
+  const handleNewItemNameChange = useCallback((name: string) => {
+    setNewItemName(name);
+    const trimmed = name.trim().toLowerCase();
+    setNewItemBagId(trimmed ? itemDefaultsMap.get(trimmed)?.storeId ?? null : null);
+  }, [itemDefaultsMap]);
 
   const handleChangeItemSection = useCallback(async (itemId: string, targetName: string) => {
     if (!activeList) return;
@@ -1020,7 +1034,9 @@ export function PackingListsView({
                   addingToSection={addingToSection}
                   onStartAdd={setAddingToSection}
                   newItemName={newItemName}
-                  onNewItemNameChange={setNewItemName}
+                  onNewItemNameChange={handleNewItemNameChange}
+                  newItemChipId={newItemBagId}
+                  onNewItemChipChange={setNewItemBagId}
                   onAddItem={handleInlineAdd}
                   chips={bags}
                   chipIdFor={item => (item as PackingItem).bag_id}

@@ -26,18 +26,54 @@ type Broadcaster struct {
 	closed bool
 	// Done is closed on shutdown so SSE handlers can unblock promptly.
 	Done chan struct{}
+	// Connected receives a value every time Subscribe adds a subscriber —
+	// every one, not just the 0→1 transition. The Recipe Keeper sync service
+	// uses it to pull in changes made in the Recipe Keeper app the moment
+	// someone opens Meal Planner, and a household has more than one client:
+	// while this fired only on 0→1, a second phone opening the app took the
+	// count 1→2 and refreshed nothing, so the person who opened it waited out
+	// the poll interval staring at a list that was already stale on the
+	// server. Redundant signals are cheap — the observer floors how often it
+	// acts on them, and TriggerGrocerySync single-flights besides.
+	//
+	// This is the ONLY coupling point from realtime to anything that cares
+	// about subscriber presence (see cmd/server/main.go) — a plain channel,
+	// never an import, so realtime stays ignorant of who's listening and
+	// must not import recipekeeper. Buffered 1 and sent non-blockingly: a
+	// missed send just means the observer notices on its next timer tick
+	// instead of instantly, never a stuck goroutine or a blocked Subscribe.
+	Connected chan struct{}
 }
 
 func NewBroadcaster() *Broadcaster {
-	return &Broadcaster{subs: map[*Subscriber]struct{}{}, Done: make(chan struct{})}
+	return &Broadcaster{
+		subs:      map[*Subscriber]struct{}{},
+		Done:      make(chan struct{}),
+		Connected: make(chan struct{}, 1),
+	}
+}
+
+// Count reports the current number of active subscribers.
+func (b *Broadcaster) Count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.subs)
 }
 
 func (b *Broadcaster) Subscribe(sub string) *Subscriber {
 	s := &Subscriber{Ch: make(chan string, maxQueueSize), sub: sub}
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	subscribed := false
 	if !b.closed {
+		subscribed = true
 		b.subs[s] = struct{}{}
+	}
+	b.mu.Unlock()
+	if subscribed {
+		select {
+		case b.Connected <- struct{}{}:
+		default:
+		}
 	}
 	return s
 }

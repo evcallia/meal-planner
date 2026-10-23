@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Store } from '../types';
 import { NONE_STORE_ID } from './GroceryListView';
+import { RecipeIcon } from './ChecklistParts';
 
 interface StoreFilterBarProps {
   stores: Store[];
@@ -14,9 +15,43 @@ interface StoreFilterBarProps {
   onExclude: (storeId: string) => void;
   storeCounts?: Map<string, number>;
   noneCount?: number;
+  /** False for chips that aren't user-managed entities (e.g. recipe filter
+   *  chips, derived from grocery items rather than a stores table): the
+   *  long-press popover then offers only exclude/include, no rename input or
+   *  Delete button. Defaults true (stores, packing bags). */
+  editable?: boolean;
+  /** Visual language: stores/bags render as the existing solid-filled chip;
+   *  recipes render outlined with a small leading icon so the two never look
+   *  alike, even selected/excluded — see CLAUDE.md "store vs. recipe" UI
+   *  note. Purely visual/test-hook (`data-chip-kind`); doesn't affect
+   *  behavior. Defaults 'store'. */
+  kind?: 'store' | 'recipe';
+  /** Wraps the chip row in `role="group"` with this accessible name, so a
+   *  screen reader gets the store-vs-recipe distinction from context rather
+   *  than from every individual chip's name. Omitted (no wrapper) unless a
+   *  caller opts in. */
+  groupLabel?: string;
 }
 
-export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onToggleSelect, onRemoveExclusion, onRename, onDelete, onReorder, onExclude, storeCounts, noneCount = 0 }: StoreFilterBarProps) {
+/** Chip fill treatment: solid for stores/bags, outlined (never solid, even
+ *  selected) for recipes — the categorical signal must survive every
+ *  interaction state, not just the resting one. Excluded reuses the same
+ *  dimmed/strikethrough look for both kinds. */
+function chipStateClasses(kind: 'store' | 'recipe', isSelected: boolean, isExcluded: boolean): string {
+  if (isExcluded) {
+    return 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through opacity-60';
+  }
+  if (kind === 'recipe') {
+    return isSelected
+      ? 'border border-blue-500 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30'
+      : 'border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/40';
+  }
+  return isSelected
+    ? 'bg-blue-500 text-white'
+    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600';
+}
+
+export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onToggleSelect, onRemoveExclusion, onRename, onDelete, onReorder, onExclude, storeCounts, noneCount = 0, editable = true, kind = 'store', groupLabel }: StoreFilterBarProps) {
   const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -282,7 +317,7 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
   if (stores.length === 0 && noneCount === 0) return null;
 
   return (
-    <div className="relative">
+    <div className="relative" {...(groupLabel ? { role: 'group' as const, 'aria-label': groupLabel } : {})}>
       <div ref={containerRef} className="flex flex-wrap gap-2 pb-2 px-1 -mx-1">
         {stores.map((store, i) => {
           const isDragged = dragIndex === i;
@@ -314,6 +349,8 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
             <button
               key={store.id}
               data-chip-index={i}
+              data-chip-kind={kind}
+              aria-label={kind === 'recipe' ? `Recipe filter: ${store.name}` : undefined}
               onPointerDown={(e) => handlePointerDown(i, store.id, store.name, e.clientX, e.clientY)}
               onPointerUp={() => handlePointerUp(store.id)}
               onPointerMove={handlePointerMove}
@@ -325,14 +362,11 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
               }}
               className={`
                 px-3 py-1 rounded-full text-sm font-medium transition-colors select-none touch-none
-                ${isExcluded
-                  ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through opacity-60'
-                  : isSelected
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }
+                ${kind === 'recipe' ? 'inline-flex items-center gap-1' : ''}
+                ${chipStateClasses(kind, isSelected, isExcluded)}
               `}
             >
+              {kind === 'recipe' && <RecipeIcon className="w-3 h-3" />}
               {store.name}
               {storeCounts && (storeCounts.get(store.id) ?? 0) > 0 && (
                 <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-5 text-center ${
@@ -351,6 +385,8 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
           const noneIsExcluded = excludedStoreIds.has(NONE_STORE_ID);
           return (
             <button
+              data-chip-kind={kind}
+              aria-label={kind === 'recipe' ? 'Recipe filter: None' : undefined}
               onPointerDown={(e) => {
                 // Long-press for exclude popover, no drag for None chip
                 handlePointerDown(-1, NONE_STORE_ID, 'None', e.clientX, e.clientY);
@@ -360,14 +396,11 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
               onPointerLeave={handlePointerLeave}
               className={`
                 px-3 py-1 rounded-full text-sm font-medium transition-colors select-none touch-none
-                ${noneIsExcluded
-                  ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through opacity-60'
-                  : noneIsSelected
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }
+                ${kind === 'recipe' ? 'inline-flex items-center gap-1' : ''}
+                ${chipStateClasses(kind, noneIsSelected, noneIsExcluded)}
               `}
             >
+              {kind === 'recipe' && <RecipeIcon className="w-3 h-3" />}
               None
               {noneCount > 0 && (
                 <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 min-w-5 text-center ${
@@ -386,7 +419,7 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
       {editingStoreId && (
         <div className="absolute top-full left-0 right-0 mt-1 z-50">
           <div className="glass-menu rounded-lg p-3 mx-2">
-            {editingStoreId !== NONE_STORE_ID && (
+            {editable && editingStoreId !== NONE_STORE_ID && (
               <input
                 type="text"
                 value={editName}
@@ -411,7 +444,7 @@ export function StoreFilterBar({ stores, selectedStoreIds, excludedStoreIds, onT
                 Exclude from list
               </button>
             )}
-            {editingStoreId === NONE_STORE_ID ? (
+            {editingStoreId === NONE_STORE_ID || !editable ? (
               <button onClick={() => setEditingStoreId(null)} className="w-full text-left text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
                 Cancel
               </button>
