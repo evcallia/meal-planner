@@ -6,6 +6,7 @@ import { exitEditAnchored } from '../utils/exitEditAnchored';
 import { getEditHighlight } from '../utils/editHighlightColors';
 import { RichTextEditor } from './RichTextEditor';
 import { useDragReorder } from '../hooks/useDragReorder';
+import { useCommitOnKeyboardDismiss } from '../hooks/useCommitOnKeyboardDismiss';
 
 interface DayCardProps {
   day: DayData;
@@ -264,6 +265,13 @@ export function DayCard({
   }, [isEditing, flushSave]);
 
   const dayCardRef = useRef<HTMLDivElement>(null);
+
+  // The keyboard's own dismiss key leaves the editor focused, so onBlur never
+  // fires — without this the notes sat unsaved until the autosave timer (or
+  // not at all, if the app was killed first) and the card lost its position.
+  // Anchored on the whole card so the brief window where the focus proxy
+  // holds focus, before RichTextEditor takes it, still counts as "in here".
+  useCommitOnKeyboardDismiss(dayCardRef, isEditing, handleBlur);
 
   const enterEditMode = () => {
     // Focus proxy textarea synchronously within the tap/click handler so

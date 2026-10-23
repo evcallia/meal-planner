@@ -3,6 +3,7 @@ import { usePantry } from '../hooks/usePantry';
 import { PantrySection } from '../types';
 import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
+import { useCommitOnKeyboardDismiss } from '../hooks/useCommitOnKeyboardDismiss';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
 import { closeOnBlurOutside } from '../utils/closeOnBlurOutside';
 import { getEditHighlight } from '../utils/editHighlightColors';
@@ -624,6 +625,9 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
     }
     exitEditMode();
   }, [editName, item.id, item.name, onUpdate, exitEditMode]);
+
+  // Dismissing the keyboard with its own key saves, like tapping Save.
+  useCommitOnKeyboardDismiss(editFormRef, isEditing, commitEdit);
 
   const cancelEdit = useCallback(() => {
     exitEditMode();

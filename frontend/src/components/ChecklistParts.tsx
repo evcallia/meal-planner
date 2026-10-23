@@ -5,6 +5,7 @@ import { useDragReorder, computeShiftTransform } from '../hooks/useDragReorder';
 import { StoreAutocomplete } from './StoreAutocomplete';
 import { ItemAutocomplete } from './ItemAutocomplete';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
+import { useCommitOnKeyboardDismiss } from '../hooks/useCommitOnKeyboardDismiss';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
 import { closeOnBlurOutside } from '../utils/closeOnBlurOutside';
 import { getEditHighlight } from '../utils/editHighlightColors';
@@ -383,6 +384,9 @@ export function ChecklistItemRow({
     }
     exitEditMode();
   }, [editName, editQuantity, editChipId, editSectionName, sectionName, item.id, item.name, item.quantity, chipId, onEdit, onChangeSection, exitEditMode]);
+
+  // Dismissing the keyboard with its own key saves, like tapping Save.
+  useCommitOnKeyboardDismiss(editFormRef, isEditing, commitEdit);
 
   const cancelEdit = useCallback(() => {
     exitEditMode();
