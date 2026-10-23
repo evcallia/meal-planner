@@ -446,7 +446,13 @@ export function ChecklistItemRow({
               if (e.key === 'Enter') commitEdit();
               if (e.key === 'Escape') cancelEdit();
             }}
-            onBlur={() => kbLog('editRow:input-blur', { editName, focus: kbFocus() })}
+            onBlur={() => {
+              kbLog('editRow:input-blur', { editName, focus: kbFocus() });
+              // Measured on device: iOS's keyboard-dismiss key fires
+              // focusout with focus landing on <body>, so an ordinary
+              // blur IS the signal. This row had no blur path at all.
+              closeOnBlurOutside(editFormRef, commitEdit);
+            }}
             className="flex-1 min-w-0 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-sm text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
           />
         </div>

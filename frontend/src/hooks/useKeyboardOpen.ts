@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { kbHeights, kbLog } from '../utils/kbdebug';
+import { restoreCarriedScroll } from '../utils/scrollPin';
 
 /**
  * Detects whether the mobile virtual keyboard is open.
@@ -73,15 +74,31 @@ export function useKeyboardOpen(): boolean {
               break;
             }
           }
+          // Read what main was carrying BEFORE the switch discards it — the
+          // fallback below needs both of these.
+          const carried = mainEl.scrollTop;
+          const boxTopBefore = mainEl.getBoundingClientRect().top;
           // Remove the class to switch layout, then restore position
           document.documentElement.classList.remove('keyboard-open');
-          kbLog('kbOpen:restore', { anchorFound: !!anchor, anchorOffset: Math.round(anchorOffset), cards: cards.length });
+          kbLog('kbOpen:restore', { anchorFound: !!anchor, anchorOffset: Math.round(anchorOffset), cards: cards.length, carried: Math.round(carried) });
           if (anchor) {
             requestAnimationFrame(() => {
               const newRect = anchor!.getBoundingClientRect();
               kbLog('kbOpen:scrollBy', { by: Math.round(newRect.top - anchorOffset), ...kbHeights() });
               window.scrollBy(0, newRect.top - anchorOffset);
             });
+          } else if (carried > 0) {
+            // Every tab except Meals: the day-card anchor above is the only
+            // restore there has ever been, and `[data-day-date]` exists
+            // nowhere else, so on Grocery, Pantry, Lists and Tasks the
+            // position was simply dropped and the page landed at the top.
+            // Measured on device: `anchorFound=false cards=0`. Carry the
+            // offset across arithmetically instead — no selector to keep in
+            // step with five views. (Meals keeps the anchor path: it works,
+            // and it measures real layout rather than assuming the switch
+            // preserves main's box position.)
+            kbLog('kbOpen:carry', { carried: Math.round(carried), boxTopBefore: Math.round(boxTopBefore) });
+            restoreCarriedScroll(mainEl, carried, boxTopBefore);
           }
         } else {
           document.documentElement.classList.remove('keyboard-open');

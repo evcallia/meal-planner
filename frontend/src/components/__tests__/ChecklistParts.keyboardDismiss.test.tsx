@@ -52,6 +52,9 @@ describe('ChecklistItemRow — dismissing the keyboard while editing', () => {
     viewport.height = window.innerHeight - 300;
     resizeListeners.forEach(fn => fn(new Event('resize')));
   };
+  const nextFrame = () => act(async () => {
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+  });
   const dismissKeyboard = () => {
     viewport.height = window.innerHeight;
     resizeListeners.forEach(fn => fn(new Event('resize')));
@@ -94,7 +97,12 @@ describe('ChecklistItemRow — dismissing the keyboard while editing', () => {
     expect(screen.queryByDisplayValue('Meyer Lemon')).toBeNull();
   });
 
-  it('leaves a blur to the blur handlers, which edit rows deliberately lack', () => {
+  // The device trace settled which signal iOS's dismiss key gives:
+  //   +2840ms focusout from=input="Salmon" nowFocused=body
+  // An ordinary blur, with focus landing on <body> — and this row had no
+  // blur path at all, which is why that key stranded it while the add forms
+  // and the Meals editor behaved.
+  it('saves when the dismiss key blurs the input', async () => {
     const onEdit = vi.fn();
     render(<Harness onEdit={onEdit} />);
 
@@ -102,12 +110,48 @@ describe('ChecklistItemRow — dismissing the keyboard while editing', () => {
     openKeyboard();
     fireEvent.change(nameInput, { target: { value: 'Meyer Lemon' } });
 
-    // Committing on blur was tried and reverted: on device it closed the row
-    // without saving, so the text was lost rather than merely stranded. The
-    // hook must stay out of the blur case until that is understood.
     nameInput.blur();
-    dismissKeyboard();
+    await nextFrame();
+
+    expect(onEdit).toHaveBeenCalledWith('i1', { name: 'Meyer Lemon' });
+    expect(exitEditAnchored).toHaveBeenCalled();
+    expect(screen.queryByDisplayValue('Meyer Lemon')).toBeNull();
+  });
+
+  it('keeps editing when focus moves to a control inside the form', async () => {
+    const onEdit = vi.fn();
+    render(<Harness onEdit={onEdit} />);
+
+    const nameInput = screen.getByDisplayValue('Lemon');
+    openKeyboard();
+    fireEvent.change(nameInput, { target: { value: 'Meyer Lemon' } });
+
+    // Tapping the quantity stepper, section combobox or chip picker blurs the
+    // name input without leaving the form: committing there would end the
+    // edit halfway through it.
+    screen.getByText('+').focus();
+    fireEvent.blur(nameInput);
+    await nextFrame();
 
     expect(onEdit).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue('Meyer Lemon')).toBeInTheDocument();
+  });
+
+  it('saves once when the blur and the viewport growth both arrive', async () => {
+    const onEdit = vi.fn();
+    render(<Harness onEdit={onEdit} />);
+
+    const nameInput = screen.getByDisplayValue('Lemon');
+    openKeyboard();
+    fireEvent.change(nameInput, { target: { value: 'Meyer Lemon' } });
+
+    // Both paths cover this key. The blur lands first and unmounts the form,
+    // which unsubscribes the viewport listener, so the growth that follows
+    // ~80ms later (per the trace) finds nothing to commit.
+    nameInput.blur();
+    await nextFrame();
+    dismissKeyboard();
+
+    expect(onEdit).toHaveBeenCalledTimes(1);
   });
 });
