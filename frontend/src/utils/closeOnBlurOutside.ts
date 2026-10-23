@@ -1,5 +1,8 @@
+import type { RefObject } from 'react';
+
 /**
- * Closes a still-mounted inline form when focus genuinely leaves it.
+ * Runs a form's exit (close, or save-and-close) when focus genuinely leaves
+ * it.
  *
  * The inline add forms are the only surfaces in the app that stay mounted
  * across an iOS keyboard close, and that is exactly why they jumped: with
@@ -13,18 +16,29 @@
  * inline edit rows) all respond to dismissal by unmounting the form inside
  * `exitEditAnchored`, whose anchored pin works precisely because the
  * unmount forces a real layout change. This routes the add forms down that
- * same proven path.
+ * same proven path. The edit rows use it too, with a commit as the exit:
+ * iOS's keyboard-dismiss key blurs the focused input, and they had no blur
+ * handling at all, so that key left them open with the text unsaved.
  *
  * Focus moving to another control *inside* the form (a quantity field, an
- * autocomplete suggestion) must not close it, and on iOS the blur fires
+ * autocomplete suggestion) must not exit it, and on iOS the blur fires
  * before the new focus target is current — so defer a frame and then ask
  * where focus actually landed.
+ *
+ * Takes the ref rather than the element so it can tell whether the form is
+ * still mounted AS that form. `formEl.isConnected` cannot: React reuses the
+ * same <div> when a row swaps its edit form for its display markup, so the
+ * captured element stays connected as the display row and a second deferred
+ * callback sails through. With a commit as the exit that is not cosmetic —
+ * tapping Cancel blurs the input, unmounts the form, and the pending
+ * callback would then save the edit the user just cancelled.
  */
-export function closeOnBlurOutside(formEl: HTMLElement | null, close: () => void): void {
+export function closeOnBlurOutside(form: RefObject<HTMLElement | null>, close: () => void): void {
+  const formEl = form.current;
   if (!formEl) return;
   requestAnimationFrame(() => {
-    // Already unmounted (Add, Cancel, Escape got there first).
-    if (!formEl.isConnected) return;
+    // Already exited — Add, Cancel, Escape or another blur got there first.
+    if (form.current !== formEl) return;
     // Focus stayed within the form — the user is still filling it in.
     if (formEl.contains(document.activeElement)) return;
     close();

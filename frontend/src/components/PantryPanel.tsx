@@ -538,7 +538,7 @@ function PantrySectionCard({
                   if (e.key === 'Enter') handleAdd();
                   if (e.key === 'Escape') closeAdd();
                 }}
-                onBlur={() => closeOnBlurOutside(addFormRef.current, closeAdd)}
+                onBlur={() => closeOnBlurOutside(addFormRef, closeAdd)}
                 placeholder="Item name..."
                 autoFocus
                 className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
@@ -552,7 +552,7 @@ function PantrySectionCard({
                 onKeyDown={e => {
                   if (e.key === 'Enter') handleAdd();
                 }}
-                onBlur={() => closeOnBlurOutside(addFormRef.current, closeAdd)}
+                onBlur={() => closeOnBlurOutside(addFormRef, closeAdd)}
                 className="w-12 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:border-blue-500 text-sm py-1 text-center"
               />
               <button
@@ -653,6 +653,10 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
             if (e.key === 'Enter') commitEdit();
             if (e.key === 'Escape') cancelEdit();
           }}
+          // Focus leaving the form saves (see the matching note on the
+          // grocery/Lists edit row): iOS's keyboard-dismiss key blurs the
+          // input, and without a blur path the form stayed open unsaved.
+          onBlur={() => closeOnBlurOutside(editFormRef, commitEdit)}
           className="flex-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-sm text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
         />
         <button

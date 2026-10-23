@@ -442,6 +442,13 @@ export function ChecklistItemRow({
               if (e.key === 'Enter') commitEdit();
               if (e.key === 'Escape') cancelEdit();
             }}
+            // Focus leaving the form saves, the way every other surface
+            // behaves. iOS's keyboard-dismiss key blurs the input rather than
+            // keeping focus, and this row had no blur path at all, so that
+            // key left the form sitting open with the text unsaved. Deferred
+            // containment (see closeOnBlurOutside) keeps the quantity
+            // buttons, section combobox and chip picker from committing.
+            onBlur={() => closeOnBlurOutside(editFormRef, commitEdit)}
             className="flex-1 min-w-0 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-sm text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
           />
         </div>
@@ -901,7 +908,7 @@ export function ChecklistSectionCard({
                   if (e.key === 'Enter') handleAdd();
                   if (e.key === 'Escape') closeAdd();
                 }}
-                onBlur={() => closeOnBlurOutside(addFormRef.current, closeAdd)}
+                onBlur={() => closeOnBlurOutside(addFormRef, closeAdd)}
                 className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
               />
               <button

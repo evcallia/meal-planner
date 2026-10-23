@@ -123,6 +123,26 @@ describe('useCommitOnKeyboardDismiss', () => {
     expect(fresh).toHaveBeenCalledTimes(1);
   });
 
+  it('still sees the dismissal when iOS reports a stale window height', () => {
+    const commit = vi.fn();
+    const full = window.innerHeight;
+    renderHook(() => useCommitOnKeyboardDismiss(ref, true, commit));
+
+    // In an iOS standalone PWA window.innerHeight is reported already
+    // shrunken (the case useKeyboardOpen keeps initialHeightRef for), so the
+    // live gap reads ~0 with the keyboard fully up. Measured against that,
+    // the keyboard never looks open and the dismissal never registers.
+    viewport.height = full - KEYBOARD;
+    vi.stubGlobal('innerHeight', full - KEYBOARD);
+    resizeListeners.forEach(fn => fn(new Event('resize')));
+    expect(commit).not.toHaveBeenCalled();
+
+    viewport.height = full;
+    vi.stubGlobal('innerHeight', full);
+    resizeListeners.forEach(fn => fn(new Event('resize')));
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
   it('does not subscribe while inactive', () => {
     const commit = vi.fn();
     renderHook(() => useCommitOnKeyboardDismiss(ref, false, commit));

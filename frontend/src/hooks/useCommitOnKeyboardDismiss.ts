@@ -36,9 +36,20 @@ export function useCommitOnKeyboardDismiss(
     const viewport = window.visualViewport;
     if (!viewport) return;
 
+    // Measure against the tallest window we have seen, not the live value:
+    // iOS standalone reports a stale (already shrunken) window.innerHeight,
+    // and against that the gap reads ~0 with the keyboard plainly up, so the
+    // dismissal never registers as one. useKeyboardOpen keeps the same
+    // running maximum (initialHeightRef) for the same reason. Subscribing
+    // happens when the form mounts, before its input takes focus and raises
+    // the keyboard, so the first reading is a genuine full-height one.
+    let tallest = window.innerHeight;
     // Same threshold as useKeyboardOpen/useScrollIntoViewOnEdit: anything
     // smaller is iOS's own chrome (accessory bar, toolbar), not a keyboard.
-    const covered = () => window.innerHeight - viewport.height > 150;
+    const covered = () => {
+      tallest = Math.max(tallest, window.innerHeight);
+      return tallest - viewport.height > 150;
+    };
 
     // Only a transition counts. Without this, a form mounted while the
     // keyboard is already down would commit itself on the first unrelated
