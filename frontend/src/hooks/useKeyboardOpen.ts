@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { kbHeights, kbLog } from '../utils/kbdebug';
 
 /**
  * Detects whether the mobile virtual keyboard is open.
@@ -44,6 +45,9 @@ export function useKeyboardOpen(): boolean {
       const vvSmaller = window.innerHeight - vv.height > THRESHOLD;
       const viewportShrank = initialHeightRef.current - vv.height > THRESHOLD;
       const open = (vvSmaller || viewportShrank) && hasEditableFocus();
+      if (open !== wasOpenRef.current) {
+        kbLog('kbOpen:transition', { open, vvSmaller, viewportShrank, editableFocus: hasEditableFocus(), initial: initialHeightRef.current, ...kbHeights() });
+      }
 
       // Size the app shell to the visible area (above the keyboard) so the
       // <main> scroll container can bring the bottom of the list into view.
@@ -71,9 +75,11 @@ export function useKeyboardOpen(): boolean {
           }
           // Remove the class to switch layout, then restore position
           document.documentElement.classList.remove('keyboard-open');
+          kbLog('kbOpen:restore', { anchorFound: !!anchor, anchorOffset: Math.round(anchorOffset), cards: cards.length });
           if (anchor) {
             requestAnimationFrame(() => {
               const newRect = anchor!.getBoundingClientRect();
+              kbLog('kbOpen:scrollBy', { by: Math.round(newRect.top - anchorOffset), ...kbHeights() });
               window.scrollBy(0, newRect.top - anchorOffset);
             });
           }

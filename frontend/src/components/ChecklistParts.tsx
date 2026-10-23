@@ -8,6 +8,7 @@ import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
 import { useCommitOnKeyboardDismiss } from '../hooks/useCommitOnKeyboardDismiss';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
 import { closeOnBlurOutside } from '../utils/closeOnBlurOutside';
+import { kbFocus, kbLog } from '../utils/kbdebug';
 import { getEditHighlight } from '../utils/editHighlightColors';
 import { parseQuantity } from '../utils/quantity';
 
@@ -362,7 +363,9 @@ export function ChecklistItemRow({
 
   const commitEdit = useCallback(() => {
     const trimmedName = editName.trim();
+    kbLog('commitEdit', { editName, itemName: item.name, editQuantity, itemQuantity: item.quantity ?? null, focus: kbFocus() });
     if (!trimmedName) {
+      kbLog('commitEdit:empty-exit');
       exitEditMode();
       return;
     }
@@ -374,6 +377,7 @@ export function ChecklistItemRow({
     if (newQty !== item.quantity) updates.quantity = newQty;
     if (editChipId !== chipId) updates.store_id = editChipId;
 
+    kbLog(Object.keys(updates).length > 0 ? 'commitEdit:saving' : 'commitEdit:nothing-changed', { updates });
     if (Object.keys(updates).length > 0) {
       onEdit(item.id, updates);
     }
@@ -442,13 +446,7 @@ export function ChecklistItemRow({
               if (e.key === 'Enter') commitEdit();
               if (e.key === 'Escape') cancelEdit();
             }}
-            // Focus leaving the form saves, the way every other surface
-            // behaves. iOS's keyboard-dismiss key blurs the input rather than
-            // keeping focus, and this row had no blur path at all, so that
-            // key left the form sitting open with the text unsaved. Deferred
-            // containment (see closeOnBlurOutside) keeps the quantity
-            // buttons, section combobox and chip picker from committing.
-            onBlur={() => closeOnBlurOutside(editFormRef, commitEdit)}
+            onBlur={() => kbLog('editRow:input-blur', { editName, focus: kbFocus() })}
             className="flex-1 min-w-0 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-sm text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
           />
         </div>

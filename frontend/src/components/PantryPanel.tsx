@@ -6,6 +6,7 @@ import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
 import { useCommitOnKeyboardDismiss } from '../hooks/useCommitOnKeyboardDismiss';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
 import { closeOnBlurOutside } from '../utils/closeOnBlurOutside';
+import { kbFocus, kbLog } from '../utils/kbdebug';
 import { getEditHighlight } from '../utils/editHighlightColors';
 
 export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightColor?: string } = {}) {
@@ -620,6 +621,7 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
 
   const commitEdit = useCallback(() => {
     const trimmedName = editName.trim();
+    kbLog('commitEdit', { editName, itemName: item.name, willSave: !!trimmedName && trimmedName !== item.name, focus: kbFocus() });
     if (trimmedName && trimmedName !== item.name) {
       onUpdate(item.id, { name: trimmedName });
     }
@@ -653,10 +655,7 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
             if (e.key === 'Enter') commitEdit();
             if (e.key === 'Escape') cancelEdit();
           }}
-          // Focus leaving the form saves (see the matching note on the
-          // grocery/Lists edit row): iOS's keyboard-dismiss key blurs the
-          // input, and without a blur path the form stayed open unsaved.
-          onBlur={() => closeOnBlurOutside(editFormRef, commitEdit)}
+          onBlur={() => kbLog('editRow:input-blur', { editName, focus: kbFocus() })}
           className="flex-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-sm text-sm py-0.5 px-2 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
         />
         <button

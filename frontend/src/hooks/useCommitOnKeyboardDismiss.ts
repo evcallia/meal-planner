@@ -1,4 +1,5 @@
 import { useEffect, useRef, type RefObject } from 'react';
+import { kbFocus, kbHeights, kbLog } from '../utils/kbdebug';
 
 // Treats the keyboard's own dismiss key as "I'm done with this form".
 //
@@ -35,6 +36,7 @@ export function useCommitOnKeyboardDismiss(
     if (!active) return;
     const viewport = window.visualViewport;
     if (!viewport) return;
+    kbLog('hook:subscribe', kbHeights());
 
     // Measure against the tallest window we have seen, not the live value:
     // iOS standalone reports a stale (already shrunken) window.innerHeight,
@@ -59,11 +61,16 @@ export function useCommitOnKeyboardDismiss(
     const handleResize = () => {
       const isOpen = covered();
       const dismissed = wasOpen && !isOpen;
+      kbLog('hook:resize', { wasOpen, isOpen, dismissed, tallest, inForm: !!ref.current?.contains(document.activeElement), focus: kbFocus(), ...kbHeights() });
       wasOpen = isOpen;
       if (!dismissed) return;
       // Focus elsewhere means the user left by a route that already handles
       // itself; committing here as well would run the save twice.
-      if (!ref.current?.contains(document.activeElement)) return;
+      if (!ref.current?.contains(document.activeElement)) {
+        kbLog('hook:declined', { reason: 'focus left the form' });
+        return;
+      }
+      kbLog('hook:commit');
       commitRef.current();
     };
 
