@@ -82,9 +82,38 @@ export function kbClear() {
  * dismiss key blurs the input or only shrinks the keyboard away — is
  * answered without any of our own handlers being involved.
  */
+/**
+ * Everything iOS could be keying off when it decides which fields its
+ * previous/next arrows will visit. Two structural guesses (which element the
+ * blur handler sat on, then form ownership) have both missed, so this reports
+ * the whole control list as the browser sees it rather than as the JSX reads.
+ */
+function describeFormControls(el: Element): string {
+  const form = (el as HTMLInputElement).form;
+  if (!form) return 'no-form';
+  return Array.from(form.elements).map(c => {
+    const i = c as HTMLInputElement;
+    const kind = `${i.tagName.toLowerCase()}${i.type ? `:${i.type}` : ''}`;
+    const label = i.placeholder || i.name || i.getAttribute('aria-label') || '';
+    const flags = [
+      i.disabled ? 'disabled' : '',
+      i.readOnly ? 'readonly' : '',
+      i.tabIndex !== 0 ? `tab=${i.tabIndex}` : '',
+      // offsetParent is null for display:none and for anything inside it —
+      // iOS will not navigate to a field it considers unrendered.
+      (i as HTMLElement).offsetParent === null ? 'unrendered' : '',
+      i.hidden ? 'hidden' : '',
+    ].filter(Boolean).join(',');
+    return `${kind}"${label}"${flags ? `[${flags}]` : ''}`;
+  }).join(' | ');
+}
+
 export function kbInstallGlobalListeners(): () => void {
   if (!kbDebugOn) return () => {};
-  const onFocusIn = (e: Event) => kbLog('focusin', { target: describe(e.target as Element), ...kbHeights() });
+  const onFocusIn = (e: Event) => {
+    kbLog('focusin', { target: describe(e.target as Element), ...kbHeights() });
+    kbLog('form:controls', { list: describeFormControls(e.target as Element) });
+  };
   const onFocusOut = (e: Event) => kbLog('focusout', { from: describe(e.target as Element), nowFocused: kbFocus() });
   const onResize = () => kbLog('vv:resize', { focus: kbFocus(), ...kbHeights() });
   const onVvScroll = () => kbLog('vv:scroll', kbHeights());
