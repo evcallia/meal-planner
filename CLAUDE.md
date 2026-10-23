@@ -1,8 +1,10 @@
 # Meal Planner — Claude Instructions
 
 ## Where development happens
-Everything runs in **homelab-vm** (Debian arm64, 192.168.68.88): Orca connects over SSH, so sessions, worktrees, git, Go/Node and Docker all live there. The Mac mini has no Docker and no checkout to work in.
+**Dev work belongs in the VM worktree.** Everything that matters runs in **homelab-vm** (Debian arm64, 192.168.68.88): the dev stack, prod, Docker, and the worktrees under `~/orca/workspaces/`. Orca normally connects over SSH, so a session's shell is already there — but confirm it rather than assume it.
 
+- **Check the host before editing anything** (`hostname`). The Mac mini carries a full mirror — base clone at `~/projects/meal-planner`, Orca worktrees beside it, `node_modules`, Go — so edits, `npm run test:run` and `npm run build` all *appear* to work there. What it lacks is a reachable Docker daemon (`docker` points at an OrbStack socket that is usually not running), which means the one step every change needs — verifying it in the running app — can't happen, and the VM goes on serving the old code while the tests look green.
+- **If a session does land on the Mac**: commit and push from there, then on the VM, in the matching worktree, `git pull --ff-only` and `docker compose up -d --build`. That is the whole recovery — don't try to deploy from the Mac. (SSH out of the Bash sandbox is blocked, so that last step needs an unsandboxed command.)
 - `~/projects/meal-planner` is the base checkout; Orca worktrees (under `~/orca/workspaces/`) are for development. No checkout needs to be parked on `main` when you're done with it: nothing served from a checkout here is a production deploy (prod runs in the `local_docker` stack, from a published image, not from any checkout), so leaving one sitting on a dev branch is fine.
 - The same Docker host runs the whole home-lab stack (repo `local_docker`), including **prod** (`meal-planner` container, project `mealplanner`). Never touch it; the dev stack below is separate.
 - Toolchain: Go in `/usr/local/go/bin` (official tarball; update by reinstalling it), Node/npm from Debian apt.
