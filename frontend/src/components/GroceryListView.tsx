@@ -15,6 +15,7 @@ import {
 } from './ChecklistParts';
 import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
 import { getEditHighlight } from '../utils/editHighlightColors';
+import { flashItems } from '../utils/recentFlash';
 import { toTitleCase } from '../utils/titleCase';
 import { parseServerDate } from '../utils/serverDate';
 import { parseQuantity } from '../utils/quantity';
@@ -714,7 +715,9 @@ export function GroceryListView({
     // Never touch the target section — the user picked it explicitly.
     const nameLower = name.toLowerCase();
     const storeId = newItemStoreId ?? itemDefaultsMap.get(nameLower)?.storeId ?? null;
-    await addItem(sectionId, name, qty, storeId);
+    // Point at the row it landed on: a name already on the list merges
+    // into the existing row instead of making a new one.
+    flashItems([await addItem(sectionId, name, qty, storeId)]);
     // Keep the form open for rapid entry — ChecklistSectionCard refocuses the
     // (still-mounted) input itself. Closing only happens via Cancel/Escape.
     setNewItemName('');
@@ -741,7 +744,7 @@ export function GroceryListView({
     );
 
     if (existingSection) {
-      await addItem(existingSection.id, trimmedName, quantity, quickAddStoreId);
+      flashItems([await addItem(existingSection.id, trimmedName, quantity, quickAddStoreId)]);
     } else {
       await mergeList([{ name: trimmedSection, items: [{ name: trimmedName, quantity, store_id: quickAddStoreId }] }]);
     }

@@ -217,6 +217,50 @@ describe('items', () => {
     expect(mockDeleteItem).toHaveBeenCalledWith('new-1');
   });
 
+  // An undo can land on a row anywhere in the list, so every item-level
+  // action names the row it touches — resolved when the undo RUNS, since a
+  // restored item comes back with a new server id.
+  it('names the rows its item actions touch', async () => {
+    mockAddItem.mockResolvedValue({
+      id: 'new-1', section_id: 's1', name: 'Socks', quantity: null,
+      checked: false, position: 3, bag_id: null, updated_at: '2026-01-02T00:00:00',
+    });
+    mockEditItem.mockResolvedValue({} as any);
+    mockDeleteItem.mockResolvedValue({ status: 'deleted' });
+    const { result } = await renderLoaded();
+    const lastHighlight = () => (undoStack.at(-1) as any).highlight?.();
+
+    await act(async () => { await result.current.addItem('l1', 's1', 'socks'); });
+    expect(lastHighlight()).toEqual(['new-1']);
+
+    await act(async () => { await result.current.editItem('l1', 'i1', { name: 'Wellies' }); });
+    expect(lastHighlight()).toEqual(['i1']);
+
+    await act(async () => { await result.current.toggleItem('l1', 'i1', true); });
+    expect(lastHighlight()).toEqual(['i1']);
+
+    await act(async () => { await result.current.deleteItem('l1', 'i1'); });
+    expect(lastHighlight()).toEqual(['i1']);
+  });
+
+  // Adding a name already on the list bumps the existing row instead of
+  // making one, and the caller highlights whichever row that was.
+  it('reports the row an add landed on, new or merged', async () => {
+    mockAddItem.mockResolvedValue({
+      id: 'new-1', section_id: 's1', name: 'Socks', quantity: null,
+      checked: false, position: 3, bag_id: null, updated_at: '2026-01-02T00:00:00',
+    });
+    mockEditItem.mockResolvedValue({} as any);
+    const { result } = await renderLoaded();
+
+    let id: string | null = null;
+    await act(async () => { id = await result.current.addItem('l1', 's1', 'socks'); });
+    expect(id).toBe('new-1');
+
+    await act(async () => { id = await result.current.addItem('l1', 's1', 'Boots', '2'); });
+    expect(id).toBe('i1');
+  });
+
   it('merges quantities when the same item is added twice', async () => {
     mockEditItem.mockResolvedValue({} as any);
     const { result } = await renderLoaded();

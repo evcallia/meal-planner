@@ -639,6 +639,7 @@ export function useGroceryList() {
 
     pushAction({
       type: 'check-grocery-item',
+      highlight: () => [resolveId(itemId)],
       undo: async () => {
         optimisticVersionRef.current++;
         pendingMutationsRef.current++;
@@ -690,9 +691,9 @@ export function useGroceryList() {
   }, [sections, isOnline, pushAction]);
 
   // Add item to a section (merges with existing duplicate if found)
-  const addItem = useCallback(async (sectionId: string, name: string, quantity: string | null = null, storeId?: string | null) => {
+  const addItem = useCallback(async (sectionId: string, name: string, quantity: string | null = null, storeId?: string | null): Promise<string | null> => {
     const section = sections.find(s => s.id === sectionId);
-    if (!section) return;
+    if (!section) return null;
 
     const trimmedName = toTitleCase(name.trim());
 
@@ -732,6 +733,7 @@ export function useGroceryList() {
 
       pushAction({
         type: 'merge-grocery-item',
+        highlight: () => [resolveId(existingItem.id)],
         undo: async () => {
           optimisticVersionRef.current++;
           pendingMutationsRef.current++;
@@ -770,7 +772,7 @@ export function useGroceryList() {
           settleMutation();
         },
       });
-      return;
+      return existingItem.id;
     }
 
     const tempId = generateTempId();
@@ -854,6 +856,7 @@ export function useGroceryList() {
 
     pushAction({
       type: 'add-grocery-item',
+      highlight: () => [resolveId(newItem.id)],
       undo: async () => {
         // Resolve through ID remap chain — the item may have been recreated
         // with a new server ID (e.g., add → delete → undo delete → undo add)
@@ -914,6 +917,8 @@ export function useGroceryList() {
         settleMutation();
       },
     });
+    // The real id once the server has answered; the temp one offline.
+    return newItem.id;
   }, [sections, isOnline, pushAction]);
 
   // Delete an item — uses targeted POST/DELETE for undo/redo (not PUT)
@@ -931,6 +936,7 @@ export function useGroceryList() {
     // Push undo action BEFORE API call so undo is available immediately
     pushAction({
       type: 'delete-grocery-item',
+      highlight: () => [resolveId(deletedItemRef.id)],
       undo: async () => {
         // Re-add the specific item via POST (not PUT) — doesn't affect other users' items
         const prevId = deletedItemRef.id;
@@ -1096,6 +1102,7 @@ export function useGroceryList() {
 
         pushAction({
           type: 'edit-merge-grocery-item',
+          highlight: () => [resolveId(dupId), resolveId(deletedItemRef.id)],
           undo: async () => {
             // Targeted undo: restore duplicate's qty + re-add the deleted item
             const currentDupId = resolveId(dupId);
@@ -1273,6 +1280,7 @@ export function useGroceryList() {
 
     pushAction({
       type: 'edit-grocery-item',
+      highlight: () => [resolveId(itemId)],
       undo: async () => {
         const currentId = resolveId(itemId);
         const undoUpdates: { name?: string; quantity?: string | null; store_id?: string | null } = {};
@@ -1906,6 +1914,7 @@ export function useGroceryList() {
 
     pushAction({
       type: 'move-grocery-item',
+      highlight: () => [resolveId(item.id)],
       undo: async () => {
         const currentItemId = resolveId(item.id);
         optimisticVersionRef.current++;

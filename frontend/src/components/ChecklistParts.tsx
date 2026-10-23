@@ -12,6 +12,8 @@ import { kbFocus, kbLog } from '../utils/kbdebug';
 import { getEditHighlight } from '../utils/editHighlightColors';
 import { parseQuantity } from '../utils/quantity';
 import { useOptionalUndo } from '../contexts/UndoContext';
+import { useItemFlash } from '../hooks/useItemFlash';
+import { flashItems } from '../utils/recentFlash';
 
 // Presentational building blocks shared by the Grocery tab and the Lists
 // (packing) tab. Both are "sectioned checklist with a chip per item", so the
@@ -356,6 +358,11 @@ export function ChecklistItemRow({
   const editFormRef = useRef<HTMLFormElement>(null);
   useScrollIntoViewOnEdit(editFormRef, isEditing);
 
+  // Nonzero while this row is the one that just changed. Read from the store
+  // rather than a prop: an undo can land on any row, including one the user
+  // is not looking at, and nothing in the tree above knows which.
+  const flashKey = useItemFlash(item.id);
+
   const chipName = chips?.find(s => s.id === chipId)?.name;
 
   const SWIPE_THRESHOLD = 50;
@@ -414,6 +421,10 @@ export function ChecklistItemRow({
         await onChangeSection(item.id, targetSection);
       }
     });
+    // Point at what changed — the row may be about to move to another
+    // category, where it is easy to lose. A save that changed nothing gets
+    // no flash: highlighting a non-change trains the eye to ignore it.
+    if (Object.keys(updates).length > 0 || movingSection) flashItems([item.id]);
     exitEditMode();
   }, [editName, editQuantity, editChipId, editSectionName, sectionName, item.id, item.name, item.quantity, chipId, onEdit, onChangeSection, exitEditMode, runAsUndoGroup]);
 
@@ -531,6 +542,16 @@ export function ChecklistItemRow({
 
   return (
     <div className="relative overflow-hidden">
+      {/* Keyed on the flash number so flashing the same row again mounts a
+          fresh element: the animation ends `forwards`, so replaying it on
+          the existing one would show nothing. */}
+      {flashKey > 0 && (
+        <div
+          key={flashKey}
+          data-testid="row-flash"
+          className="absolute inset-0 pointer-events-none row-flash-edit"
+        />
+      )}
       {swipeOffset > 0 && (
         <div className="absolute inset-y-0 right-0 flex items-center" style={{ width: SWIPE_MAX }}>
           <button

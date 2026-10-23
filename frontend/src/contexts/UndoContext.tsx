@@ -1,9 +1,25 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { flashItems } from '../utils/recentFlash';
 
 interface UndoAction {
   type: string;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
+  /**
+   * The rows this action touches, highlighted briefly once it has been
+   * undone or redone. Unlike an edit the user just made, an undo can land
+   * on a row anywhere in the list — including one off screen — so there is
+   * otherwise nothing to say what moved.
+   *
+   * A function, not a list, because it is evaluated AFTER the work runs:
+   * an item that was deleted and restored comes back with a new server id,
+   * and the closures follow that through the remap chain. Ids that have
+   * since gone are returned as null and dropped.
+   *
+   * Left off bulk actions (clear, replace) on purpose — flashing thirty
+   * rows at once is noise, not a signal.
+   */
+  highlight?: () => (string | null | undefined)[];
 }
 
 interface UndoContextValue {
@@ -119,6 +135,7 @@ export function UndoProvider({ id, children }: { id: string; children: ReactNode
       redo: async () => {
         for (const action of collected) await action.redo();
       },
+      highlight: () => collected.flatMap(action => action.highlight?.() ?? []),
     });
   }, [pushAction]);
 
@@ -134,6 +151,9 @@ export function UndoProvider({ id, children }: { id: string; children: ReactNode
     } finally {
       isUndoRedoInProgress.current = false;
     }
+    // After the work, so the ids are the ones that now exist. Skipped when
+    // the action threw, since nothing changed to point at.
+    flashItems(action.highlight?.() ?? []);
     window.dispatchEvent(new Event('undo-redo-applied'));
     resetInactivityTimer(id);
   }, [id]);
@@ -150,6 +170,9 @@ export function UndoProvider({ id, children }: { id: string; children: ReactNode
     } finally {
       isUndoRedoInProgress.current = false;
     }
+    // After the work, so the ids are the ones that now exist. Skipped when
+    // the action threw, since nothing changed to point at.
+    flashItems(action.highlight?.() ?? []);
     window.dispatchEvent(new Event('undo-redo-applied'));
     resetInactivityTimer(id);
   }, [id]);

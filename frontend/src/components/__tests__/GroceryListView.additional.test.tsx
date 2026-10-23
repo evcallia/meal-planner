@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, act, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { GroceryListView } from '../GroceryListView';
 import { exitEditAnchored } from '../../utils/exitEditAnchored';
+import { __resetFlashesForTests } from '../../utils/recentFlash';
 
 vi.mock('../../utils/exitEditAnchored', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../utils/exitEditAnchored')>();
@@ -101,6 +102,7 @@ const sectionsWithMultiple = [
 describe('GroceryListView - additional coverage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    __resetFlashesForTests();
     mockSections = [];
     mockLoading = false;
     mockStores = [];
@@ -227,6 +229,21 @@ describe('GroceryListView - additional coverage', () => {
     // rather than unmounting (which is what triggers iOS's scroll-jump bug).
     await waitFor(() => expect(screen.getByPlaceholderText('Item name...')).toHaveValue(''));
     expect(screen.getByPlaceholderText('Item name...')).toBe(document.activeElement);
+  });
+
+  // The row an add lands on is not always a new one — a name already on the
+  // list merges into the existing row and bumps its quantity — so the view
+  // highlights whichever row addItem reports back.
+  it('highlights the row the add landed on', async () => {
+    mockSections = sectionsWithMultiple;
+    mockAddItem.mockResolvedValueOnce('i2');
+    render(<GroceryListView />);
+    fireEvent.click(screen.getAllByText('+ Add item')[0]);
+
+    fireEvent.change(screen.getByPlaceholderText('Item name...'), { target: { value: 'Apples' } });
+    fireEvent.click(screen.getAllByText('Add').find(el => el.tagName === 'BUTTON')!);
+
+    await waitFor(() => expect(screen.getByTestId('row-flash')).toBeInTheDocument());
   });
 
   it('does not call addItem, clear the input, or close the form for an empty name', () => {
