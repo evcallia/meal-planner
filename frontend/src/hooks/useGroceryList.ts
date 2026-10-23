@@ -201,7 +201,7 @@ export function useGroceryList() {
   // between two awaits in the same async function. Any mutation that calls
   // setSections and needs that new state visible to code later in the same
   // async chain MUST also assign sectionsRef.current immediately after
-  // setSections (currently only createSection and moveItem do this).
+  // setSections (createSection, moveItem and editItem do this).
   const sectionsRef = useRef(sections);
   sectionsRef.current = sections;
 
@@ -1175,7 +1175,14 @@ export function useGroceryList() {
     const prevStoreId = item.store_id;
 
     optimisticVersionRef.current++;
-    setSections(prev => prev.map(s => ({
+    // Assigning sectionsRef here is the rule documented where it's declared,
+    // not belt-and-braces: the edit row commits a rename and a category
+    // change back-to-back, and moveItem builds its whole next state from
+    // sectionsRef.current and sets it absolutely. Without this the move read
+    // the pre-rename list and wrote the OLD name back — the edit looked lost,
+    // while undo (restoring the pre-move state, which also carried the old
+    // name) looked like a no-op and redo appeared to "fix" it.
+    const edited = (prev: GrocerySection[]) => prev.map(s => ({
       ...s,
       items: s.items.map(i => i.id === itemId ? {
         ...i,
@@ -1183,7 +1190,9 @@ export function useGroceryList() {
         ...(updates.quantity !== undefined ? { quantity: updates.quantity } : {}),
         ...(updates.store_id !== undefined ? { store_id: updates.store_id } : {}),
       } : i),
-    })));
+    }));
+    sectionsRef.current = edited(sectionsRef.current);
+    setSections(edited);
 
     // Update local
     await saveLocalGroceryItem({

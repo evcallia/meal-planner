@@ -11,6 +11,7 @@ import { closeOnBlurOutside } from '../utils/closeOnBlurOutside';
 import { kbFocus, kbLog } from '../utils/kbdebug';
 import { getEditHighlight } from '../utils/editHighlightColors';
 import { parseQuantity } from '../utils/quantity';
+import { useOptionalUndo } from '../contexts/UndoContext';
 
 // Presentational building blocks shared by the Grocery tab and the Lists
 // (packing) tab. Both are "sectioned checklist with a chip per item", so the
@@ -346,6 +347,10 @@ export function ChecklistItemRow({
   const SWIPE_MAX = 80;
 
   const commitEditRef = useRef<(() => void) | null>(null) as React.MutableRefObject<(() => void) | null>;
+  // Grouped when an UndoProvider is in scope (always, in the app); run
+  // straight through when there isn't one (bare renders in tests).
+  const undoCtx = useOptionalUndo();
+  const runAsUndoGroup = undoCtx?.runAsUndoGroup ?? (async (_type: string, fn: () => void | Promise<void>) => { await fn(); });
 
   const exitEditMode = useCallback(() => {
     const anchor = (editFormRef.current?.closest('[data-drag-index]') ?? editFormRef.current) as HTMLElement | null;
@@ -378,16 +383,24 @@ export function ChecklistItemRow({
     if (editChipId !== chipId) updates.store_id = editChipId;
 
     kbLog(Object.keys(updates).length > 0 ? 'commitEdit:saving' : 'commitEdit:nothing-changed', { updates });
-    if (Object.keys(updates).length > 0) {
-      onEdit(item.id, updates);
-    }
     // Empty section box falls back to the same default category quick-add uses
     const targetSection = editSectionName.trim() || 'Default';
-    if (targetSection.toLowerCase() !== sectionName.toLowerCase()) {
-      onChangeSection(item.id, targetSection);
-    }
+    const movingSection = targetSection.toLowerCase() !== sectionName.toLowerCase();
+    // ONE undo entry for one commit. These are two mutations and each pushes
+    // its own entry, so changing a name and a category together used to take
+    // two undos and show a half-reverted item in between. Awaited in order:
+    // the edit has to land before the move, because moveItem rebuilds the
+    // whole list from its own snapshot.
+    void runAsUndoGroup('edit-grocery-item-fields', async () => {
+      if (Object.keys(updates).length > 0) {
+        await onEdit(item.id, updates);
+      }
+      if (movingSection) {
+        await onChangeSection(item.id, targetSection);
+      }
+    });
     exitEditMode();
-  }, [editName, editQuantity, editChipId, editSectionName, sectionName, item.id, item.name, item.quantity, chipId, onEdit, onChangeSection, exitEditMode]);
+  }, [editName, editQuantity, editChipId, editSectionName, sectionName, item.id, item.name, item.quantity, chipId, onEdit, onChangeSection, exitEditMode, runAsUndoGroup]);
 
   // Dismissing the keyboard with its own key saves, like tapping Save.
   useCommitOnKeyboardDismiss(editFormRef, isEditing, commitEdit);
