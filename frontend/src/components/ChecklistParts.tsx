@@ -829,6 +829,10 @@ export function ChecklistSectionCard({
     Promise.resolve(onAddItem(section.id)).finally(closeAdd);
   }, [newItemName, onAddItem, section.id, closeAdd]);
 
+  // The other half of the dismiss key, for a device that keeps focus and only
+  // grows the viewport back (see the edit row).
+  useCommitOnKeyboardDismiss(addFormRef, addingToSection === section.id, commitAddAndClose);
+
   useEffect(() => {
     if (isEditingName && headerInputRef.current) {
       headerInputRef.current.focus();
@@ -963,6 +967,10 @@ export function ChecklistSectionCard({
               ref={addFormRef}
               data-testid="inline-add-form"
               onSubmit={e => e.preventDefault()}
+              // On the FORM, not the name input: the store/tag line is part
+              // of the same add, and with the handler on the input a
+              // dismissal from that field fired nothing and dropped the item.
+              onBlur={() => closeOnBlurOutside(addFormRef, commitAddAndClose)}
               className="px-4 py-2 space-y-1.5"
             >
               <div className="flex items-center gap-2">
@@ -982,7 +990,6 @@ export function ChecklistSectionCard({
                   if (e.key === 'Enter') handleAdd();
                   if (e.key === 'Escape') closeAdd();
                 }}
-                onBlur={() => closeOnBlurOutside(addFormRef, commitAddAndClose)}
                 className="flex-1 bg-transparent border-b border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:border-blue-500 text-sm py-1"
               />
               <button
