@@ -85,6 +85,32 @@ docker compose down        # NEVER -v
 - Prod isolation is a separate, unaffected concern: prod is the `meal-planner` container behind `meal-planner.evancallia.com` plus `shared-postgres`, which the dev stack never touches regardless of compose project name
 - Only one dev stack can hold the `meal-planner-dev` Traefik router or host port 5432 at a time
 
+## Adding or changing a setting
+**The app reading a new environment variable is the first of five places it has to land, not the last.** The Recipe Keeper and metrics settings shipped having reached the app and about half the rest, which is how `RECIPE_KEEPER_IDLE_POLL_SECONDS` and `METRICS_PORT` ended up impossible to configure through Docker at all — the app's own defaults were the only reachable values:
+
+- `backend/internal/config/config.go` — reads it, and owns the default
+- `docker-compose.yml` — the sample stack, running the published image, as `VAR: ${VAR:-default}`
+- `docker-compose-dev.yml` — the dev stack, which builds from source. **These two must not drift**; every app-facing variable belongs in both
+- `.env.example` — documents it, with the comment that says what it is for (this is the only env-var reference the project has; README's Configuration section just points here)
+- `README.md` — only if it names the setting, plus the Features list if the setting turns on something user-visible
+
+**The dangerous direction is "documented but not forwarded", because nothing errors.** A variable in `.env.example` that no compose file passes through silently does nothing under Docker. `MEAL_HISTORY_RETENTION_DAYS` was exactly that for its whole life — documented, read by the backend, wired to `db.CleanupOldData`, and never forwarded, so every Docker deployment got the 365-day default no matter what was set. Check all three directions from the repo root (`check-config-drift.py`):
+
+```bash
+python3 check-config-drift.py
+```
+
+Two things that are deliberate, so don't "fix" them:
+- **`METRICS_PORT` is forwarded but its port is never published.** Metrics serve unauthenticated *because* they are only reachable on the container network; publishing them in a sample file would be the wrong default for anyone who copies it
+- **The sample compose pins the published image** (`${APP_VERSION:-vX.Y.Z}`), and the README quotes that same tag in its Docker Hub section. Bump both together when a release ships, or the sample deploys an older app than the docs describe
+
+Verify a config change renders rather than assuming it parses — the file is YAML with shell-style interpolation, and both halves can be wrong silently:
+
+```bash
+docker compose -f docker-compose.yml --env-file .env.example config -q           # parses
+docker compose -f docker-compose.yml --env-file .env.example config | grep VAR   # resolves
+```
+
 ## Go Backend (backend/)
 The backend is a Go rewrite of the original FastAPI app (same API contract). Layout:
 - `cmd/server/` — entrypoint (startup mirrors the FastAPI lifespan: AutoMigrate → migrations → cleanup → calendar cache init)
