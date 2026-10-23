@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { closeOnBlurOutside } from '../closeOnBlurOutside';
+import { closeOnBlurOutside, __resetPointerTrackingForTests } from '../closeOnBlurOutside';
 
 describe('closeOnBlurOutside', () => {
   let form: HTMLDivElement;
@@ -9,7 +9,14 @@ describe('closeOnBlurOutside', () => {
 
   const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 
+  /** A tap: pointerdown, then the focus change it causes, then pointerup. */
+  const tapOn = (el: Element, { release = true } = {}) => {
+    el.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    if (release) el.dispatchEvent(new Event('pointerup', { bubbles: true }));
+  };
+
   beforeEach(() => {
+    __resetPointerTrackingForTests();
     form = document.createElement('div');
     inside = document.createElement('button');
     form.appendChild(inside);
@@ -83,5 +90,56 @@ describe('closeOnBlurOutside', () => {
     closeOnBlurOutside(ref, close);
     await nextFrame();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  // Safari does not focus a <button> when it is tapped, so tapping the
+  // quantity stepper, Cancel or an autocomplete option inside the form blurs
+  // the input and leaves activeElement on <body> — identical, by focus alone,
+  // to leaving the form. Acting on it exited the edit before the tap landed:
+  // the stepper stopped working and picking a store saved only the name.
+  describe('a tap on a control the browser will not focus', () => {
+    it('does not exit when that control is inside the form', async () => {
+      const close = vi.fn();
+      tapOn(inside, { release: false });
+      document.body.focus();
+      closeOnBlurOutside(ref, close);
+      await nextFrame();
+      expect(close).not.toHaveBeenCalled();
+    });
+
+    it('still does not exit when the tap completed within the same frame', async () => {
+      const close = vi.fn();
+      tapOn(inside);
+      closeOnBlurOutside(ref, close);
+      await nextFrame();
+      expect(close).not.toHaveBeenCalled();
+    });
+
+    it('exits when the tap was outside the form', async () => {
+      const close = vi.fn();
+      tapOn(document.body);
+      closeOnBlurOutside(ref, close);
+      await nextFrame();
+      expect(close).toHaveBeenCalledTimes(1);
+    });
+
+    it('exits for a dismissal that arrives long after an in-form tap', () => {
+      const close = vi.fn();
+      // The clock has to stay faked through the deferred check, which is
+      // where the age of the tap is read.
+      vi.useFakeTimers();
+      try {
+        tapOn(inside);
+        // The keyboard's dismiss key fires no pointer event at all, and comes
+        // seconds after the tap that opened the field — it must not be
+        // mistaken for that tap.
+        vi.advanceTimersByTime(2000);
+        closeOnBlurOutside(ref, close);
+        vi.advanceTimersByTime(50);
+        expect(close).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
