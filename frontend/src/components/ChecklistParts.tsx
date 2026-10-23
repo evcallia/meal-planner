@@ -678,6 +678,11 @@ export interface ChecklistSectionCardProps {
   onStartAdd: (sectionId: string | null) => void;
   newItemName: string;
   onNewItemNameChange: (name: string) => void;
+  /** Store (grocery) / tag (Lists) for the inline add form. Shown as a second
+   *  line so the auto-populated value is visible and can be overridden before
+   *  adding — it used to be applied invisibly from the item defaults. */
+  newItemChipId: string | null;
+  onNewItemChipChange: (chipId: string | null) => void;
   onAddItem: (sectionId: string) => void;
   chips: Store[];
   chipIdFor: (item: ChecklistItem) => string | null;
@@ -724,6 +729,8 @@ export function ChecklistSectionCard({
   onStartAdd,
   newItemName,
   onNewItemNameChange,
+  newItemChipId,
+  onNewItemChipChange,
   onAddItem,
   chips,
   chipIdFor,
@@ -927,7 +934,8 @@ export function ChecklistSectionCard({
 
           {/* Add item inline */}
           {addingToSection === section.id ? (
-            <div ref={addFormRef} className="flex items-center gap-2 px-4 py-2">
+            <div ref={addFormRef} data-testid="inline-add-form" className="px-4 py-2 space-y-1.5">
+              <div className="flex items-center gap-2">
               <ItemAutocomplete
                 value={newItemName}
                 onChange={name => onNewItemNameChange(name)}
@@ -960,6 +968,16 @@ export function ChecklistSectionCard({
               >
                 Cancel
               </button>
+              </div>
+              {!hideChips && (
+                <StoreAutocomplete
+                  stores={chips}
+                  selectedStoreId={newItemChipId}
+                  onSelect={onNewItemChipChange}
+                  onCreate={onCreateChip}
+                  placeholder={chipPlaceholder}
+                />
+              )}
             </div>
           ) : (
             <button

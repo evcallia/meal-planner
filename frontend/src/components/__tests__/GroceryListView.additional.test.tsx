@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GroceryListView } from '../GroceryListView';
 import { exitEditAnchored } from '../../utils/exitEditAnchored';
@@ -28,6 +28,7 @@ const mockReorderStores = vi.fn();
 
 let mockSections: any[] = [];
 let mockLoading = false;
+let mockItemDefaults = new Map<string, { storeId: string | null; sectionName?: string }>();
 let mockStores: any[] = [];
 
 vi.mock('../../hooks/useGroceryList', () => ({
@@ -48,7 +49,7 @@ vi.mock('../../hooks/useGroceryList', () => ({
     createSection: vi.fn(),
     deleteSection: vi.fn(),
     batchUpdateStoreId: mockBatchUpdateStoreId,
-    itemDefaultsMap: new Map(),
+    itemDefaultsMap: mockItemDefaults,
     removeItemDefault: vi.fn(),
   }),
 }));
@@ -103,6 +104,7 @@ describe('GroceryListView - additional coverage', () => {
     mockSections = [];
     mockLoading = false;
     mockStores = [];
+    mockItemDefaults = new Map();
   });
 
   it('renders multiple sections', () => {
@@ -339,6 +341,50 @@ describe('GroceryListView - additional coverage', () => {
       // item vanishing — the Add button was the only thing that worked.
       await waitFor(() => expect(mockAddItem).toHaveBeenCalled());
       expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
+    });
+
+    // The inline add form used to apply the remembered store invisibly at add
+    // time, with no way to see or change it before adding.
+    it('offers a store field', () => {
+      mockSections = sectionsWithMultiple;
+      mockStores = [{ id: 'st1', name: 'Costco', position: 0 }];
+      render(<GroceryListView />);
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+
+      expect(screen.getByPlaceholderText('Assign store...')).toBeInTheDocument();
+    });
+
+    it('adds with the store picked in the form', async () => {
+      mockSections = sectionsWithMultiple;
+      mockStores = [{ id: 'st1', name: 'Costco', position: 0 }];
+      render(<GroceryListView />);
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+
+      fireEvent.change(screen.getByPlaceholderText('Item name...'), { target: { value: 'Grapes' } });
+      // "Costco" also appears as a store filter chip and on item rows, so
+      // scope to the form under test.
+      const form = screen.getByTestId('inline-add-form');
+      fireEvent.focus(within(form).getByPlaceholderText('Assign store...'));
+      fireEvent.click(within(form).getByText('Costco'));
+
+      fireEvent.click(screen.getAllByText('Add').find(el => el.tagName === 'BUTTON')!);
+
+      await waitFor(() => expect(mockAddItem).toHaveBeenCalledWith(
+        expect.any(String), 'Grapes', undefined, 'st1',
+      ));
+    });
+
+    it('pre-fills the store remembered for the typed name', () => {
+      mockSections = sectionsWithMultiple;
+      mockStores = [{ id: 'st1', name: 'Costco', position: 0 }];
+      mockItemDefaults = new Map([['grapes', { storeId: 'st1' }]]);
+      render(<GroceryListView />);
+      fireEvent.click(screen.getAllByText('+ Add item')[0]);
+
+      fireEvent.change(screen.getByPlaceholderText('Item name...'), { target: { value: 'Grapes' } });
+
+      // Visible and overridable, rather than applied behind the scenes.
+      expect(screen.getByPlaceholderText('Assign store...')).toHaveValue('Costco');
     });
 
     it('just closes when nothing was typed', async () => {

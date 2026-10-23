@@ -112,6 +112,10 @@ export function GroceryListView({
   const [quickAddQuantity, setQuickAddQuantity] = useState(0);
   const [quickAddItemName, setQuickAddItemName] = useState('');
   const [quickAddStoreId, setQuickAddStoreId] = useState<string | null>(null);
+  // Store for the per-section inline add. Previously the item default was
+  // applied invisibly at add time; the form now shows it so it can be seen
+  // and overridden.
+  const [newItemStoreId, setNewItemStoreId] = useState<string | null>(null);
   const [showSectionDropdown, setShowSectionDropdown] = useState(false);
   const [inputText, setInputText] = useState('');
   const [addingToSection, setAddingToSection] = useState<string | null>(null);
@@ -704,14 +708,26 @@ export function GroceryListView({
     const qtyMatch = newItemName.trim().match(/^\((\d+)\)\s+(.+)$/);
     const name = qtyMatch ? qtyMatch[2] : newItemName.trim();
     const qty = qtyMatch ? qtyMatch[1] : undefined;
-    // Auto-populate store from item defaults (merged IDB + current list items).
+    // The form's own store field wins; it is pre-filled from the item
+    // defaults as the name is typed, so this falls back to them only for a
+    // name whose default arrived without the field being touched.
     // Never touch the target section — the user picked it explicitly.
     const nameLower = name.toLowerCase();
-    await addItem(sectionId, name, qty, itemDefaultsMap.get(nameLower)?.storeId ?? null);
+    const storeId = newItemStoreId ?? itemDefaultsMap.get(nameLower)?.storeId ?? null;
+    await addItem(sectionId, name, qty, storeId);
     // Keep the form open for rapid entry — ChecklistSectionCard refocuses the
     // (still-mounted) input itself. Closing only happens via Cancel/Escape.
     setNewItemName('');
-  }, [newItemName, itemDefaultsMap, addItem]);
+    setNewItemStoreId(null);
+  }, [newItemName, newItemStoreId, itemDefaultsMap, addItem]);
+
+  // Mirrors applyQuickAddDefaults for the inline form: an exact name match
+  // fills the store, an unmatched name clears it.
+  const handleNewItemNameChange = useCallback((name: string) => {
+    setNewItemName(name);
+    const trimmed = name.trim().toLowerCase();
+    setNewItemStoreId(trimmed ? itemDefaultsMap.get(trimmed)?.storeId ?? null : null);
+  }, [itemDefaultsMap]);
 
   const handleQuickAdd = useCallback(async () => {
     const trimmedName = quickAddItemName.trim();
@@ -1387,7 +1403,9 @@ export function GroceryListView({
                 addingToSection={addingToSection}
                 onStartAdd={setAddingToSection}
                 newItemName={newItemName}
-                onNewItemNameChange={setNewItemName}
+                onNewItemNameChange={handleNewItemNameChange}
+                newItemChipId={newItemStoreId}
+                onNewItemChipChange={setNewItemStoreId}
                 onAddItem={handleAddItem}
                 chips={stores}
                 chipIdFor={item => (item as GrocerySection['items'][number]).store_id}

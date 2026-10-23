@@ -316,6 +316,16 @@ describe('PackingListsView', () => {
       expect(screen.queryByPlaceholderText('Item name...')).toBeNull();
     });
 
+    // Lists call them tags, and the inline add form offers one now: the
+    // remembered tag used to be applied invisibly at add time.
+    it('offers a tag field', () => {
+      renderView();
+      fireEvent.click(screen.getByText('+ Add item'));
+
+      const form = screen.getByTestId('inline-add-form');
+      expect(within(form).getByPlaceholderText('Assign tag...')).toBeInTheDocument();
+    });
+
     it('just closes when nothing was typed', async () => {
       renderView();
       fireEvent.click(screen.getByText('+ Add item'));
