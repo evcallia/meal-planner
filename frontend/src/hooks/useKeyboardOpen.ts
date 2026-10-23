@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react';
-import { kbHeights, kbLog } from '../utils/kbdebug';
 import { restoreCarriedScroll } from '../utils/scrollPin';
 
 /**
@@ -47,7 +46,6 @@ export function useKeyboardOpen(): boolean {
       const viewportShrank = initialHeightRef.current - vv.height > THRESHOLD;
       const open = (vvSmaller || viewportShrank) && hasEditableFocus();
       if (open !== wasOpenRef.current) {
-        kbLog('kbOpen:transition', { open, vvSmaller, viewportShrank, editableFocus: hasEditableFocus(), initial: initialHeightRef.current, ...kbHeights() });
       }
 
       // Size the app shell to the visible area (above the keyboard) so the
@@ -80,11 +78,9 @@ export function useKeyboardOpen(): boolean {
           const boxTopBefore = mainEl.getBoundingClientRect().top;
           // Remove the class to switch layout, then restore position
           document.documentElement.classList.remove('keyboard-open');
-          kbLog('kbOpen:restore', { anchorFound: !!anchor, anchorOffset: Math.round(anchorOffset), cards: cards.length, carried: Math.round(carried) });
           if (anchor) {
             requestAnimationFrame(() => {
               const newRect = anchor!.getBoundingClientRect();
-              kbLog('kbOpen:scrollBy', { by: Math.round(newRect.top - anchorOffset), ...kbHeights() });
               window.scrollBy(0, newRect.top - anchorOffset);
             });
           } else if (carried > 0) {
@@ -97,7 +93,6 @@ export function useKeyboardOpen(): boolean {
             // step with five views. (Meals keeps the anchor path: it works,
             // and it measures real layout rather than assuming the switch
             // preserves main's box position.)
-            kbLog('kbOpen:carry', { carried: Math.round(carried), boxTopBefore: Math.round(boxTopBefore) });
             restoreCarriedScroll(mainEl, carried, boxTopBefore);
           }
         } else {

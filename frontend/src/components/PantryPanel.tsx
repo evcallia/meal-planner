@@ -6,7 +6,6 @@ import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
 import { useCommitOnKeyboardDismiss } from '../hooks/useCommitOnKeyboardDismiss';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
 import { closeOnBlurOutside } from '../utils/closeOnBlurOutside';
-import { kbFocus, kbLog } from '../utils/kbdebug';
 import { getEditHighlight } from '../utils/editHighlightColors';
 
 export function PantryPanel({ editHighlightColor = 'emerald' }: { editHighlightColor?: string } = {}) {
@@ -646,7 +645,6 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
 
   const commitEdit = useCallback(() => {
     const trimmedName = editName.trim();
-    kbLog('commitEdit', { editName, itemName: item.name, willSave: !!trimmedName && trimmedName !== item.name, focus: kbFocus() });
     if (trimmedName && trimmedName !== item.name) {
       onUpdate(item.id, { name: trimmedName });
     }
@@ -673,10 +671,7 @@ function PantryItemRow({ item, onUpdate, onAdjustQuantity, onDelete, dragHandler
       <div
         ref={editFormRef}
         // See the matching note on the grocery/Lists edit row.
-        onBlur={() => {
-          kbLog('editRow:form-blur', { editName, focus: kbFocus() });
-          closeOnBlurOutside(editFormRef, commitEdit);
-        }}
+        onBlur={() => closeOnBlurOutside(editFormRef, commitEdit)}
         className={`flex items-center gap-2 px-4 py-1.5 ${getEditHighlight(editHighlightColor).form}`}
       >
         <input

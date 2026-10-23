@@ -1,5 +1,4 @@
 import type { RefObject } from 'react';
-import { kbFocus, kbLog } from './kbdebug';
 
 /**
  * Runs a form's exit (close, or save-and-close) when focus genuinely leaves
@@ -81,29 +80,18 @@ export function closeOnBlurOutside(form: RefObject<HTMLElement | null>, close: (
   trackPointer();
   const formEl = form.current;
   if (!formEl) return;
-  kbLog('blurOutside:queued', { focus: kbFocus() });
   requestAnimationFrame(() => {
     // Already exited — Add, Cancel, Escape or another blur got there first.
-    if (form.current !== formEl) {
-      kbLog('blurOutside:gone');
-      return;
-    }
+    if (form.current !== formEl) return;
     // Focus stayed within the form — the user is still filling it in.
-    if (formEl.contains(document.activeElement)) {
-      kbLog('blurOutside:stayed', { focus: kbFocus() });
-      return;
-    }
+    if (formEl.contains(document.activeElement)) return;
     // The tap that caused this blur was on something inside the form that
     // the browser declined to focus.
     if (
       pointerDownTarget &&
       formEl.contains(pointerDownTarget) &&
       (pointerIsDown || Date.now() - pointerDownAt < RECENT_TAP_MS)
-    ) {
-      kbLog('blurOutside:tapped-inside', { pointerIsDown, since: Date.now() - pointerDownAt });
-      return;
-    }
-    kbLog('blurOutside:exit', { focus: kbFocus() });
+    ) return;
     close();
   });
 }

@@ -8,7 +8,6 @@ import { useScrollIntoViewOnEdit } from '../hooks/useScrollIntoViewOnEdit';
 import { useCommitOnKeyboardDismiss } from '../hooks/useCommitOnKeyboardDismiss';
 import { exitEditAnchored } from '../utils/exitEditAnchored';
 import { closeOnBlurOutside } from '../utils/closeOnBlurOutside';
-import { kbFocus, kbLog } from '../utils/kbdebug';
 import { getEditHighlight } from '../utils/editHighlightColors';
 import { parseQuantity } from '../utils/quantity';
 import { useOptionalUndo } from '../contexts/UndoContext';
@@ -390,9 +389,7 @@ export function ChecklistItemRow({
 
   const commitEdit = useCallback(() => {
     const trimmedName = editName.trim();
-    kbLog('commitEdit', { editName, itemName: item.name, editQuantity, itemQuantity: item.quantity ?? null, focus: kbFocus() });
     if (!trimmedName) {
-      kbLog('commitEdit:empty-exit');
       exitEditMode();
       return;
     }
@@ -404,7 +401,6 @@ export function ChecklistItemRow({
     if (newQty !== item.quantity) updates.quantity = newQty;
     if (editChipId !== chipId) updates.store_id = editChipId;
 
-    kbLog(Object.keys(updates).length > 0 ? 'commitEdit:saving' : 'commitEdit:nothing-changed', { updates });
     // Empty section box falls back to the same default category quick-add uses
     const targetSection = editSectionName.trim() || 'Default';
     const movingSection = targetSection.toLowerCase() !== sectionName.toLowerCase();
@@ -468,10 +464,7 @@ export function ChecklistItemRow({
         // fields are all part of the same edit. Blurring out of any of them
         // commits the whole form; moving between them does not (focusout
         // bubbles, and closeOnBlurOutside re-checks where focus landed).
-        onBlur={() => {
-          kbLog('editRow:form-blur', { editName, editSectionName, editChipId, focus: kbFocus() });
-          closeOnBlurOutside(editFormRef, commitEdit);
-        }}
+        onBlur={() => closeOnBlurOutside(editFormRef, commitEdit)}
         className={`px-4 py-1.5 space-y-1.5 ${getEditHighlight(editHighlightColor).form}`}
       >
         <div className="flex items-center gap-2">

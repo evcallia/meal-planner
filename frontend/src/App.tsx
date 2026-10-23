@@ -34,8 +34,6 @@ import { resetTrackerSessionLoaded, markTrackerSessionLoaded } from './hooks/use
 import { resetPackingSessionLoaded, markPackingSessionLoaded } from './hooks/usePacking';
 import { getLocalNote, queueChange, saveLocalNote, saveLocalGrocerySections, saveLocalGroceryItems, saveLocalStores, saveLocalPantrySections, saveLocalPantryItems, getPendingChanges, saveLocalCalendarEvents, saveLocalHiddenEvent, deleteLocalHiddenEvent, clearAllLocalData, clearLocalMealIdeas, saveLocalMealIdea, deleteLocalMealIdea, saveLocalHiddenEvents, clearLocalHiddenEvents, saveLocalItemDefaults, saveLocalTrackerLists, saveLocalTrackerTasks, saveLocalTrackerList, deleteLocalTrackerList, saveLocalTrackerTask, deleteLocalTrackerTask, getLocalTrackerLists, getLocalTrackerTasks, saveLocalPackingLists, saveLocalPackingBags, saveLocalPackingSections, saveLocalPackingItems, saveLocalPackingList, saveLocalPackingBag, saveLocalPackingSection, saveLocalPackingItem, deleteLocalPackingList, deleteLocalPackingBag, deleteLocalPackingSection, deleteLocalPackingItem, getLocalPackingSections, getLocalPackingItems, getLocalPackingBags, getLocalPackingLists } from './db';
 import { UndoProvider, useUndo } from './contexts/UndoContext';
-import { KbDebugOverlay } from './components/KbDebugOverlay';
-import { kbInstallGlobalListeners } from './utils/kbdebug';
 
 // Page ids are internal and deliberately NOT renamed — they're persisted in
 // localStorage and mirrored by the settings keys below. Display names differ:
@@ -702,7 +700,6 @@ function AppContent() {
   useRealtime();
   const keyboardOpen = useKeyboardOpen();
   // TEMPORARY: raw focus/viewport signals for the keyboard-dismiss bug.
-  useEffect(() => kbInstallGlobalListeners(), []);
 
   // PWA update detection (SW lifecycle)
   // A service worker parked in `waiting` re-announces itself on EVERY
@@ -1741,8 +1738,6 @@ function AppContent() {
       {/* Bottom Navigation */}
       <BottomNav currentPage={currentPage} onChange={handlePageChange} groceryCount={groceryCount} hidden={keyboardOpen} pages={visiblePages} />
 
-      {/* TEMPORARY: ?kbdebug=1 only — see utils/kbdebug.ts */}
-      <KbDebugOverlay />
     </div>
   );
 }

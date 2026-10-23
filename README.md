@@ -311,6 +311,44 @@ jobs:
       - run: ./run-tests.sh --skip-deps
 ```
 
+### Debugging on a real phone (the on-device trace overlay)
+
+Some bugs only exist on an iPhone — anything involving the virtual keyboard,
+the visual viewport, or Safari's focus behaviour has no desktop equivalent,
+and the PWA has no console you can open. The technique that cracked the
+"page jumps when the keyboard closes" family of bugs, after two blind fixes
+had missed, was **a temporary in-app log overlay**, and it is worth
+rebuilding the next time a device-only bug appears:
+
+- A tiny ring-buffer module (`kbLog(what, detail)`) plus a fixed-position
+  overlay component with **copy** and **clear** buttons, so a trace can be
+  pasted straight out of the phone and into a chat or an issue.
+- Gate it on a query parameter remembered for the session
+  (`?kbdebug=1` → `sessionStorage`), so in-app navigation keeps it on and
+  nothing ships to ordinary users.
+- Log the **raw browser signals** first (`focusin`/`focusout` with
+  `document.activeElement`, `visualViewport` resize/scroll, `innerHeight`
+  vs `visualViewport.height`), then your own handlers' decisions beside
+  them. The gap between "what the browser did" and "what our code decided"
+  is where the answer is.
+- Dump structure as the browser sees it, not as the JSX reads — e.g.
+  `Array.from(form.elements)` with each control's `disabled`/`readOnly`/
+  `tabIndex`/`offsetParent === null` flags.
+
+It paid for itself immediately. Three measured facts, none of which was
+guessable from the desktop, each overturning an assumption a fix had been
+built on: iOS's keyboard-dismiss key fires an **ordinary `focusout` with
+focus landing on `<body>`** (it does not keep focus); `window.innerHeight`
+**shrinks with the keyboard** in a standalone PWA (`inner=451 vv=451`), so
+live gap detection reads zero with the keyboard plainly up; and the scroll
+restore was looking for a `[data-day-date]` anchor that exists only on the
+Meals tab (`anchorFound=false cards=0`), which was the whole of "the page
+scrolls to the top".
+
+Delete the instrumentation with the fix — it is a diagnostic, not a
+feature. See the iOS keyboard notes in `CLAUDE.md` for what the traces
+established.
+
 ### Test Development Guidelines
 
 **Frontend:**
