@@ -1,7 +1,7 @@
 # Stage 1: Build frontend
 # --platform=$BUILDPLATFORM: run natively on the build host during multiarch
 # builds (the Vite output is arch-independent) instead of under QEMU.
-FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:26-alpine AS frontend-builder
 
 WORKDIR /frontend
 
