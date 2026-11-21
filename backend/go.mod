@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
+	github.com/emersion/go-ical v0.0.0-20261112170022-46c5b53a1723
 	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/fergusstrange/embedded-postgres/v2 v2.0.1
 	github.com/glebarez/sqlite v1.11.0
